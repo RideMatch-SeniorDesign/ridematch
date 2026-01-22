@@ -1,0 +1,47 @@
+name: Bug
+description: Something is broken (include repro steps and expected vs actual).
+title: "[Bug]: "
+labels: ["type:bug", "triage"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: [backend, rider-app, driver-app, admin-web]
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: What happened?
+      description: What did you see?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1) Go to...
+        2) Click...
+        3) Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      description: Paste logs or attach screenshots if relevant.
+      render: shell
+    validations:
+      required: false
