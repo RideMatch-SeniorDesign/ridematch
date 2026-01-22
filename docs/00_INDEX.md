@@ -7,7 +7,7 @@ Welcome! This folder is the single source of truth for documentation across the 
 ## Quick Start (New Teammate Checklist)
 1. Read the project overview in the main repo `README.md`
 2. Review requirements + deliverables:
-   - **Deliverables & Requirements Tracker:** [`10_DELIVERABLES_REQUIREMENTS_TRACKER.md`](10_DELIVERABLES_REQUIREMENTS_TRACKER.md)
+   - **Deliverables & Requirements Tracker:** [`10_DELIVERABLES_REQUIREMENTS_TRACKER.md`](10_DELIVERABLES_TRACKER.md)
 3. Check what we’re doing this week:
    - **Semester Tracker:** [`01_SEMESTER_TRACKER.md`](01_SEMESTER_TRACKER.md)
    - **Sprint Log:** [`04_SPRINT_LOG.md`](04_SPRINT_LOG.md)
@@ -23,7 +23,7 @@ Welcome! This folder is the single source of truth for documentation across the 
 - **Sprint Log (planning + what shipped each sprint):** [`04_SPRINT_LOG.md`](04_SPRINT_LOG.md)
 - **Meeting Notes (sponsor/advisor/team):** [`03_MEETING_NOTES.md`](03_MEETING_NOTES.md)
 - **Decision Log (architecture/scope decisions):** [`02_DECISION_LOG.md`](02_DECISION_LOG.md)
-- **Deliverables & Requirements Tracker:** [`10_DELIVERABLES_REQUIREMENTS_TRACKER.md`](10_DELIVERABLES_REQUIREMENTS_TRACKER.md)
+- **Deliverables & Requirements Tracker:** [`10_DELIVERABLES_REQUIREMENTS_TRACKER.md`](10_DELIVERABLES_TRACKER.md)
 - **Questions Tracker (sponsor/instructor/team):** [`11_QUESTIONS_TRACKER.md`](11_QUESTIONS_TRACKER.md)
 - **Risk Register:** [`05_RISK_REGISTER.md`](05_RISK_REGISTER.md)
 
