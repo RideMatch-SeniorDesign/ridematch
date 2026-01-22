@@ -1,0 +1,64 @@
+name: Feature
+description: A user-facing feature (write as a user story + acceptance criteria).
+title: "[Feature]: "
+labels: ["type:feature"]
+# projects: ["<ORG>/<PROJECT_NUMBER>"]   # optional: auto-add to a Project (see GitHub docs example)
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - backend
+        - rider-app
+        - driver-app
+        - admin-web
+        - docs
+    validations:
+      required: true
+
+  - type: textarea
+    id: story
+    attributes:
+      label: User Story
+      description: Use “As a <persona>, I want <need>, so that <value>”.
+      placeholder: "As a Rider, I want to swipe right on drivers, so that I can choose who I ride with."
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Clear, testable conditions that must be true for this issue to be “done”.
+      placeholder: |
+        - Given <context>, when <action>, then <result>
+        - ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [high, medium, low]
+      default: 1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options: [S, M, L]
+      default: 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / Links
+      description: Mockups, related issues, sponsor notes, etc.
+    validations:
+      required: false
