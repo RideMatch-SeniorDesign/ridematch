@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RideMatch Admin Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <main class="card">
+      <div class="brand">RideMatch Admin</div>
+      <h1>Sign in</h1>
+      <p>Enter your credentials to access the dashboard.</p>
+
+      {% if error %}
+      <div class="error" role="alert">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('login') }}">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required />
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+        <button type="submit">Log In</button>
+      </form>
+      <div class="helper">Demo mode: any username and password will work.</div>
+    </main>
+  </body>
+</html>
