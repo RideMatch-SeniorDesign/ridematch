@@ -56,8 +56,6 @@
 
 ## 3) Sprint Plan Overview
 
-## 3) Sprint Plan Overview
-
 ### Sprint 1: 1/20/2026 - 2/2/2026
 **Sprint Goal:**  
 Stand up the project foundation (repo + working scaffold + low-fi UI flows) so development can move fast starting Sprint 2.
@@ -270,4 +268,5 @@ Finalize deliverables: documentation, final verification, and presentation/demo 
   - Decisions:  
   - Action items (owner + due date):
     -  
+
 
