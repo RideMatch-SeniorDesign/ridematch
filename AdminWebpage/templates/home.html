@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RideMatch Admin Home</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <main class="card center">
+      <div class="brand">RideMatch Admin</div>
+      <h1>welcome to ridematch</h1>
+      {% if username %}
+      <p class="muted">Signed in as {{ username }}</p>
+      {% endif %}
+      <form method="post" action="{{ url_for('logout') }}">
+        <button class="secondary" type="submit">Log Out</button>
+      </form>
+    </main>
+  </body>
+</html>
