@@ -1,8 +1,7 @@
+-- DDL --
 DROP DATABASE IF EXISTS `ride_match_db`;
 CREATE DATABASE `ride_match_db`;
 USE `ride_match_db`;
-
--- DDL --
 
 -- ACCOUNT TABLE
 CREATE TABLE `account` (
