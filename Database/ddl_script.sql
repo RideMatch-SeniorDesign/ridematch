@@ -43,6 +43,7 @@ CREATE TABLE `rider` (
 	`AccountID` int NOT NULL,
     `Preferences` varchar(100),
     `Rating` int DEFAULT 5,
+    `Status` varchar(50),
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Rider_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );
@@ -62,6 +63,7 @@ CREATE TABLE `driver` (
 	`AccountID` int NOT NULL,
     `Preferences` varchar(100),
     `Rating` int DEFAULT 5,
+    `Status` varchar(50) DEFAULT 'pending',
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Driver_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );
@@ -112,7 +114,10 @@ CREATE VIEW `admin_login` AS
 SELECT
 	A.UserName,
     A.Email,
-    A.Password
+    A.Password,
+    A.PhoneNum,
+    A.FirstName,
+    A.LastName
 FROM `account` A
 JOIN `admin` Ad ON Ad.AccountID = A.AccountID;
 
@@ -121,7 +126,11 @@ CREATE VIEW `rider_login` AS
 SELECT
 	A.UserName,
     A.Email,
-    A.Password
+    A.Password,
+    A.PhoneNum,
+    A.FirstName,
+    A.LastName,
+    R.Status
 FROM `account` A
 JOIN `rider` R ON R.AccountID = A.AccountID;
 
@@ -130,6 +139,10 @@ CREATE VIEW `driver_login` AS
 SELECT
 	A.UserName,
     A.Email,
-    A.Password
+    A.Password,
+    A.PhoneNum,
+    A.FirstName,
+    A.LastName,
+    D.Status
 FROM `account` A
 JOIN `driver` D ON D.AccountID = A.AccountID;
