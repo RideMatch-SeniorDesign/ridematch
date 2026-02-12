@@ -15,6 +15,16 @@
       {% if error %}
       <div class="error" role="alert">{{ error }}</div>
       {% endif %}
+      {% if lockout_seconds_remaining and lockout_seconds_remaining > 0 %}
+      <div
+        class="error"
+        role="status"
+        id="lockout-timer"
+        data-seconds-left="{{ lockout_seconds_remaining }}"
+      >
+        Too many failed attempts. Try again in {{ lockout_seconds_remaining }} seconds.
+      </div>
+      {% endif %}
 
       <form method="post" action="{{ url_for('login') }}">
         <label for="username">Username</label>
@@ -30,5 +40,29 @@
         Test admin password: {{ admin_password }}
       </div>
     </main>
+    {% if lockout_seconds_remaining and lockout_seconds_remaining > 0 %}
+    <script>
+      (function () {
+        const timer = document.getElementById("lockout-timer");
+        if (!timer) return;
+        let secondsLeft = Number(timer.dataset.secondsLeft || "0");
+        const updateText = () => {
+          const suffix = secondsLeft === 1 ? "second" : "seconds";
+          timer.textContent =
+            "Too many failed attempts. Try again in " + secondsLeft + " " + suffix + ".";
+        };
+        updateText();
+        const interval = setInterval(() => {
+          secondsLeft -= 1;
+          if (secondsLeft <= 0) {
+            clearInterval(interval);
+            window.location.reload();
+            return;
+          }
+          updateText();
+        }, 1000);
+      })();
+    </script>
+    {% endif %}
   </body>
 </html>

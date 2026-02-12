@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import time
 from flask import Flask, redirect, render_template, request, session, url_for
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 ADMIN_USERNAME = os.environ.get("ADMIN_TEST_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_TEST_PASSWORD", "ridematch123")
+MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "5"))
+LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))
 
 
 def _is_logged_in() -> bool:
@@ -69,17 +72,53 @@ def login():
         return redirect(url_for("home"))
 
     error = None
+    lockout_seconds_remaining = 0
+    now = time.time()
+    lockout_until = session.get("login_lockout_until")
+
+    if lockout_until:
+        lockout_seconds_remaining = max(0, int(lockout_until - now))
+        if lockout_seconds_remaining == 0:
+            session.pop("login_lockout_until", None)
+            session.pop("failed_login_attempts", None)
+            lockout_until = None
+
     if request.method == "POST":
+        if lockout_until and lockout_seconds_remaining > 0:
+            error = "Too many failed attempts. Try again in a moment."
+            return render_template(
+                "login.html",
+                error=error,
+                admin_username=ADMIN_USERNAME,
+                admin_password=ADMIN_PASSWORD,
+                lockout_seconds_remaining=lockout_seconds_remaining,
+            )
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
 
         if not username or not password:
             error = "Please enter both a username and password."
         elif username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
-            error = "Invalid username or password."
+            failed_attempts = int(session.get("failed_login_attempts", 0)) + 1
+            session["failed_login_attempts"] = failed_attempts
+
+            if failed_attempts >= MAX_LOGIN_ATTEMPTS:
+                session["failed_login_attempts"] = 0
+                session["login_lockout_until"] = now + LOGIN_LOCKOUT_SECONDS
+                lockout_seconds_remaining = LOGIN_LOCKOUT_SECONDS
+                error = "Too many failed attempts. Try again in a moment."
+            else:
+                attempts_left = MAX_LOGIN_ATTEMPTS - failed_attempts
+                error = (
+                    "Invalid username or password. "
+                    f"{attempts_left} attempt(s) remaining."
+                )
         else:
             session["logged_in"] = True
             session["username"] = ADMIN_USERNAME
+            session.pop("failed_login_attempts", None)
+            session.pop("login_lockout_until", None)
             return redirect(url_for("home"))
 
     return render_template(
@@ -87,6 +126,7 @@ def login():
         error=error,
         admin_username=ADMIN_USERNAME,
         admin_password=ADMIN_PASSWORD,
+        lockout_seconds_remaining=lockout_seconds_remaining,
     )
 
 
