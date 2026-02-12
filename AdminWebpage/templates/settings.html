@@ -1,0 +1,55 @@
+{% extends "dashboard_base.html" %}
+{% set page_title = "RideMatch Settings" %}
+{% set header_title = "Settings" %}
+
+{% block content %}
+<section class="grid-two">
+  <article class="panel">
+    <h2>Admin Account</h2>
+    <div class="table-box">
+      <h3>Profile</h3>
+      <div class="row">
+        <span>Username</span>
+        <span>{{ username }}</span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="row">
+        <span>Role</span>
+        <span>System Administrator</span>
+        <span></span>
+        <span></span>
+      </div>
+    </div>
+    <div class="button-stack">
+      <button class="secondary">Change Password</button>
+      <button class="secondary">Enable 2FA</button>
+    </div>
+  </article>
+
+  <article class="panel">
+    <h2>Platform Settings</h2>
+    <div class="table-box">
+      <h3>Operational Flags</h3>
+      <div class="row">
+        <span>New Driver Auto-Approval</span>
+        <span>Disabled</span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="row">
+        <span>Ride Monitoring Alerts</span>
+        <span>Enabled</span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="row">
+        <span>Weekly Summary Email</span>
+        <span>Enabled</span>
+        <span></span>
+        <span></span>
+      </div>
+    </div>
+  </article>
+</section>
+{% endblock %}
