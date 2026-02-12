@@ -1,0 +1,52 @@
+{% extends "dashboard_base.html" %}
+{% set page_title = "RideMatch Driver Management" %}
+{% set header_title = "Driver Management" %}
+
+{% block content %}
+<section>
+  <article class="panel">
+    <h2>Drivers</h2>
+    <div class="subtabs">
+      <button class="subtab active">All Drivers</button>
+      <button class="subtab">New Applications</button>
+      <button class="subtab">Reports</button>
+    </div>
+
+    <div class="table-box">
+      <h3>All Drivers</h3>
+      {% for row in all_drivers %}
+      <div class="row">
+        <span>{{ row.name }}</span>
+        <span>{{ row.rating }} stars</span>
+        <span>{{ row.rides }} rides</span>
+        <button class="mini">{{ row.status }}</button>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="table-box">
+      <h3>New Applications</h3>
+      {% for row in new_applications %}
+      <div class="row">
+        <span>{{ row.name }}</span>
+        <button class="mini">{{ row.action }}</button>
+        <span>{{ "Approved" if row.approved else "Pending" }}</span>
+        <span></span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="table-box">
+      <h3>Driver Reports</h3>
+      {% for row in reports %}
+      <div class="row">
+        <span>{{ row.summary }}</span>
+        <button class="mini">{{ row.action }}</button>
+        <span></span>
+        <span></span>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}

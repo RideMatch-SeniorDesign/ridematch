@@ -1,21 +1,38 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>RideMatch Admin Home</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
-  </head>
-  <body>
-    <main class="card center">
-      <div class="brand">RideMatch Admin</div>
-      <h1>welcome to ridematch</h1>
-      {% if username %}
-      <p class="muted">Signed in as {{ username }}</p>
-      {% endif %}
-      <form method="post" action="{{ url_for('logout') }}">
-        <button class="secondary" type="submit">Log Out</button>
-      </form>
-    </main>
-  </body>
-</html>
+{% extends "dashboard_base.html" %}
+{% set page_title = "RideMatch Admin Home" %}
+{% set header_title = "Admin Home" %}
+
+{% block content %}
+<section class="grid-two">
+  <article class="panel">
+    <h2>New Drivers</h2>
+    <ul class="list-box">
+      {% for driver in new_drivers %}
+      <li>
+        <span>{{ driver.name }}</span>
+        <span class="actions">{{ "Pending Review" if driver.pending_docs else "Ready" }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="panel">
+    <h2>Driver Feedback</h2>
+    <div class="snapshot">
+      <div class="pie-wrap">
+        <div class="pie"></div>
+        <div class="legend">
+          <div>Income</div>
+          <div>Drivers</div>
+          <div>Other</div>
+        </div>
+      </div>
+      <ul class="notes">
+        {% for item in driver_feedback %}
+        <li>{{ item.text }} <button class="mini">view</button></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </article>
+</section>
+{% endblock %}

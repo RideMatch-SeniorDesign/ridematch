@@ -1,0 +1,42 @@
+{% extends "dashboard_base.html" %}
+{% set page_title = "RideMatch Analytics" %}
+{% set header_title = "Analytics" %}
+
+{% block content %}
+<section class="grid-two">
+  <article class="panel">
+    <h2>Performance Overview</h2>
+    <div class="analytics-pie">
+      <div class="pie"></div>
+      <p class="muted">Income vs Expenses vs Operations</p>
+    </div>
+    <div class="button-stack">
+      <button class="secondary">View All Rides</button>
+      <button class="secondary">View All Reviews</button>
+      <button class="secondary">View Expense Reports</button>
+    </div>
+  </article>
+
+  <article class="panel">
+    <h2>Recent Activity</h2>
+    <div class="split-lists">
+      <div>
+        <h3>Recent Reviews</h3>
+        <ul class="notes">
+          {% for review in recent_reviews %}
+          <li>{{ review }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div>
+        <h3>Recent Rides</h3>
+        <ul class="notes">
+          {% for ride in recent_rides %}
+          <li>{{ ride }} <button class="mini">view</button></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </article>
+</section>
+{% endblock %}
