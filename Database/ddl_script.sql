@@ -67,6 +67,27 @@ CREATE TABLE `driver` (
     CONSTRAINT `Driver_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );
 
+-- DRIVER_INFORMATION TABLE
+CREATE TABLE `driver_information` (
+    `DriverID` int NOT NULL,
+    `FirstName` varchar(50) DEFAULT NULL,
+    `LastName` varchar(50) DEFAULT NULL,
+    `Email` varchar(100) DEFAULT NULL,
+    `PhoneNum` varchar(20) DEFAULT NULL,
+    `DateOfBirth` date DEFAULT NULL,
+    `LicenseState` varchar(2) DEFAULT NULL,
+    `LicenseNumber` varchar(50) DEFAULT NULL,
+    `LicenseExpires` date DEFAULT NULL,
+    `InsuranceProvider` varchar(100) DEFAULT NULL,
+    `InsurancePolicy` varchar(50) DEFAULT NULL,
+    `InformationNotes` varchar(255) DEFAULT NULL,
+    `UpdatedAt` timestamp(6) DEFAULT current_timestamp(6) ON UPDATE current_timestamp(6),
+    PRIMARY KEY (`DriverID`),
+    UNIQUE KEY `DriverInfoEmail_UQ` (`Email`),
+    UNIQUE KEY `LicenseNumber_UQ` (`LicenseNumber`),
+    CONSTRAINT `FK_DriverID_driver_information` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)
+);
+
 -- CAR TABLE
 CREATE TABLE `car` (
     `DriverID` int NOT NULL,
@@ -96,12 +117,27 @@ CREATE TABLE `trip` (
     `Status` enum('requested', 'accepted', 'in_progress', 'canceled', 'completed') NOT NULL,
     `StartLoc` varchar(100) NOT NULL,
     `EndLoc` varchar(100) NOT NULL,
-    `FinalCost` decimal(2) DEFAULT 0.00,
+    `FinalCost` decimal(10,2) DEFAULT 0.00,
     `DriverRate` int,
     `RiderRate` int,
     PRIMARY KEY (`TripID`),
     CONSTRAINT `FK_RiderID_trip` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
     CONSTRAINT `FK_DriverID_trip` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)
+);
+
+-- DRIVER_REVIEW TABLE
+CREATE TABLE `driver_review` (
+    `ReviewID` int AUTO_INCREMENT,
+    `DriverID` int NOT NULL,
+    `RiderID` int NOT NULL,
+    `TripID` int,
+    `Rating` int NOT NULL,
+    `Comment` varchar(255),
+    `ReviewDate` timestamp(6) DEFAULT current_timestamp(6),
+    PRIMARY KEY (`ReviewID`),
+    CONSTRAINT `FK_DriverID_driver_review` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`),
+    CONSTRAINT `FK_RiderID_driver_review` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
+    CONSTRAINT `FK_TripID_driver_review` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
 );
 
 -- Triggers --
