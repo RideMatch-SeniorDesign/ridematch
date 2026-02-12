@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import timedelta
 from flask import Flask, redirect, render_template, request, session, url_for
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -10,10 +11,19 @@ ADMIN_USERNAME = os.environ.get("ADMIN_TEST_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_TEST_PASSWORD", "ridematch123")
 MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "5"))
 LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))
+SESSION_DAYS = int(os.environ.get("ADMIN_SESSION_DAYS", "365"))
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 
 def _is_logged_in() -> bool:
     return bool(session.get("logged_in"))
+
+
+@app.before_request
+def _persist_logged_in_session() -> None:
+    if session.get("logged_in"):
+        session.permanent = True
 
 
 def _dashboard_data() -> dict:
@@ -115,6 +125,7 @@ def login():
                     f"{attempts_left} attempt(s) remaining."
                 )
         else:
+            session.permanent = True
             session["logged_in"] = True
             session["username"] = ADMIN_USERNAME
             session.pop("failed_login_attempts", None)
