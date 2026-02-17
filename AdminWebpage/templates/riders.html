@@ -1,0 +1,88 @@
+{% extends "dashboard_base.html" %}
+{% set page_title = "RideMatch Rider Management" %}
+
+{% block content %}
+<section class="driver-shell">
+  <div class="driver-metrics">
+    <div class="metric-card metric-blue">
+      <small>Total Riders</small>
+      <strong>{{ total_rider_count | default(0) }}</strong>
+    </div>
+    <div class="metric-card metric-green">
+      <small>Active Riders</small>
+      <strong>{{ (all_riders | length) if all_riders else 0 }}</strong>
+    </div>
+    <div class="metric-card metric-purple">
+      <small>Total Rides Taken</small>
+      <strong>{{ total_rides | default(0) }}</strong>
+    </div>
+  </div>
+
+  <article class="panel">
+    <h2>Riders</h2>
+
+    {% if all_riders %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Rider</th>
+            <th>Contact</th>
+            <th>Preferences</th>
+            <th>Rides Taken</th>
+            <th>Average Rating</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rider in all_riders %}
+          <tr>
+            <td>
+              <strong>{{ rider.name }}</strong>
+            </td>
+            <td>
+              <div>{{ rider.email or 'N/A' }}</div>
+              <small class="text-muted">{{ rider.phone or 'N/A' }}</small>
+            </td>
+            <td>
+              <span class="badge bg-light text-dark">{{ rider.preferences or 'None' }}</span>
+            </td>
+            <td>{{ rider.rides | default(0) }}</td>
+            <td>
+              <span class="text-warning">
+                {% if rider.rating %}★ {{ rider.rating }}/5{% else %}No ratings{% endif %}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-message" style="text-align: center; padding: 40px;">
+      <i class="bi bi-people"></i>
+      <p>No riders found.</p>
+    </div>
+    {% endif %}
+  </article>
+
+  <article class="panel">
+    <h2>Rider Activity</h2>
+
+    {% if recent_rides %}
+    <div style="padding: 20px;">
+      <h3>Recent Rides</h3>
+      <ul class="list-box">
+        {% for ride in recent_rides[:10] %}
+        <li>{{ ride }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% else %}
+    <div class="empty-message" style="text-align: center; padding: 40px;">
+      <i class="bi bi-calendar2-check"></i>
+      <p>No recent rides.</p>
+    </div>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

@@ -1,38 +1,234 @@
 {% extends "dashboard_base.html" %}
 {% set page_title = "RideMatch Admin Home" %}
-{% set header_title = "Admin Home" %}
 
 {% block content %}
-<section class="grid-two">
-  <article class="panel">
-    <h2>New Drivers</h2>
-    <ul class="list-box">
-      {% for driver in new_drivers %}
-      <li>
-        <span>{{ driver.name }}</span>
-        <span class="actions">{{ "Pending Review" if driver.pending_docs else "Ready" }}</span>
-      </li>
-      {% endfor %}
-    </ul>
-  </article>
+<section class="home-shell">
+  <div class="home-grid">
+    <article class="panel queue-panel">
+      <div class="panel-headline">
+        <h2><i class="bi bi-person-vcard"></i> New Driver Queue</h2>
+        <span class="status-tag status-pending">{{ new_applications|length }} awaiting review</span>
+      </div>
+      <div class="queue-list">
+        {% for driver in new_applications %}
+        {% set driver_status = (driver.status or "pending")|lower %}
+        <div class="queue-item">
+          <div class="queue-avatar">
+            <i class="bi bi-person-circle"></i>
+          </div>
+          <div class="queue-content">
+            <h3>{{ driver.name }}</h3>
+            <p>
+              Status:
+              <span
+                class="status-tag {% if driver_status in ['denied', 'rejected'] %}status-rejected{% elif driver_status in ['pending', 'under_review'] %}status-pending{% else %}status-approved{% endif %}"
+              >
+                {{ driver.status or "Pending" }}
+              </span>
+            </p>
+          </div>
+          <div class="queue-actions">
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="{{ url_for('drivers', tab='all', driver_id=driver.account_id) }}"
+            >
+              <i class="bi bi-info-circle"></i>
+              Info
+            </a>
+            <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
+              <input type="hidden" name="action" value="approve" />
+              <button type="submit" class="btn btn-sm btn-success">
+                <i class="bi bi-check-circle"></i>
+                Approve
+              </button>
+            </form>
+            <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
+              <input type="hidden" name="action" value="deny" />
+              <button type="submit" class="btn btn-sm btn-danger">
+                <i class="bi bi-x-circle"></i>
+                Deny
+              </button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-message">
+          <i class="bi bi-check2-circle"></i>
+          <span>No pending applications right now.</span>
+        </div>
+        {% endfor %}
+      </div>
+    </article>
 
-  <article class="panel">
-    <h2>Driver Feedback</h2>
-    <div class="snapshot">
-      <div class="pie-wrap">
-        <div class="pie"></div>
-        <div class="legend">
-          <div>Income</div>
-          <div>Drivers</div>
-          <div>Other</div>
+    <article class="panel budget-panel">
+      <div class="panel-headline">
+        <h2><i class="bi bi-pie-chart"></i> Budget Overview</h2>
+      </div>
+      <div class="budget-layout">
+        <div class="budget-ring" id="budgetRing" role="img" aria-label="Budget pie chart"></div>
+        <div>
+          <ul class="budget-legend-list">
+            {% for item in budget_breakdown %}
+            <li>
+              <span class="legend-dot" style="background-color: {{ item.color }};"></span>
+              <span>{{ item.label }}</span>
+              <strong>${{ "{:,.0f}".format(item.value) }}</strong>
+            </li>
+            {% endfor %}
+          </ul>
+          <p class="budget-total">
+            Total:
+            <strong>${{ "{:,.0f}".format(budget_breakdown|sum(attribute='value')) }}</strong>
+          </p>
         </div>
       </div>
-      <ul class="notes">
-        {% for item in driver_feedback %}
-        <li>{{ item.text }} <button class="mini">view</button></li>
+    </article>
+
+    <article class="panel important-panel">
+      <div class="panel-headline">
+        <h2><i class="bi bi-megaphone"></i> Important Reviews</h2>
+      </div>
+      <div class="important-review-list">
+        {% if driver_reviews %}
+        {% for row in driver_reviews[:5] %}
+        {% set tone = 'review-positive' if row.rating|float >= 4 else ('review-warning' if row.rating|float >= 3 else 'review-critical') %}
+        <article class="review-highlight {{ tone }}">
+          <div class="review-highlight-head">
+            <strong>{{ row.driver_name }}</strong>
+            <span class="badge text-bg-light">{{ row.rating }}/5</span>
+          </div>
+          <p>{{ row.comment or "No comment provided." }}</p>
+          <small class="muted">
+            {{ row.rider_name }}
+            {% if row.review_date %} | {{ row.review_date.strftime('%Y-%m-%d') }}{% endif %}
+          </small>
+        </article>
         {% endfor %}
-      </ul>
-    </div>
-  </article>
+        {% elif reports %}
+        {% for report in reports[:5] %}
+        <article class="review-highlight review-warning">
+          <p>{{ report.summary }}</p>
+        </article>
+        {% endfor %}
+        {% else %}
+        <div class="empty-message">
+          <i class="bi bi-chat-left-text"></i>
+          <span>No reviews available.</span>
+        </div>
+        {% endif %}
+      </div>
+    </article>
+
+    <article class="panel calendar-panel">
+      <div class="panel-headline">
+        <h2><i class="bi bi-calendar2-week"></i> Upcoming Tasks & Events</h2>
+      </div>
+      <div class="calendar-wrap">
+        <div class="calendar-header">
+          <button id="calendarPrev" class="mini" type="button"><i class="bi bi-chevron-left"></i></button>
+          <h3 id="calendarTitle">Schedule</h3>
+          <button id="calendarNext" class="mini" type="button"><i class="bi bi-chevron-right"></i></button>
+        </div>
+        <div class="calendar-grid" id="calendarGrid" aria-live="polite"></div>
+        <ul class="event-list">
+          {% for event in upcoming_events %}
+          <li>
+            <div>
+              <strong>{{ event.title }}</strong>
+              <small class="d-block muted">{{ event.date }}</small>
+            </div>
+            <span class="status-tag status-info">{{ event.type }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </article>
+  </div>
 </section>
+{% endblock %}
+
+{% block page_scripts %}
+<script id="budget-data" type="application/json">{{ budget_breakdown|tojson }}</script>
+<script id="event-data" type="application/json">{{ upcoming_events|tojson }}</script>
+<script>
+  (function () {
+    const budgetDataEl = document.getElementById("budget-data");
+    const eventDataEl = document.getElementById("event-data");
+    const budgetRing = document.getElementById("budgetRing");
+    const grid = document.getElementById("calendarGrid");
+    const title = document.getElementById("calendarTitle");
+    const prevBtn = document.getElementById("calendarPrev");
+    const nextBtn = document.getElementById("calendarNext");
+    if (!budgetDataEl || !eventDataEl || !budgetRing || !grid || !title || !prevBtn || !nextBtn) {
+      return;
+    }
+
+    const budgetData = JSON.parse(budgetDataEl.textContent || "[]");
+    const events = JSON.parse(eventDataEl.textContent || "[]");
+    const total = budgetData.reduce((sum, item) => sum + Number(item.value || 0), 0) || 1;
+    let angle = 0;
+    const sections = budgetData.map((item) => {
+      const start = angle;
+      const slice = (Number(item.value || 0) / total) * 360;
+      angle += slice;
+      return `${item.color} ${start}deg ${angle}deg`;
+    });
+    budgetRing.style.background = `conic-gradient(${sections.join(", ")})`;
+
+    const eventDateSet = new Set(events.map((event) => event.date));
+    let viewDate = new Date();
+    viewDate.setDate(1);
+
+    function renderCalendar() {
+      const year = viewDate.getFullYear();
+      const month = viewDate.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const startWeekday = firstDay.getDay();
+      const totalDays = new Date(year, month + 1, 0).getDate();
+      const monthTitle = firstDay.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+      title.textContent = monthTitle;
+
+      grid.innerHTML = "";
+      ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].forEach((label) => {
+        const headCell = document.createElement("div");
+        headCell.className = "calendar-day-name";
+        headCell.textContent = label;
+        grid.appendChild(headCell);
+      });
+
+      for (let i = 0; i < startWeekday; i += 1) {
+        const blank = document.createElement("div");
+        blank.className = "calendar-cell calendar-empty";
+        grid.appendChild(blank);
+      }
+
+      for (let day = 1; day <= totalDays; day += 1) {
+        const cell = document.createElement("div");
+        const date = new Date(year, month, day);
+        const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        cell.className = "calendar-cell";
+        if (eventDateSet.has(iso)) {
+          cell.classList.add("has-event");
+        }
+        if (new Date().toDateString() === date.toDateString()) {
+          cell.classList.add("is-today");
+        }
+        cell.textContent = String(day);
+        grid.appendChild(cell);
+      }
+    }
+
+    prevBtn.addEventListener("click", function () {
+      viewDate.setMonth(viewDate.getMonth() - 1);
+      renderCalendar();
+    });
+
+    nextBtn.addEventListener("click", function () {
+      viewDate.setMonth(viewDate.getMonth() + 1);
+      renderCalendar();
+    });
+
+    renderCalendar();
+  })();
+</script>
 {% endblock %}

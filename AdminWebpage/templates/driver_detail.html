@@ -1,0 +1,89 @@
+{% extends "dashboard_base.html" %}
+{% set page_title = "Driver Details" %}
+{% set header_title = "Driver Details" %}
+
+{% block content %}
+<section>
+  <article class="panel">
+    <h2>{{ driver.name }}</h2>
+
+    <div class="table-box">
+      <h3>Basic Information</h3>
+      <div class="row">
+        <span><strong>Email:</strong></span>
+        <span>{{ driver.email or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Phone:</strong></span>
+        <span>{{ driver.phone or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Age:</strong></span>
+        <span>{{ driver.age or "N/A" }}</span>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <h3>License Verification</h3>
+      <div class="row">
+        <span><strong>License State:</strong></span>
+        <span>{{ driver.license_state or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>License Number:</strong></span>
+        <span>{{ driver.license_number or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>License Expiration:</strong></span>
+        <span>{{ driver.license_expiration or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Background Check:</strong></span>
+        <span>{{ driver.background_check or "Pending" }}</span>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <h3>Vehicle Information</h3>
+      <div class="row">
+        <span><strong>Vehicle:</strong></span>
+        <span>
+          {{ driver.vehicle_make or "" }}
+          {{ driver.vehicle_model or "" }}
+        </span>
+      </div>
+      <div class="row">
+        <span><strong>License Plate:</strong></span>
+        <span>{{ driver.license_plate or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Insurance Verified:</strong></span>
+        <span>{{ driver.insurance_verified or "Pending" }}</span>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <h3>Performance</h3>
+      <div class="row">
+        <span><strong>Rating:</strong></span>
+        <span>{{ driver.rating or "0.0" }} / 5</span>
+      </div>
+      <div class="row">
+        <span><strong>Total Rides:</strong></span>
+        <span>{{ driver.rides or "0" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Status:</strong></span>
+        <span class="text-capitalize">{{ driver.status or "Unknown" }}</span>
+      </div>
+    </div>
+
+    <div style="margin-top: 20px;">
+      <a href="{{ url_for('drivers') }}">
+        <button class="mini">Back to Drivers</button>
+      </a>
+    </div>
+
+  </article>
+</section>
+{% endblock %}
