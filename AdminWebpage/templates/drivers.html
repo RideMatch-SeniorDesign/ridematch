@@ -1,52 +1,242 @@
 {% extends "dashboard_base.html" %}
 {% set page_title = "RideMatch Driver Management" %}
-{% set header_title = "Driver Management" %}
 
 {% block content %}
-<section>
+<section class="driver-shell">
+  <div class="driver-metrics">
+    <div class="metric-card metric-blue">
+      <small>Total Drivers</small>
+      <strong>{{ total_driver_count }}</strong>
+    </div>
+    <div class="metric-card metric-amber">
+      <small>Pending Verification</small>
+      <strong>{{ unapproved_drivers|length }}</strong>
+    </div>
+    <div class="metric-card metric-indigo">
+      <small>Reviews</small>
+      <strong>{{ driver_reviews|length }}</strong>
+    </div>
+  </div>
+
   <article class="panel">
-    <h2>Drivers</h2>
-    <div class="subtabs">
-      <button class="subtab active">All Drivers</button>
-      <button class="subtab">New Applications</button>
-      <button class="subtab">Reports</button>
+    <ul class="nav nav-pills driver-nav mb-3">
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_driver_tab == 'all' else '' }}" href="{{ url_for('drivers', tab='all') }}">All Drivers</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_driver_tab == 'verification' else '' }}" href="{{ url_for('drivers', tab='verification') }}">Driver Verification</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_driver_tab == 'reviews' else '' }}" href="{{ url_for('drivers', tab='reviews') }}">Driver Reviews</a>
+      </li>
+    </ul>
+
+    {% if verification_notice == 'approved' %}
+    <div class="alert alert-success py-2">Driver application approved.</div>
+    {% elif verification_notice == 'denied' %}
+    <div class="alert alert-warning py-2">Driver application denied.</div>
+    {% elif verification_notice == 'update_failed' %}
+    <div class="alert alert-danger py-2">Could not update driver status. Please try again.</div>
+    {% endif %}
+
+    {% if active_driver_tab == 'all' %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Driver</th>
+            <th>Contact</th>
+            <th>Status</th>
+            <th>Rating</th>
+            <th>Rides</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in all_drivers %}
+          <tr>
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <span>{{ row.name }}</span>
+                <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('drivers', tab='all', driver_id=row.account_id) }}">Info</a>
+              </div>
+            </td>
+            <td>
+              <div>{{ row.email or 'N/A' }}</div>
+              <small class="text-muted">{{ row.phone or 'N/A' }}</small>
+            </td>
+            <td>
+              {% set status = (row.status or 'unknown')|lower %}
+              <span
+                class="status-tag {% if status == 'approved' %}status-approved{% elif status in ['pending', 'under_review'] %}status-pending{% elif status in ['denied', 'rejected'] %}status-rejected{% else %}status-info{% endif %}"
+              >
+                {{ row.status }}
+              </span>
+            </td>
+            <td>{{ row.rating }} / 5</td>
+            <td>{{ row.rides }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center text-muted">No approved or pending drivers found.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
 
-    <div class="table-box">
-      <h3>All Drivers</h3>
-      {% for row in all_drivers %}
-      <div class="row">
-        <span>{{ row.name }}</span>
-        <span>{{ row.rating }} stars</span>
-        <span>{{ row.rides }} rides</span>
-        <button class="mini">{{ row.status }}</button>
+    {% if selected_driver %}
+    <div class="card driver-detail mt-3">
+      <div class="card-body">
+        <h5 class="card-title mb-2">{{ selected_driver.name }}</h5>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <small class="text-muted d-block">Status</small>
+            <span class="fw-semibold text-capitalize">{{ selected_driver.status }}</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">Age</small>
+            <span class="fw-semibold">{{ selected_driver.age if selected_driver.age is not none else 'N/A' }}</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">Average Rating</small>
+            <span class="fw-semibold">{{ selected_driver.avg_rating }} / 5</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">Completed Rides</small>
+            <span class="fw-semibold">{{ selected_driver.total_rides }}</span>
+          </div>
+          <div class="col-md-6">
+            <small class="text-muted d-block">Email</small>
+            <span class="fw-semibold">{{ selected_driver.email or 'N/A' }}</span>
+          </div>
+          <div class="col-md-6">
+            <small class="text-muted d-block">Phone</small>
+            <span class="fw-semibold">{{ selected_driver.phone or 'N/A' }}</span>
+          </div>
+          <div class="col-12">
+            <small class="text-muted d-block">Driver Preferences</small>
+            <span class="fw-semibold">{{ selected_driver.preferences or 'None provided' }}</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">License State</small>
+            <span class="fw-semibold">{{ selected_driver.license_state or 'N/A' }}</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">License Number</small>
+            <span class="fw-semibold">{{ selected_driver.license_number or 'N/A' }}</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">License Expires</small>
+            <span class="fw-semibold">{{ selected_driver.license_expires.strftime('%Y-%m-%d') if selected_driver.license_expires else 'N/A' }}</span>
+          </div>
+          <div class="col-md-6">
+            <small class="text-muted d-block">Insurance Provider</small>
+            <span class="fw-semibold">{{ selected_driver.insurance_provider or 'N/A' }}</span>
+          </div>
+          <div class="col-md-6">
+            <small class="text-muted d-block">Insurance Policy</small>
+            <span class="fw-semibold">{{ selected_driver.insurance_policy or 'N/A' }}</span>
+          </div>
+          <div class="col-12">
+            <small class="text-muted d-block">Driver Notes</small>
+            <span class="fw-semibold">{{ selected_driver.driver_notes or 'No notes provided' }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {% if active_driver_tab == 'verification' %}
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Applicant</th>
+            <th>Contact</th>
+            <th>Status</th>
+            <th>Age</th>
+            <th>License Exp.</th>
+            <th>Insurance</th>
+            <th>Rating</th>
+            <th>Rides</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in unapproved_drivers %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td>
+              <div>{{ row.email or 'N/A' }}</div>
+              <small class="text-muted">{{ row.phone or 'N/A' }}</small>
+            </td>
+            <td>
+              {% set verify_status = (row.status or 'unknown')|lower %}
+              <span
+                class="status-tag {% if verify_status == 'approved' %}status-approved{% elif verify_status in ['pending', 'under_review'] %}status-pending{% elif verify_status in ['denied', 'rejected'] %}status-rejected{% else %}status-info{% endif %} text-capitalize"
+              >
+                {{ row.status }}
+              </span>
+            </td>
+            <td>{{ row.age if row.age is not none else 'N/A' }}</td>
+            <td>{{ row.license_expires.strftime('%Y-%m-%d') if row.license_expires else 'N/A' }}</td>
+            <td>{{ row.insurance_provider or 'N/A' }}</td>
+            <td>{{ row.rating }} / 5</td>
+            <td>{{ row.rides }}</td>
+            <td class="text-end verify-actions">
+              <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
+                <input type="hidden" name="action" value="approve" />
+                <button type="submit" class="btn btn-sm btn-success btn-approve shadow-sm">
+                  <i class="bi bi-check-circle"></i>
+                  Approve
+                </button>
+              </form>
+              <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
+                <input type="hidden" name="action" value="deny" />
+                <button type="submit" class="btn btn-sm btn-danger btn-deny shadow-sm">
+                  <i class="bi bi-x-circle"></i>
+                  Deny
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="9" class="text-center text-muted">No unapproved drivers waiting for verification.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if active_driver_tab == 'reviews' %}
+    <div class="review-grid">
+      {% for row in driver_reviews %}
+      {% set rating = row.rating|float %}
+      <article class="review-card {% if rating >= 4 %}review-positive{% elif rating >= 3 %}review-warning{% else %}review-critical{% endif %}">
+        <div class="review-top">
+          <div>
+            <h3>{{ row.driver_name }}</h3>
+            <small>Reviewed by {{ row.rider_name }}</small>
+          </div>
+          <span class="review-score">{{ row.rating }}/5</span>
+        </div>
+        <p>{{ row.comment or 'No comment provided.' }}</p>
+        <div class="review-meta">
+          <i class="bi bi-calendar3"></i>
+          <span>{{ row.review_date.strftime('%Y-%m-%d') if row.review_date else 'N/A' }}</span>
+        </div>
+      </article>
+      {% else %}
+      <div class="empty-message">
+        <i class="bi bi-chat-left-heart"></i>
+        <span>No driver reviews submitted yet.</span>
       </div>
       {% endfor %}
     </div>
-
-    <div class="table-box">
-      <h3>New Applications</h3>
-      {% for row in new_applications %}
-      <div class="row">
-        <span>{{ row.name }}</span>
-        <button class="mini">{{ row.action }}</button>
-        <span>{{ "Approved" if row.approved else "Pending" }}</span>
-        <span></span>
-      </div>
-      {% endfor %}
-    </div>
-
-    <div class="table-box">
-      <h3>Driver Reports</h3>
-      {% for row in reports %}
-      <div class="row">
-        <span>{{ row.summary }}</span>
-        <button class="mini">{{ row.action }}</button>
-        <span></span>
-        <span></span>
-      </div>
-      {% endfor %}
-    </div>
+    {% endif %}
   </article>
 </section>
 {% endblock %}
