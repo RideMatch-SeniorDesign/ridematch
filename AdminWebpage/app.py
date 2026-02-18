@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-import sys
 import time
-from datetime import date, timedelta
-from pathlib import Path
 from datetime import date, timedelta
 from pathlib import Path
 from flask import Flask, redirect, render_template, request, session, url_for
@@ -70,25 +67,12 @@ def _dashboard_data() -> dict:
         {"title": "Top driver recognition", "type": "Team", "date": (today + timedelta(days=14)).isoformat()},
     ]
 
-    today = date.today()
-    upcoming_events = [
-        {"title": "License renewal audit", "type": "Compliance", "date": (today + timedelta(days=2)).isoformat()},
-        {"title": "Driver onboarding review", "type": "Operations", "date": (today + timedelta(days=4)).isoformat()},
-        {"title": "Safety checklist update", "type": "Safety", "date": (today + timedelta(days=7)).isoformat()},
-        {"title": "Monthly budget sync", "type": "Finance", "date": (today + timedelta(days=10)).isoformat()},
-        {"title": "Top driver recognition", "type": "Team", "date": (today + timedelta(days=14)).isoformat()},
-    ]
-
     fallback_data = {
         "new_drivers": [
             {"name": "Bob Johnson", "pending_docs": True},
             {"name": "Sally Smith", "pending_docs": True},
             {"name": "Chris Ford", "pending_docs": False},
-            {"name": "Bob Johnson", "pending_docs": True},
-            {"name": "Sally Smith", "pending_docs": True},
-            {"name": "Chris Ford", "pending_docs": False},
         ],
-        "driver_feedback": [],
         "driver_feedback": [],
         "all_drivers": [
             {
@@ -129,49 +113,8 @@ def _dashboard_data() -> dict:
                 "email": "sally.smith@example.com",
                 "phone": "319-555-0202",
             }
-            {
-                "account_id": 1,
-                "name": "Bob Johnson",
-                "rating": "5.0",
-                "rides": 100,
-                "status": "approved",
-                "age": 32,
-                "license_state": "IA",
-                "license_number": "IA-214334",
-                "email": "bob.johnson@example.com",
-                "phone": "319-555-0201",
-            },
-            {
-                "account_id": 2,
-                "name": "Sally Smith",
-                "rating": "3.5",
-                "rides": 50,
-                "status": "pending",
-                "age": 29,
-                "license_state": "IA",
-                "license_number": "IA-992191",
-                "email": "sally.smith@example.com",
-                "phone": "319-555-0202",
-            },
-        ],
-        "unapproved_drivers": [
-            {
-                "account_id": 2,
-                "name": "Sally Smith",
-                "rating": "3.5",
-                "rides": 50,
-                "status": "pending",
-                "age": 29,
-                "license_expires": None,
-                "insurance_provider": "N/A",
-                "email": "sally.smith@example.com",
-                "phone": "319-555-0202",
-            }
         ],
         "new_applications": [
-            {"account_id": 2, "name": "Sally Smith", "approved": False, "status": "pending"},
-            {"account_id": 4, "name": "Ella Patel", "approved": False, "status": "under_review"},
-            {"account_id": 5, "name": "Jim Brown", "approved": False, "status": "pending"},
             {"account_id": 2, "name": "Sally Smith", "approved": False, "status": "pending"},
             {"account_id": 4, "name": "Ella Patel", "approved": False, "status": "under_review"},
             {"account_id": 5, "name": "Jim Brown", "approved": False, "status": "pending"},
@@ -376,20 +319,6 @@ def drivers():
         except Exception as exc:
             app.logger.warning("Driver detail load failed: %s", exc)
 
-    active_tab = request.args.get("tab", "all")
-    if active_tab not in {"all", "verification", "reviews"}:
-        active_tab = "all"
-
-    selected_driver_id = request.args.get("driver_id", type=int)
-    selected_driver = None
-    if selected_driver_id:
-        try:
-            from Database.admin_queries import driver_detail
-
-            selected_driver = driver_detail(selected_driver_id)
-        except Exception as exc:
-            app.logger.warning("Driver detail load failed: %s", exc)
-
     return render_template(
         "drivers.html",
         username=session.get("username"),
@@ -462,28 +391,6 @@ def riders():
         current_tab="riders",
         **_dashboard_data(),
     )
-
-
-@app.route("/drivers/verify/<int:driver_id>", methods=["POST"])
-def verify_driver(driver_id: int):
-    if not _is_logged_in():
-        return redirect(url_for("login"))
-
-    action = request.form.get("action", "").strip().lower()
-    if action not in {"approve", "deny"}:
-        return redirect(url_for("drivers", tab="verification", notice="invalid_action"))
-
-    notice = "update_failed"
-    try:
-        from Database.admin_queries import update_driver_status
-
-        updated = update_driver_status(driver_id, action)
-        if updated:
-            notice = "approved" if action == "approve" else "denied"
-    except Exception as exc:
-        app.logger.warning("Driver verification update failed: %s", exc)
-
-    return redirect(url_for("drivers", tab="verification", notice=notice))
 
 
 @app.route("/analytics")

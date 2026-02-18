@@ -18,6 +18,7 @@ DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
     "user": os.getenv("DB_USER", "ride_match_dev"),
     "password": os.getenv("DB_PASSWORD", "CSE2026?!"),
+    "database": os.getenv("DB_NAME", "ride_match_db")
 }
 
 def load_sql_file(filename):
