@@ -26,6 +26,7 @@
         <nav class="top-nav" aria-label="Admin sections">
           <a class="tab {{ 'active' if current_tab == 'home' else '' }}" href="{{ url_for('home') }}">Home</a>
           <a class="tab {{ 'active' if current_tab == 'drivers' else '' }}" href="{{ url_for('drivers') }}">Drivers</a>
+          <a class="tab {{ 'active' if current_tab == 'riders' else '' }}" href="{{ url_for('riders') }}">Riders</a>
           <a class="tab {{ 'active' if current_tab == 'analytics' else '' }}" href="{{ url_for('analytics') }}">Analytics</a>
           <a class="tab {{ 'active' if current_tab == 'settings' else '' }}" href="{{ url_for('settings') }}">Settings</a>
         </nav>

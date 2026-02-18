@@ -5,7 +5,7 @@
 <section class="driver-shell">
   <div class="driver-metrics">
     <div class="metric-card metric-blue">
-      <small>Total Drivers</small>
+      <small>Active Drivers</small>
       <strong>{{ total_driver_count }}</strong>
     </div>
     <div class="metric-card metric-amber">
@@ -41,6 +41,7 @@
 
     {% if active_driver_tab == 'all' %}
     <div class="table-responsive">
+      <h3>Active Drivers</h3>
       <table class="table table-hover align-middle">
         <thead>
           <tr>
@@ -57,7 +58,10 @@
             <td>
               <div class="d-flex align-items-center gap-2">
                 <span>{{ row.name }}</span>
-                <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('drivers', tab='all', driver_id=row.account_id) }}">Info</a>
+                <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('driver_detail', driver_id=row.account_id) }}">
+                  <i class="bi bi-arrow-up-right"></i>
+                  Details
+                </a>
               </div>
             </td>
             <td>
@@ -140,6 +144,12 @@
           <div class="col-12">
             <small class="text-muted d-block">Driver Notes</small>
             <span class="fw-semibold">{{ selected_driver.driver_notes or 'No notes provided' }}</span>
+          </div>
+          <div class="col-12 mt-3">
+            <a href="{{ url_for('driver_detail', driver_id=selected_driver.account_id) }}" class="btn btn-primary btn-sm">
+              <i class="bi bi-arrow-up-right"></i>
+              View Full Details
+            </a>
           </div>
         </div>
       </div>

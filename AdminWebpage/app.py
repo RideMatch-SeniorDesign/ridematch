@@ -6,11 +6,18 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 from flask import Flask, redirect, render_template, request, session, url_for
+from dotenv import load_dotenv, set_key
 
 # Allow running from either project root or AdminWebpage directory.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ADMIN_PATH = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(ADMIN_PATH) not in sys.path:
+    sys.path.insert(0, str(ADMIN_PATH))
+
+ENV_PATH = PROJECT_ROOT / ".env"
+load_dotenv(ENV_PATH)
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
@@ -25,6 +32,23 @@ app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 def _is_logged_in() -> bool:
     return bool(session.get("logged_in"))
+
+
+def _set_admin_password(new_password: str) -> tuple[bool, str | None]:
+    global ADMIN_PASSWORD
+    ADMIN_PASSWORD = new_password
+    os.environ["ADMIN_TEST_PASSWORD"] = new_password
+
+    try:
+        if ENV_PATH.exists():
+            set_key(str(ENV_PATH), "ADMIN_TEST_PASSWORD", new_password)
+        else:
+            with ENV_PATH.open("a", encoding="utf-8") as env_file:
+                env_file.write(f"ADMIN_TEST_PASSWORD={new_password}\n")
+        return True, None
+    except Exception as exc:
+        app.logger.warning("Could not persist ADMIN_TEST_PASSWORD to .env: %s", exc)
+        return False, "Password changed for this session only; could not update .env."
 
 
 @app.before_request
@@ -136,13 +160,33 @@ def _dashboard_data() -> dict:
         ],
         "upcoming_events": upcoming_events,
         "total_driver_count": 3,
+        "all_riders": [
+            {"name": "Sofia Ramirez", "email": "sofia.ramirez@example.com", "phone": "319-555-0104", "preferences": "quiet ride", "rating": "4.5", "rides": 8},
+            {"name": "Liam Carter", "email": "liam.carter@example.com", "phone": "319-555-0105", "preferences": "music okay", "rating": "4.0", "rides": 5},
+            {"name": "Noah Bennett", "email": "noah.bennett@example.com", "phone": "319-555-0106", "preferences": "pet friendly", "rating": "4.8", "rides": 12},
+        ],
+        "total_rider_count": 6,
+        "total_rides": 20,
         "db_error": None,
     }
 
     try:
-        from Database.admin_queries import fetch_dashboard_data
+        from Database.admin_queries import fetch_dashboard_data, fetch_riders, fetch_rider_statistics
 
         data = fetch_dashboard_data()
+        
+        # Add rider data
+        try:
+            riders_list = fetch_riders()
+            rider_stats = fetch_rider_statistics()
+            data["all_riders"] = riders_list
+            data["total_rider_count"] = rider_stats.get("total_rider_count", 0)
+            data["total_rides"] = rider_stats.get("total_rides", 0)
+        except Exception:
+            data["all_riders"] = []
+            data["total_rider_count"] = 0
+            data["total_rides"] = 0
+        
         pending_count = len(data.get("unapproved_drivers", []))
         review_count = len(data.get("driver_reviews", []))
         total_drivers = int(data.get("total_driver_count") or len(data.get("all_drivers", [])) or 0)
@@ -169,10 +213,12 @@ def _dashboard_data() -> dict:
             ]
         return data
     except Exception as exc:
+        import traceback
         fallback_data["db_error"] = (
             "Showing sample data because database data could not be loaded."
         )
-        app.logger.warning("Dashboard DB fallback: %s", exc)
+        app.logger.error("Dashboard DB fallback: %s", exc)
+        app.logger.error("Traceback: %s", traceback.format_exc())
         return fallback_data
 
 
@@ -306,6 +352,47 @@ def verify_driver(driver_id: int):
     return redirect(url_for("drivers", tab="verification", notice=notice))
 
 
+@app.route("/drivers/detail/<int:driver_id>")
+def driver_detail(driver_id):
+    if not _is_logged_in():
+        return redirect(url_for("login"))
+
+    # If DB function exists, use it; otherwise use fallback data
+    try:
+        from Database.admin_queries import driver_detail as fetch_driver
+        driver = fetch_driver(driver_id)
+    except Exception:
+        # Fallback to finding driver from dashboard data
+        all_drivers = _dashboard_data().get("all_drivers", [])
+        driver = next(
+            (d for d in all_drivers if d.get("account_id") == driver_id),
+            None
+        )
+
+    if not driver:
+        return "Driver not found", 404
+
+    return render_template(
+        "driver_detail.html",
+        username=session.get("username"),
+        current_tab="drivers",
+        driver=driver,
+    )
+
+
+@app.route("/riders")
+def riders():
+    if not _is_logged_in():
+        return redirect(url_for("login"))
+
+    return render_template(
+        "riders.html",
+        username=session.get("username"),
+        current_tab="riders",
+        **_dashboard_data(),
+    )
+
+
 @app.route("/analytics")
 def analytics():
     if not _is_logged_in():
@@ -319,15 +406,41 @@ def analytics():
     )
 
 
-@app.route("/settings")
+@app.route("/settings", methods=["GET", "POST"])
 def settings():
     if not _is_logged_in():
         return redirect(url_for("login"))
+
+    settings_error = None
+    settings_success = None
+
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "").strip()
+        new_password = request.form.get("new_password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+
+        if not current_password or not new_password or not confirm_password:
+            settings_error = "All password fields are required."
+        elif current_password != ADMIN_PASSWORD:
+            settings_error = "Current password is incorrect."
+        elif len(new_password) < 8:
+            settings_error = "New password must be at least 8 characters."
+        elif new_password != confirm_password:
+            settings_error = "New password and confirmation do not match."
+        elif new_password == current_password:
+            settings_error = "New password must be different from current password."
+        else:
+            _, warning = _set_admin_password(new_password)
+            settings_success = "Password updated successfully."
+            if warning:
+                settings_success = f"{settings_success} {warning}"
 
     return render_template(
         "settings.html",
         username=session.get("username"),
         current_tab="settings",
+        settings_error=settings_error,
+        settings_success=settings_success,
         **_dashboard_data(),
     )
 
