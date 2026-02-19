@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from Database.db_con import get_connection
+from AdminDatabase.db_con import get_connection
 
 
 def _fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
