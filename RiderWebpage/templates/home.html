@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RideMatch Rider Portal</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='portal.css') }}" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card hero">
+        <div class="brand">RideMatch Rider</div>
+        <h1>Rider Portal</h1>
+        <p>Separate login and sign-up for riders.</p>
+      </section>
+
+      <section class="card">
+        <h2>Rider Login</h2>
+        {% if login_error %}
+        <div class="error" role="alert">{{ login_error }}</div>
+        {% endif %}
+        <form method="post" action="{{ url_for('login') }}">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" value="{{ login_username }}" required />
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" required />
+          <button type="submit">Login</button>
+        </form>
+        <a class="secondary-link" href="{{ url_for('signup') }}">Need a rider account? Sign up</a>
+      </section>
+    </main>
+  </body>
+</html>
