@@ -1,29 +1,34 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Driver Dashboard (Test)</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='portal.css') }}" />
-  </head>
-  <body>
-    <main class="shell">
-      <section class="card wide">
-        <div class="brand">RideMatch Driver</div>
-        <h1>Driver Test Dashboard</h1>
-        <p>Successful driver login test.</p>
-        <div class="grid stats">
-          <div class="stat"><small>Account ID</small><strong>{{ user.account_id }}</strong></div>
-          <div class="stat"><small>Username</small><strong>{{ user.username }}</strong></div>
-          <div class="stat"><small>Name</small><strong>{{ user.first_name }} {{ user.last_name }}</strong></div>
-          <div class="stat"><small>Status</small><strong>{{ user.status or "pending" }}</strong></div>
-          <div class="stat"><small>Email</small><strong>{{ user.email }}</strong></div>
-          <div class="stat"><small>Preferences</small><strong>{{ user.preferences or "None" }}</strong></div>
-        </div>
-        <form method="post" action="{{ url_for('logout') }}">
-          <button type="submit">Log Out</button>
-        </form>
-      </section>
-    </main>
-  </body>
-</html>
+{% extends "portal_base.html" %}
+{% block title %}Driver Dashboard{% endblock %}
+{% block content %}
+<section class="card wide">
+  <h2>Dashboard</h2>
+  <p>Driver overview and recent trips.</p>
+  {% if page_error %}<div class="error">{{ page_error }}</div>{% endif %}
+  <div class="grid stats">
+    <div class="stat"><small>Total Trips</small><strong>{{ summary.trip_count or 0 }}</strong></div>
+    <div class="stat"><small>Completed</small><strong>{{ summary.completed_count or 0 }}</strong></div>
+    <div class="stat"><small>Active</small><strong>{{ summary.active_count or 0 }}</strong></div>
+    <div class="stat"><small>Given Rating</small><strong>{{ summary.avg_given_rating if summary.avg_given_rating is not none else "N/A" }}</strong></div>
+    <div class="stat"><small>Received Rating</small><strong>{{ summary.avg_received_rating if summary.avg_received_rating is not none else "N/A" }}</strong></div>
+    <div class="stat"><small>Preferences</small><strong>{{ user.preferences or "None" }}</strong></div>
+  </div>
+</section>
+
+<section class="card wide">
+  <h2>Recent Trips</h2>
+  {% if trips %}
+  <div class="list-table">
+    {% for trip in trips %}
+    <div class="rowline">
+      <div><strong>#{{ trip.trip_id }}</strong> {{ trip.status }}</div>
+      <div>{{ trip.start_loc or "N/A" }} -> {{ trip.end_loc or "N/A" }}</div>
+      <div>Rider: {{ trip.rider_name }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted-line">No trips yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

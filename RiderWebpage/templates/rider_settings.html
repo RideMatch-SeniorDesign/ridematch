@@ -1,0 +1,88 @@
+{% extends "portal_base.html" %}
+{% block title %}Rider Settings{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Settings</h2>
+  <p>Update your rider signup profile and preferences.</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if success %}<div class="success">{{ success }}</div>{% endif %}
+  <form method="post" action="{{ url_for('settings') }}">
+    <div class="grid">
+      <div><label for="first_name">First Name</label><input id="first_name" name="first_name" value="{{ form_data.first_name }}" required /></div>
+      <div><label for="last_name">Last Name</label><input id="last_name" name="last_name" value="{{ form_data.last_name }}" required /></div>
+      <div><label for="email">Email</label><input id="email" name="email" type="email" value="{{ form_data.email }}" required /></div>
+      <div><label for="phone">Phone</label><input id="phone" name="phone" value="{{ form_data.phone }}" required /></div>
+      <div class="pref-field">
+        <label for="preference_picker">Preferences</label>
+        <div class="chip-bar" id="selected-preferences" aria-live="polite"></div>
+        <div class="pref-picker-row">
+          <select id="preference_picker">
+            <option value="">Choose a preference...</option>
+            {% for option in preference_options %}
+            <option value="{{ option }}">{{ option }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div id="preference-hidden-inputs"></div>
+      </div>
+    </div>
+    <button type="submit">Save Settings</button>
+  </form>
+  <p class="hint">Selected preferences stay in the bar until you click a chip to remove it.</p>
+</section>
+<script>
+  (function () {
+    const picker = document.getElementById("preference_picker");
+    const chipBar = document.getElementById("selected-preferences");
+    const hiddenWrap = document.getElementById("preference-hidden-inputs");
+    const selected = new Set({{ (form_data.preferences or [])|tojson }});
+
+    function render() {
+      chipBar.innerHTML = "";
+      hiddenWrap.innerHTML = "";
+
+      const values = Array.from(selected);
+      if (!values.length) {
+        const empty = document.createElement("span");
+        empty.className = "chip-empty";
+        empty.textContent = "No preferences selected yet";
+        chipBar.appendChild(empty);
+      }
+
+      values.forEach((value) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = value + " x";
+        chip.setAttribute("aria-label", "Remove " + value);
+        chip.addEventListener("click", () => {
+          selected.delete(value);
+          render();
+        });
+        chipBar.appendChild(chip);
+
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = "preferences";
+        hidden.value = value;
+        hiddenWrap.appendChild(hidden);
+      });
+
+      Array.from(picker.options).forEach((opt, idx) => {
+        if (idx === 0) return;
+        opt.disabled = selected.has(opt.value);
+      });
+    }
+
+    picker.addEventListener("change", () => {
+      const value = picker.value;
+      if (!value || selected.has(value)) return;
+      selected.add(value);
+      picker.value = "";
+      render();
+    });
+
+    render();
+  })();
+</script>
+{% endblock %}

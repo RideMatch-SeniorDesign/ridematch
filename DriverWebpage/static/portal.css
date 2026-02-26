@@ -40,6 +40,15 @@ select {
   background: #fff;
   font-family: inherit;
 }
+textarea {
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #c8daf7;
+  border-radius: 10px;
+  font-family: inherit;
+  resize: vertical;
+}
 button {
   width: 100%;
   border: none;
@@ -68,6 +77,43 @@ button {
   color: #38527e;
   text-transform: uppercase;
 }
+.nav-card { padding-bottom: 14px; }
+.portal-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.portal-title { margin: 0 0 4px; font-size: 22px; }
+.portal-subtitle { margin: 0; font-size: 13px; }
+.portal-nav {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.nav-link {
+  text-decoration: none;
+  color: #16376f;
+  border: 1px solid #c8daf7;
+  background: #eef4ff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.nav-link.active {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(180deg, var(--primary), var(--primary2));
+}
+.ghost-btn {
+  width: auto;
+  border: 1px solid #c8daf7;
+  background: #fff;
+  color: #16376f;
+}
+.logout-form { margin: 0; }
 .secondary-link, .links a {
   color: var(--primary2);
   text-decoration: none;
@@ -75,6 +121,7 @@ button {
 }
 .secondary-link:hover, .links a:hover { text-decoration: underline; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.full-span { grid-column: 1 / -1; }
 .pref-field { grid-column: span 2; }
 .pref-picker-row {
   display: grid;
@@ -119,6 +166,21 @@ button {
 .links { margin-top: 12px; text-align: center; }
 .hint { margin-top: 8px; font-size: 13px; }
 .stats { margin: 8px 0 14px; }
+.list-table {
+  border: 1px solid #dce8fb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.rowline {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e7f0ff;
+  background: #fbfdff;
+}
+.rowline:last-child { border-bottom: none; }
+.review-line { grid-template-columns: 1.2fr 1.6fr 1fr; }
+.muted-line { color: var(--muted); }
 .stat {
   border: 1px solid #dce8fb;
   background: #f8fbff;
@@ -132,5 +194,7 @@ button {
   .grid { grid-template-columns: 1fr; }
   .pref-field { grid-column: auto; }
   .pref-picker-row { grid-template-columns: 1fr; }
+  .review-line { grid-template-columns: 1fr; }
+  .portal-top { flex-direction: column; align-items: stretch; }
   .card { border-radius: 12px; padding: 16px; }
 }
