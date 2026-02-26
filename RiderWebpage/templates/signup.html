@@ -22,18 +22,104 @@
             <div><label for="last_name">Last Name</label><input id="last_name" name="last_name" value="{{ form_data.last_name }}" required /></div>
             <div><label for="username">Username</label><input id="username" name="username" value="{{ form_data.username }}" required /></div>
             <div><label for="email">Email</label><input id="email" name="email" type="email" value="{{ form_data.email }}" required /></div>
-            <div><label for="phone">Phone</label><input id="phone" name="phone" value="{{ form_data.phone }}" required /></div>
-            <div><label for="preferences">Ride Preferences</label><input id="preferences" name="preferences" value="{{ form_data.preferences }}" /></div>
+            <div><label for="phone">Phone</label><input id="phone" name="phone" value="{{ form_data.phone }}" inputmode="numeric" placeholder="(555) 555-5555" required /></div>
+            <div class="pref-field">
+              <label for="preference_picker">Ride Preferences</label>
+              <div class="chip-bar" id="selected-preferences" aria-live="polite"></div>
+              <div class="pref-picker-row">
+                <select id="preference_picker">
+                  <option value="">Choose a preference...</option>
+                  {% for option in preference_options %}
+                  <option value="{{ option }}">{{ option }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div id="preference-hidden-inputs"></div>
+            </div>
             <div><label for="password">Password</label><input id="password" name="password" type="password" minlength="6" required /></div>
             <div><label for="confirm_password">Confirm Password</label><input id="confirm_password" name="confirm_password" type="password" minlength="6" required /></div>
           </div>
           <button type="submit">Create Rider Account</button>
         </form>
+        <p class="hint">Selected preferences stay in the bar until you click a chip to remove it.</p>
 
         <div class="links">
           <a href="{{ url_for('home') }}">Back to Rider Login</a>
         </div>
       </section>
     </main>
+    <script>
+      (function () {
+        const picker = document.getElementById("preference_picker");
+        const chipBar = document.getElementById("selected-preferences");
+        const hiddenWrap = document.getElementById("preference-hidden-inputs");
+        const selected = new Set({{ (form_data.preferences or [])|tojson }});
+
+        function render() {
+          chipBar.innerHTML = "";
+          hiddenWrap.innerHTML = "";
+
+          const selectedSorted = Array.from(selected);
+          if (selectedSorted.length === 0) {
+            const empty = document.createElement("span");
+            empty.className = "chip-empty";
+            empty.textContent = "No preferences selected yet";
+            chipBar.appendChild(empty);
+          }
+
+          selectedSorted.forEach((value) => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "chip";
+            chip.textContent = value + " ×";
+            chip.setAttribute("aria-label", "Remove " + value);
+            chip.addEventListener("click", () => {
+              selected.delete(value);
+              render();
+            });
+            chipBar.appendChild(chip);
+
+            const hidden = document.createElement("input");
+            hidden.type = "hidden";
+            hidden.name = "preferences";
+            hidden.value = value;
+            hiddenWrap.appendChild(hidden);
+          });
+
+          Array.from(picker.options).forEach((opt, index) => {
+            if (index === 0) return;
+            opt.disabled = selected.has(opt.value);
+          });
+        }
+
+        function addSelectedPreference() {
+          const value = picker.value;
+          if (!value || selected.has(value)) return;
+          selected.add(value);
+          picker.value = "";
+          render();
+        }
+
+        picker.addEventListener("change", addSelectedPreference);
+        render();
+      })();
+
+      (function () {
+        const phoneInput = document.getElementById("phone");
+
+        function formatPhone(value) {
+          const digits = (value || "").replace(/\D/g, "").slice(0, 10);
+          if (digits.length <= 3) return digits ? "(" + digits : "";
+          if (digits.length <= 6) return "(" + digits.slice(0, 3) + ") " + digits.slice(3);
+          return "(" + digits.slice(0, 3) + ") " + digits.slice(3, 6) + "-" + digits.slice(6);
+        }
+
+        phoneInput.addEventListener("input", () => {
+          phoneInput.value = formatPhone(phoneInput.value);
+        });
+
+        phoneInput.value = formatPhone(phoneInput.value);
+      })();
+    </script>
   </body>
 </html>

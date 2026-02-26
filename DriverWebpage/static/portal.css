@@ -31,6 +31,15 @@ input {
   border: 1px solid #c8daf7;
   border-radius: 10px;
 }
+select {
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #c8daf7;
+  border-radius: 10px;
+  background: #fff;
+  font-family: inherit;
+}
 button {
   width: 100%;
   border: none;
@@ -66,6 +75,39 @@ button {
 }
 .secondary-link:hover, .links a:hover { text-decoration: underline; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.pref-field { grid-column: span 2; }
+.pref-picker-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  align-items: start;
+}
+.chip-bar {
+  min-height: 46px;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid #c8daf7;
+  border-radius: 10px;
+  background: #f8fbff;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.chip {
+  width: auto;
+  border: 1px solid #b8cdf6;
+  background: #eaf1ff;
+  color: #16376f;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.1;
+}
+.chip-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
 .error, .success {
   margin-bottom: 14px;
   border-radius: 10px;
@@ -75,6 +117,7 @@ button {
 .error { border: 1px solid #fecaca; background: #fff1f2; color: #9f1239; }
 .success { border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; }
 .links { margin-top: 12px; text-align: center; }
+.hint { margin-top: 8px; font-size: 13px; }
 .stats { margin: 8px 0 14px; }
 .stat {
   border: 1px solid #dce8fb;
@@ -87,5 +130,7 @@ button {
 .stat strong { display: block; word-break: break-word; }
 @media (max-width: 760px) {
   .grid { grid-template-columns: 1fr; }
+  .pref-field { grid-column: auto; }
+  .pref-picker-row { grid-template-columns: 1fr; }
   .card { border-radius: 12px; padding: 16px; }
 }

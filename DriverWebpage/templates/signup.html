@@ -22,11 +22,31 @@
             <div><label for="last_name">Last Name</label><input id="last_name" name="last_name" value="{{ form_data.last_name }}" required /></div>
             <div><label for="username">Username</label><input id="username" name="username" value="{{ form_data.username }}" required /></div>
             <div><label for="email">Email</label><input id="email" name="email" type="email" value="{{ form_data.email }}" required /></div>
-            <div><label for="phone">Phone</label><input id="phone" name="phone" value="{{ form_data.phone }}" required /></div>
-            <div><label for="preferences">Preferences</label><input id="preferences" name="preferences" value="{{ form_data.preferences }}" /></div>
+            <div><label for="phone">Phone</label><input id="phone" name="phone" value="{{ form_data.phone }}" inputmode="numeric" placeholder="(555) 555-5555" required /></div>
+            <div class="pref-field">
+              <label for="preference_picker">Preferences</label>
+              <div class="chip-bar" id="selected-preferences" aria-live="polite"></div>
+              <div class="pref-picker-row">
+                <select id="preference_picker">
+                  <option value="">Choose a preference...</option>
+                  {% for option in preference_options %}
+                  <option value="{{ option }}">{{ option }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div id="preference-hidden-inputs"></div>
+            </div>
             <div><label for="date_of_birth">Date of Birth</label><input id="date_of_birth" name="date_of_birth" type="date" value="{{ form_data.date_of_birth }}" /></div>
-            <div><label for="license_state">License State</label><input id="license_state" name="license_state" value="{{ form_data.license_state }}" required /></div>
-            <div><label for="license_number">License Number</label><input id="license_number" name="license_number" value="{{ form_data.license_number }}" required /></div>
+            <div>
+              <label for="license_state">License State</label>
+              <select id="license_state" name="license_state" required>
+                <option value="">Select state...</option>
+                {% for state in state_options %}
+                <option value="{{ state }}" {% if form_data.license_state == state %}selected{% endif %}>{{ state }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div><label for="license_number">License Number</label><input id="license_number" name="license_number" value="{{ form_data.license_number }}" inputmode="text" placeholder="Select state first" required /></div>
             <div><label for="license_expires">License Expires</label><input id="license_expires" name="license_expires" type="date" value="{{ form_data.license_expires }}" /></div>
             <div><label for="insurance_provider">Insurance Provider</label><input id="insurance_provider" name="insurance_provider" value="{{ form_data.insurance_provider }}" required /></div>
             <div><label for="insurance_policy">Insurance Policy</label><input id="insurance_policy" name="insurance_policy" value="{{ form_data.insurance_policy }}" required /></div>
@@ -35,11 +55,186 @@
           </div>
           <button type="submit">Create Driver Account</button>
         </form>
+        <p class="hint">Selected preferences stay in the bar until you click a chip to remove it.</p>
 
         <div class="links">
           <a href="{{ url_for('home') }}">Back to Driver Login</a>
         </div>
       </section>
     </main>
+    <script>
+      (function () {
+        const picker = document.getElementById("preference_picker");
+        const chipBar = document.getElementById("selected-preferences");
+        const hiddenWrap = document.getElementById("preference-hidden-inputs");
+        const selected = new Set({{ (form_data.preferences or [])|tojson }});
+
+        function render() {
+          chipBar.innerHTML = "";
+          hiddenWrap.innerHTML = "";
+
+          const selectedSorted = Array.from(selected);
+          if (selectedSorted.length === 0) {
+            const empty = document.createElement("span");
+            empty.className = "chip-empty";
+            empty.textContent = "No preferences selected yet";
+            chipBar.appendChild(empty);
+          }
+
+          selectedSorted.forEach((value) => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "chip";
+            chip.textContent = value + " ×";
+            chip.setAttribute("aria-label", "Remove " + value);
+            chip.addEventListener("click", () => {
+              selected.delete(value);
+              render();
+            });
+            chipBar.appendChild(chip);
+
+            const hidden = document.createElement("input");
+            hidden.type = "hidden";
+            hidden.name = "preferences";
+            hidden.value = value;
+            hiddenWrap.appendChild(hidden);
+          });
+
+          Array.from(picker.options).forEach((opt, index) => {
+            if (index === 0) return;
+            opt.disabled = selected.has(opt.value);
+          });
+        }
+
+        function addSelectedPreference() {
+          const value = picker.value;
+          if (!value || selected.has(value)) return;
+          selected.add(value);
+          picker.value = "";
+          render();
+        }
+
+        picker.addEventListener("change", addSelectedPreference);
+        render();
+      })();
+
+      (function () {
+        const phoneInput = document.getElementById("phone");
+        const stateSelect = document.getElementById("license_state");
+        const licenseInput = document.getElementById("license_number");
+
+        const LICENSE_FORMATS = {
+          AL: { placeholder: "12345678", pattern: [8] },
+          AK: { placeholder: "1234567", pattern: [7] },
+          AZ: { placeholder: "A12345678", pattern: ["a", 8] },
+          AR: { placeholder: "123456789", pattern: [9] },
+          CA: { placeholder: "A1234567", pattern: ["a", 7] },
+          CO: { placeholder: "A12345678", pattern: ["a", 8] },
+          CT: { placeholder: "123456789", pattern: [9] },
+          DE: { placeholder: "1234567", pattern: [7] },
+          FL: { placeholder: "A123-456-78-901-0", pattern: ["a", 3, 3, 2, 3, 1] },
+          GA: { placeholder: "123456789", pattern: [9] },
+          HI: { placeholder: "H123-4567", pattern: ["a", 3, 4] },
+          ID: { placeholder: "A123456789012", pattern: ["a", 12] },
+          IL: { placeholder: "A123-4567-8901", pattern: ["a", 3, 4, 4] },
+          IN: { placeholder: "1234-56-7890", pattern: [4, 2, 4] },
+          IA: { placeholder: "123-4567", pattern: [3, 4] },
+          KS: { placeholder: "K12-3456-7890", pattern: ["a", 2, 4, 4] },
+          KY: { placeholder: "K123-456-78-901", pattern: ["a", 3, 3, 2, 3] },
+          LA: { placeholder: "123456789", pattern: [9] },
+          ME: { placeholder: "1234567", pattern: [7] },
+          MD: { placeholder: "M123-456-789-012", pattern: ["a", 3, 3, 3, 3] },
+          MA: { placeholder: "S12345678", pattern: ["a", 8] },
+          MI: { placeholder: "A123456789012", pattern: ["a", 12] },
+          MN: { placeholder: "12345678", pattern: [8] },
+          MS: { placeholder: "123456789", pattern: [9] },
+          MO: { placeholder: "M123456789012", pattern: ["a", 12] },
+          MT: { placeholder: "123456789", pattern: [9] },
+          NE: { placeholder: "A12345678", pattern: ["a", 8] },
+          NV: { placeholder: "1234567890", pattern: [10] },
+          NH: { placeholder: "12345678", pattern: [8] },
+          NJ: { placeholder: "A1234-56789-12345", pattern: ["a", 4, 5, 5] },
+          NM: { placeholder: "123456789", pattern: [9] },
+          NY: { placeholder: "123456789", pattern: [9] },
+          NC: { placeholder: "123456789012", pattern: [12] },
+          ND: { placeholder: "123456789", pattern: [9] },
+          OH: { placeholder: "OH-123456", pattern: [2, 6] },
+          OK: { placeholder: "A123456789012", pattern: ["a", 12] },
+          OR: { placeholder: "1234567", pattern: [7] },
+          PA: { placeholder: "12345678", pattern: [8] },
+          RI: { placeholder: "1234567", pattern: [7] },
+          SC: { placeholder: "123456789", pattern: [9] },
+          SD: { placeholder: "123456789", pattern: [9] },
+          TN: { placeholder: "123456789", pattern: [9] },
+          TX: { placeholder: "12345678", pattern: [8] },
+          UT: { placeholder: "123456789", pattern: [9] },
+          VT: { placeholder: "12345678", pattern: [8] },
+          VA: { placeholder: "A12345678", pattern: ["a", 8] },
+          WA: { placeholder: "WDL1234ABC56", pattern: [12] },
+          WV: { placeholder: "WV-1234567", pattern: [2, 7] },
+          WI: { placeholder: "A123-4567-8901-23", pattern: ["a", 3, 4, 4, 2] },
+          WY: { placeholder: "123456789", pattern: [9] },
+          DEFAULT: { placeholder: "ABC-123456", pattern: [3, 6] }
+        };
+
+        function formatPhone(value) {
+          const digits = (value || "").replace(/\D/g, "").slice(0, 10);
+          if (digits.length <= 3) return digits ? "(" + digits : "";
+          if (digits.length <= 6) return "(" + digits.slice(0, 3) + ") " + digits.slice(3);
+          return "(" + digits.slice(0, 3) + ") " + digits.slice(3, 6) + "-" + digits.slice(6);
+        }
+
+        function getLicenseConfig(stateCode) {
+          return LICENSE_FORMATS[stateCode] || LICENSE_FORMATS.DEFAULT;
+        }
+
+        function formatLicense(value, stateCode) {
+          const config = getLicenseConfig(stateCode);
+          let remaining = (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+          if (!remaining) return "";
+
+          const parts = [];
+          for (const token of config.pattern) {
+            if (!remaining) break;
+
+            if (token === "a") {
+              const match = remaining.match(/[A-Z]/);
+              if (!match) continue;
+              parts.push(match[0]);
+              const idx = remaining.indexOf(match[0]);
+              remaining = remaining.slice(0, idx) + remaining.slice(idx + 1);
+              continue;
+            }
+
+            const segment = remaining.slice(0, token);
+            if (!segment) break;
+            parts.push(segment);
+            remaining = remaining.slice(token);
+          }
+
+          if (remaining) parts.push(remaining);
+          return parts.join("-");
+        }
+
+        function refreshLicenseFormatting() {
+          const config = getLicenseConfig(stateSelect.value);
+          licenseInput.placeholder = config.placeholder;
+          licenseInput.value = formatLicense(licenseInput.value, stateSelect.value);
+        }
+
+        phoneInput.addEventListener("input", () => {
+          phoneInput.value = formatPhone(phoneInput.value);
+        });
+
+        licenseInput.addEventListener("input", () => {
+          licenseInput.value = formatLicense(licenseInput.value, stateSelect.value);
+        });
+
+        stateSelect.addEventListener("change", refreshLicenseFormatting);
+
+        phoneInput.value = formatPhone(phoneInput.value);
+        refreshLicenseFormatting();
+      })();
+    </script>
   </body>
 </html>

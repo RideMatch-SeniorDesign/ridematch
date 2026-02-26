@@ -19,6 +19,18 @@ load_dotenv(PROJECT_ROOT / ".env")
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 
+PREFERENCE_OPTIONS = [
+    "quiet ride",
+    "music okay",
+    "music low",
+    "conversation okay",
+    "no conversation",
+    "pet friendly",
+    "temperature cool",
+    "temperature warm",
+    "no highway",
+]
+
 
 def _v(name: str) -> str:
     return request.form.get(name, "").strip()
@@ -31,7 +43,7 @@ def _rider_signup_form() -> dict[str, str]:
         "username": "",
         "email": "",
         "phone": "",
-        "preferences": "",
+        "preferences": [],
     }
 
 
@@ -84,6 +96,7 @@ def signup():
 
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
+        form_data["preferences"] = request.form.getlist("preferences")
         password = _v("password")
         confirm_password = _v("confirm_password")
 
@@ -105,7 +118,7 @@ def signup():
                     password=password,
                     first_name=form_data["first_name"],
                     last_name=form_data["last_name"],
-                    preferences=form_data["preferences"],
+                    preferences=", ".join(form_data["preferences"]),
                 )
                 success = f"Rider account created. Account ID: {account_id}."
                 form_data = _rider_signup_form()
@@ -113,7 +126,13 @@ def signup():
                 app.logger.warning("Rider signup failed: %s", exc)
                 error = "Could not create rider account. Username/email may already exist or the database is unavailable."
 
-    return render_template("signup.html", form_data=form_data, error=error, success=success)
+    return render_template(
+        "signup.html",
+        form_data=form_data,
+        error=error,
+        success=success,
+        preference_options=PREFERENCE_OPTIONS,
+    )
 
 
 if __name__ == "__main__":

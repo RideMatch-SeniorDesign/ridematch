@@ -19,6 +19,26 @@ load_dotenv(PROJECT_ROOT / ".env")
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 
+PREFERENCE_OPTIONS = [
+    "quiet ride",
+    "music okay",
+    "music low",
+    "conversation okay",
+    "no conversation",
+    "pet friendly",
+    "temperature cool",
+    "temperature warm",
+    "no highway",
+]
+
+US_STATE_OPTIONS = [
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+]
+
 
 def _v(name: str) -> str:
     return request.form.get(name, "").strip()
@@ -31,7 +51,7 @@ def _driver_signup_form() -> dict[str, str]:
         "username": "",
         "email": "",
         "phone": "",
-        "preferences": "",
+        "preferences": [],
         "date_of_birth": "",
         "license_state": "",
         "license_number": "",
@@ -90,6 +110,7 @@ def signup():
 
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
+        form_data["preferences"] = request.form.getlist("preferences")
         password = _v("password")
         confirm_password = _v("confirm_password")
 
@@ -121,7 +142,7 @@ def signup():
                     password=password,
                     first_name=form_data["first_name"],
                     last_name=form_data["last_name"],
-                    preferences=form_data["preferences"],
+                    preferences=", ".join(form_data["preferences"]),
                     date_of_birth=form_data["date_of_birth"] or None,
                     license_state=form_data["license_state"],
                     license_number=form_data["license_number"],
@@ -135,7 +156,14 @@ def signup():
                 app.logger.warning("Driver signup failed: %s", exc)
                 error = "Could not create driver account. Username/email may already exist or the database is unavailable."
 
-    return render_template("signup.html", form_data=form_data, error=error, success=success)
+    return render_template(
+        "signup.html",
+        form_data=form_data,
+        error=error,
+        success=success,
+        preference_options=PREFERENCE_OPTIONS,
+        state_options=US_STATE_OPTIONS,
+    )
 
 
 if __name__ == "__main__":
