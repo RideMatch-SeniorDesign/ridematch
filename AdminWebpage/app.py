@@ -171,8 +171,7 @@ def _dashboard_data() -> dict:
     }
 
     try:
-        from Database.admin_queries import fetch_dashboard_data, fetch_riders, fetch_rider_statistics
-
+        from AdminDatabase.admin_queries import fetch_dashboard_data, fetch_riders, fetch_rider_statistics
         data = fetch_dashboard_data()
         
         # Add rider data
