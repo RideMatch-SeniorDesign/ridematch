@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RideMatch Sign Up</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='signup.css') }}" />
+  </head>
+  <body>
+    <main class="portal-shell">
+      <section class="portal-intro">
+        <div class="brand">RideMatch</div>
+        <h1>Driver and Rider Portal</h1>
+        <p>Left side is for drivers. Right side is for riders. Each side supports login and sign-up.</p>
+      </section>
+
+      <section class="portal-grid">
+        <article class="portal-card driver-card">
+          <h2>Driver Portal</h2>
+          <p>Driver login and registration.</p>
+          {% if driver_error %}
+          <div class="error" role="alert">{{ driver_error }}</div>
+          {% endif %}
+          <form method="post" action="{{ url_for('portal_login', role='driver') }}">
+            <label for="driver_username">Username</label>
+            <input
+              id="driver_username"
+              name="username"
+              type="text"
+              value="{{ driver_login.username }}"
+              required
+            />
+
+            <label for="driver_password">Password</label>
+            <input id="driver_password" name="password" type="password" required />
+
+            <button type="submit">Driver Login</button>
+          </form>
+          <a class="cta-link alt" href="{{ url_for('driver_signup') }}">Driver Sign-Up</a>
+        </article>
+
+        <article class="portal-card rider-card">
+          <h2>Rider Portal</h2>
+          <p>Rider login and registration.</p>
+          {% if rider_error %}
+          <div class="error" role="alert">{{ rider_error }}</div>
+          {% endif %}
+          <form method="post" action="{{ url_for('portal_login', role='rider') }}">
+            <label for="rider_username">Username</label>
+            <input
+              id="rider_username"
+              name="username"
+              type="text"
+              value="{{ rider_login.username }}"
+              required
+            />
+
+            <label for="rider_password">Password</label>
+            <input id="rider_password" name="password" type="password" required />
+
+            <button type="submit">Rider Login</button>
+          </form>
+          <a class="cta-link alt rider" href="{{ url_for('rider_signup') }}">Rider Sign-Up</a>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

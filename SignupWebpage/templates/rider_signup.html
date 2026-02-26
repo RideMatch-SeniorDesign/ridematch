@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RideMatch Rider Sign-Up</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='signup.css') }}" />
+  </head>
+  <body>
+    <main class="auth-card public-card">
+      <div class="brand">RideMatch Rider</div>
+      <h1>Rider Sign-Up</h1>
+      <p>Rider registration is separate from the admin webpage.</p>
+
+      {% if error %}
+      <div class="error" role="alert">{{ error }}</div>
+      {% endif %}
+      {% if success %}
+      <div class="success" role="status">{{ success }}</div>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('rider_signup') }}">
+        <div class="form-grid">
+          <div>
+            <label for="first_name">First Name</label>
+            <input id="first_name" name="first_name" type="text" value="{{ form_data.first_name }}" required />
+          </div>
+          <div>
+            <label for="last_name">Last Name</label>
+            <input id="last_name" name="last_name" type="text" value="{{ form_data.last_name }}" required />
+          </div>
+          <div>
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" value="{{ form_data.username }}" required />
+          </div>
+          <div>
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" value="{{ form_data.email }}" required />
+          </div>
+          <div>
+            <label for="phone">Phone</label>
+            <input id="phone" name="phone" type="tel" value="{{ form_data.phone }}" required />
+          </div>
+          <div>
+            <label for="preferences">Ride Preferences</label>
+            <input id="preferences" name="preferences" type="text" value="{{ form_data.preferences }}" />
+          </div>
+          <div>
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" minlength="6" required />
+          </div>
+          <div>
+            <label for="confirm_password">Confirm Password</label>
+            <input id="confirm_password" name="confirm_password" type="password" minlength="6" required />
+          </div>
+        </div>
+        <button type="submit">Create Rider Account</button>
+      </form>
+
+      <div class="helper-links">
+        <a href="{{ url_for('signup_home') }}">Back</a>
+        <a href="{{ url_for('driver_signup') }}">Driver Sign-Up</a>
+      </div>
+    </main>
+  </body>
+</html>
