@@ -1,0 +1,40 @@
+{% extends "portal_base.html" %}
+{% block title %}Rider Reviews{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Reviews You Received</h2>
+  <p>Ratings drivers gave you from completed trips.</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if review_data.received %}
+  <div class="list-table">
+    {% for row in review_data.received %}
+    <div class="rowline review-line">
+      <div><strong>{{ row.rating }}/5</strong> from {{ row.counterpart_name }}</div>
+      <div>{{ row.trip_status or "" }}</div>
+      <div>Trip/Review #{{ row.review_id }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted-line">No received ratings yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Reviews You Gave</h2>
+  <p>Ratings/comments you submitted for drivers.</p>
+  {% if review_data.given %}
+  <div class="list-table">
+    {% for row in review_data.given %}
+    <div class="rowline review-line">
+      <div><strong>{{ row.rating }}/5</strong> to {{ row.counterpart_name }}</div>
+      <div>{{ row.comment or row.trip_status or "No comment" }}</div>
+      <div>{{ row.review_date or ("#" ~ row.review_id) }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted-line">No ratings given yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
