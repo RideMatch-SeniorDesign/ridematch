@@ -26,6 +26,17 @@ def _execute(query: str, params: tuple[Any, ...] = ()) -> int:
         conn.close()
 
 
+def _insert_returning_id(query: str, params: tuple[Any, ...] = ()) -> int:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+            conn.commit()
+            return int(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
 def _table_exists(table_name: str) -> bool:
     rows = _fetch_all(
         """
@@ -411,3 +422,137 @@ def fetch_dashboard_data() -> dict[str, Any]:
         "total_driver_count": len(all_driver_rows),
         "db_error": None,
     }
+
+
+def create_rider_signup(
+    *,
+    username: str,
+    email: str,
+    phone: str,
+    password: str,
+    first_name: str,
+    last_name: str,
+    preferences: str,
+) -> int:
+    account_id = _insert_returning_id(
+        """
+        INSERT INTO account (UserName, Email, PhoneNum, Password, FirstName, LastName)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (username, email, phone, password, first_name, last_name),
+    )
+    _execute(
+        """
+        INSERT INTO rider (AccountID, Preferences)
+        VALUES (%s, %s)
+        """,
+        (account_id, preferences or None),
+    )
+    return account_id
+
+
+def create_driver_signup(
+    *,
+    username: str,
+    email: str,
+    phone: str,
+    password: str,
+    first_name: str,
+    last_name: str,
+    preferences: str,
+    date_of_birth: str | None,
+    license_state: str,
+    license_number: str,
+    license_expires: str | None,
+    insurance_provider: str,
+    insurance_policy: str,
+) -> int:
+    account_id = _insert_returning_id(
+        """
+        INSERT INTO account (UserName, Email, PhoneNum, Password, FirstName, LastName)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (username, email, phone, password, first_name, last_name),
+    )
+
+    _execute(
+        """
+        INSERT INTO driver (AccountID, Preferences, Status)
+        VALUES (%s, %s, %s)
+        """,
+        (account_id, preferences or None, "pending"),
+    )
+
+    if _table_exists("driver_information"):
+        _execute(
+            """
+            INSERT INTO driver_information
+            (
+                DriverID, FirstName, LastName, Email, PhoneNum, DateOfBirth,
+                LicenseState, LicenseNumber, LicenseExpires, InsuranceProvider, InsurancePolicy
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                account_id,
+                first_name,
+                last_name,
+                email,
+                phone,
+                date_of_birth or None,
+                license_state,
+                license_number,
+                license_expires or None,
+                insurance_provider,
+                insurance_policy,
+            ),
+        )
+    elif _table_exists("driver_verification"):
+        _execute(
+            """
+            INSERT INTO driver_verification
+            (
+                DriverID, DateOfBirth, LicenseState, LicenseNumber, LicenseExpires,
+                InsuranceProvider, InsurancePolicy
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                account_id,
+                date_of_birth or None,
+                license_state,
+                license_number,
+                license_expires or None,
+                insurance_provider,
+                insurance_policy,
+            ),
+        )
+
+    return account_id
+
+
+def authenticate_portal_user(role: str, username: str, password: str) -> dict[str, Any] | None:
+    role = (role or "").strip().lower()
+    if role not in {"driver", "rider"}:
+        return None
+
+    table_name = "driver" if role == "driver" else "rider"
+    rows = _fetch_all(
+        f"""
+        SELECT
+            a.AccountID AS account_id,
+            a.UserName AS username,
+            a.FirstName AS first_name,
+            a.LastName AS last_name,
+            a.Email AS email,
+            a.PhoneNum AS phone,
+            {table_name}.Preferences AS preferences
+            {", driver.Status AS status" if role == "driver" else ""}
+        FROM account a
+        JOIN {table_name} ON {table_name}.AccountID = a.AccountID
+        WHERE a.UserName = %s AND a.Password = %s
+        LIMIT 1
+        """,
+        (username, password),
+    )
+    return rows[0] if rows else None

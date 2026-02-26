@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Driver Dashboard (Test)</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='portal.css') }}" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card wide">
+        <div class="brand">RideMatch Driver</div>
+        <h1>Driver Test Dashboard</h1>
+        <p>Successful driver login test.</p>
+        <div class="grid stats">
+          <div class="stat"><small>Account ID</small><strong>{{ user.account_id }}</strong></div>
+          <div class="stat"><small>Username</small><strong>{{ user.username }}</strong></div>
+          <div class="stat"><small>Name</small><strong>{{ user.first_name }} {{ user.last_name }}</strong></div>
+          <div class="stat"><small>Status</small><strong>{{ user.status or "pending" }}</strong></div>
+          <div class="stat"><small>Email</small><strong>{{ user.email }}</strong></div>
+          <div class="stat"><small>Preferences</small><strong>{{ user.preferences or "None" }}</strong></div>
+        </div>
+        <form method="post" action="{{ url_for('logout') }}">
+          <button type="submit">Log Out</button>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>
