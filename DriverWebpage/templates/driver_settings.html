@@ -5,8 +5,9 @@
   <h2>Settings</h2>
   <p>Update the profile and options you entered during sign-up.</p>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if warning %}<div class="error">{{ warning }}</div>{% endif %}
   {% if success %}<div class="success">{{ success }}</div>{% endif %}
-  <form method="post" action="{{ url_for('settings') }}">
+  <form method="post" action="{{ url_for('settings') }}" enctype="multipart/form-data">
     <div class="grid">
       <div><label for="first_name">First Name</label><input id="first_name" name="first_name" value="{{ form_data.first_name }}" required /></div>
       <div><label for="last_name">Last Name</label><input id="last_name" name="last_name" value="{{ form_data.last_name }}" required /></div>
@@ -39,6 +40,11 @@
       <div><label for="license_expires">License Expires</label><input id="license_expires" name="license_expires" type="date" value="{{ form_data.license_expires }}" /></div>
       <div><label for="insurance_provider">Insurance Provider</label><input id="insurance_provider" name="insurance_provider" value="{{ form_data.insurance_provider }}" /></div>
       <div><label for="insurance_policy">Insurance Policy</label><input id="insurance_policy" name="insurance_policy" value="{{ form_data.insurance_policy }}" /></div>
+      <div>
+        <label for="profile_photo">Change Profile Photo</label>
+        <input id="profile_photo" name="profile_photo" type="file" accept="image/jpeg,image/png,image/webp" />
+        <small class="hint">Uploading a new profile photo will put your driver account under review again.</small>
+      </div>
     </div>
     <button type="submit">Save Settings</button>
   </form>

@@ -30,11 +30,12 @@
           <div class="queue-actions">
             <a
               class="btn btn-sm btn-outline-primary"
-              href="{{ url_for('drivers', tab='all', driver_id=driver.account_id) }}"
+              href="{{ url_for('driver_detail', driver_id=driver.account_id) }}"
             >
               <i class="bi bi-info-circle"></i>
               Info
             </a>
+            {% if driver_status not in ['denied', 'rejected', 'removed'] %}
             <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
               <input type="hidden" name="action" value="approve" />
               <button type="submit" class="btn btn-sm btn-success">
@@ -42,6 +43,7 @@
                 Approve
               </button>
             </form>
+            {% endif %}
             <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
               <input type="hidden" name="action" value="deny" />
               <button type="submit" class="btn btn-sm btn-danger">

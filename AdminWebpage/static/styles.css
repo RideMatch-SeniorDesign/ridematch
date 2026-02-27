@@ -706,6 +706,88 @@ button.secondary {
   margin-left: 0.35rem;
 }
 
+.verify-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.verify-flag-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 10px;
+  border: 1px solid #f87171;
+  background: #fff1f2;
+  color: #881337;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+
+.verify-reject-btn {
+  border-radius: 999px;
+  font-weight: 700;
+  padding: 0.42rem 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.verify-view-btn {
+  border-radius: 999px;
+  font-weight: 700;
+  padding: 0.42rem 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.detail-verify-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.detail-verify-form {
+  margin: 0;
+}
+
+.detail-verify-btn {
+  min-width: 170px;
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  box-shadow: 0 10px 22px rgba(14, 40, 84, 0.2);
+}
+
+.detail-verify-approve {
+  border-color: #166534;
+  background: linear-gradient(180deg, #22c55e, #15803d);
+}
+
+.detail-verify-approve:hover {
+  border-color: #14532d;
+  background: linear-gradient(180deg, #16a34a, #166534);
+}
+
+.detail-verify-deny {
+  border-color: #991b1b;
+  background: linear-gradient(180deg, #ef4444, #b91c1c);
+}
+
+.detail-verify-deny:hover {
+  border-color: #7f1d1d;
+  background: linear-gradient(180deg, #dc2626, #991b1b);
+}
+
 .btn-approve {
   border-color: #15803d;
   background: linear-gradient(180deg, #22c55e, #15803d);

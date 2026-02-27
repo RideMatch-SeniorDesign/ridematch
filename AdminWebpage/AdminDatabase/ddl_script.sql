@@ -88,6 +88,25 @@ CREATE TABLE `driver_information` (
     CONSTRAINT `FK_DriverID_driver_information` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)
 );
 
+-- DRIVER_PROFILE_PHOTO TABLE
+CREATE TABLE `driver_profile_photo` (
+    `PhotoID` int AUTO_INCREMENT,
+    `DriverID` int NOT NULL,
+    `StoragePath` varchar(255) NOT NULL,
+    `MimeType` varchar(50) DEFAULT NULL,
+    `FileSizeBytes` int DEFAULT NULL,
+    `ModerationStatus` varchar(50) DEFAULT 'pending',
+    `ModerationScore` decimal(5,4) DEFAULT NULL,
+    `ModerationLabels` varchar(255) DEFAULT NULL,
+    `ReviewedBy` int DEFAULT NULL,
+    `ReviewedAt` timestamp(6) NULL DEFAULT NULL,
+    `CreatedAt` timestamp(6) DEFAULT current_timestamp(6),
+    PRIMARY KEY (`PhotoID`),
+    UNIQUE KEY `DriverProfilePhoto_DriverID_UQ` (`DriverID`),
+    CONSTRAINT `FK_DriverID_driver_profile_photo` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`),
+    CONSTRAINT `FK_ReviewedBy_driver_profile_photo` FOREIGN KEY (`ReviewedBy`) REFERENCES `admin` (`AccountID`)
+);
+
 -- CAR TABLE
 CREATE TABLE `car` (
     `DriverID` int NOT NULL,

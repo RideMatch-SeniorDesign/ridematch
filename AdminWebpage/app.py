@@ -5,7 +5,7 @@ import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
 
 # Allow running from either project root or AdminWebpage directory.
@@ -335,8 +335,13 @@ def verify_driver(driver_id: int):
         return redirect(url_for("login"))
 
     action = request.form.get("action", "").strip().lower()
+    return_to = (request.form.get("return_to") or "").strip()
+    redirect_target = url_for("drivers", tab="verification")
+    if return_to.startswith("/drivers/detail/"):
+        redirect_target = return_to
     if action not in {"approve", "deny"}:
-        return redirect(url_for("drivers", tab="verification", notice="invalid_action"))
+        sep = "&" if "?" in redirect_target else "?"
+        return redirect(f"{redirect_target}{sep}notice=invalid_action")
 
     notice = "update_failed"
     try:
@@ -348,7 +353,8 @@ def verify_driver(driver_id: int):
     except Exception as exc:
         app.logger.warning("Driver verification update failed: %s", exc)
 
-    return redirect(url_for("drivers", tab="verification", notice=notice))
+    sep = "&" if "?" in redirect_target else "?"
+    return redirect(f"{redirect_target}{sep}notice={notice}")
 
 
 @app.route("/drivers/detail/<int:driver_id>")
@@ -376,7 +382,39 @@ def driver_detail(driver_id):
         username=session.get("username"),
         current_tab="drivers",
         driver=driver,
+        verification_notice=request.args.get("notice"),
     )
+
+
+@app.route("/drivers/photo/<int:driver_id>")
+def driver_photo(driver_id: int):
+    if not _is_logged_in():
+        return redirect(url_for("login"))
+
+    try:
+        from Database.admin_queries import driver_detail as fetch_driver
+
+        driver = fetch_driver(driver_id)
+    except Exception as exc:
+        app.logger.warning("Could not load driver photo details: %s", exc)
+        driver = None
+
+    if not driver:
+        abort(404)
+
+    stored_path = str(driver.get("profile_photo_path") or "").strip()
+    if not stored_path:
+        abort(404)
+
+    photo_root = (PROJECT_ROOT / "DriverWebpage" / "uploads" / "driver_profiles").resolve()
+    full_path = (PROJECT_ROOT / "DriverWebpage" / stored_path).resolve()
+    if not full_path.is_relative_to(photo_root):
+        abort(403)
+    if not full_path.is_file():
+        abort(404)
+
+    mimetype = str(driver.get("profile_photo_mime_type") or "").strip() or None
+    return send_file(full_path, mimetype=mimetype, conditional=True, max_age=0)
 
 
 @app.route("/riders")
