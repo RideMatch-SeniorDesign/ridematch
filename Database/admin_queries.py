@@ -1000,3 +1000,20 @@ def update_driver_profile_photo(account_id: int, profile_photo: dict[str, Any]) 
         ("under_review", account_id),
     )
     return True
+
+
+def fetch_driver_profile_photo_path(account_id: int) -> str | None:
+    if not _table_exists("driver_profile_photo"):
+        return None
+    rows = _fetch_all(
+        """
+        SELECT StoragePath AS storage_path
+        FROM driver_profile_photo
+        WHERE DriverID = %s
+        LIMIT 1
+        """,
+        (account_id,),
+    )
+    if not rows:
+        return None
+    return rows[0].get("storage_path")

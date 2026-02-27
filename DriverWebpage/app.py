@@ -284,6 +284,7 @@ def settings():
         else:
             try:
                 from Database.admin_queries import (
+                    fetch_driver_profile_photo_path,
                     fetch_portal_profile,
                     update_driver_profile_photo,
                     update_portal_profile,
@@ -299,7 +300,15 @@ def settings():
                 payload["preferences"] = _join_preferences(form_data["preferences"])
                 update_portal_profile("driver", int(user.get("account_id")), payload)
                 if photo_payload:
+                    existing_photo_path = fetch_driver_profile_photo_path(int(user.get("account_id")))
                     update_driver_profile_photo(int(user.get("account_id")), photo_payload)
+                    new_photo_path = str(photo_payload.get("storage_path") or "").strip()
+                    old_photo_path = str(existing_photo_path or "").strip()
+                    if old_photo_path and old_photo_path != new_photo_path:
+                        try:
+                            (APP_PATH / old_photo_path).unlink(missing_ok=True)
+                        except Exception as delete_exc:
+                            app.logger.warning("Could not delete replaced profile photo '%s': %s", old_photo_path, delete_exc)
                     session_user = _driver_session_user()
                     session_user["status"] = "under_review"
                     session["driver_user"] = session_user
