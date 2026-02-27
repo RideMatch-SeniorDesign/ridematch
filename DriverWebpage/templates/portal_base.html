@@ -13,7 +13,7 @@
         <div class="portal-top">
           <div>
             <h1 class="portal-title">{{ user.first_name }} {{ user.last_name }}</h1>
-            <p class="portal-subtitle">@{{ user.username }}{% if user.status %} · {{ user.status }}{% endif %}</p>
+            <p class="portal-subtitle">@{{ user.username }}{% if user.status %} · {{ user.status|replace('_', ' ')|title }}{% endif %}</p>
           </div>
           <form method="post" action="{{ url_for('logout') }}" class="logout-form">
             <button type="submit" class="ghost-btn">Log Out</button>

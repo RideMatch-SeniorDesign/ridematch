@@ -6,6 +6,15 @@
 <section>
   <article class="panel">
     <h2>{{ driver.name }}</h2>
+    {% if verification_notice == "approved" %}
+    <div class="success">Driver approved.</div>
+    {% elif verification_notice == "denied" %}
+    <div class="error">Driver denied.</div>
+    {% elif verification_notice == "update_failed" %}
+    <div class="error">Could not update driver status.</div>
+    {% elif verification_notice == "invalid_action" %}
+    <div class="error">Invalid verification action.</div>
+    {% endif %}
 
     <div class="table-box">
       <h3>Basic Information</h3>
@@ -20,6 +29,42 @@
       <div class="row">
         <span><strong>Age:</strong></span>
         <span>{{ driver.age or "N/A" }}</span>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <h3>Profile Photo Review</h3>
+      {% if driver.profile_photo_path %}
+      <div class="row">
+        <span><strong>Photo:</strong></span>
+        <span>
+          <img
+            src="{{ url_for('driver_photo', driver_id=driver.account_id) }}"
+            alt="Driver profile photo for {{ driver.name }}"
+            style="max-width: 220px; width: 100%; height: auto; border-radius: 8px; border: 1px solid #d1d5db;"
+          />
+        </span>
+      </div>
+      {% endif %}
+      <div class="row">
+        <span><strong>Moderation Status:</strong></span>
+        <span class="text-capitalize">{{ driver.photo_moderation_status or "Pending" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Moderation Score:</strong></span>
+        <span>{{ driver.photo_moderation_score if driver.photo_moderation_score is not none else "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Detected Labels:</strong></span>
+        <span>{{ driver.photo_moderation_labels or "None" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Stored Path:</strong></span>
+        <span>{{ driver.profile_photo_path or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Reviewed At:</strong></span>
+        <span>{{ driver.photo_reviewed_at or "N/A" }}</span>
       </div>
     </div>
 
@@ -75,6 +120,25 @@
       <div class="row">
         <span><strong>Status:</strong></span>
         <span class="text-capitalize">{{ driver.status or "Unknown" }}</span>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <h3>Verification Actions</h3>
+      {% set driver_status = (driver.status or '')|trim|lower %}
+      <div class="detail-verify-actions">
+        {% if driver_status in ['pending', 'under_review'] %}
+        <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}" class="detail-verify-form">
+          <input type="hidden" name="action" value="approve" />
+          <input type="hidden" name="return_to" value="{{ url_for('driver_detail', driver_id=driver.account_id) }}" />
+          <button type="submit" class="detail-verify-btn detail-verify-approve">Approve Driver</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}" class="detail-verify-form">
+          <input type="hidden" name="action" value="deny" />
+          <input type="hidden" name="return_to" value="{{ url_for('driver_detail', driver_id=driver.account_id) }}" />
+          <button type="submit" class="detail-verify-btn detail-verify-deny">Deny Driver</button>
+        </form>
       </div>
     </div>
 

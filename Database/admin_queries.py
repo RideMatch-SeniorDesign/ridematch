@@ -86,6 +86,7 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
     info_mode = _driver_info_mode()
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
+    has_profile_photo = _table_exists("driver_profile_photo")
 
     if info_mode == "driver_information":
         info_select = """
@@ -159,10 +160,19 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
 
     rating_expr = "ROUND(COALESCE(AVG(dr.Rating), 0), 1)" if has_review else "0.0"
     rides_expr = "COUNT(DISTINCT t.TripID)" if has_trip else "0"
+    photo_select = """
+            dpp.ModerationStatus AS photo_moderation_status,
+            dpp.ModerationLabels AS photo_moderation_labels,
+    """ if has_profile_photo else """
+            NULL AS photo_moderation_status,
+            NULL AS photo_moderation_labels,
+    """
 
     joins: list[str] = []
     if info_join:
         joins.append(info_join)
+    if has_profile_photo:
+        joins.append("LEFT JOIN driver_profile_photo dpp ON dpp.DriverID = d.AccountID")
     if has_trip:
         joins.append("LEFT JOIN trip t ON t.DriverID = d.AccountID")
     if has_review:
@@ -176,12 +186,15 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
         "a.PhoneNum",
         "d.Status",
     ]
+    if has_profile_photo:
+        group_by_parts.extend(["dpp.ModerationStatus", "dpp.ModerationLabels"])
     group_by_parts.extend(info_group_by)
 
     query = f"""
         SELECT
             d.AccountID AS account_id,
             d.Status AS status,
+            {photo_select}
             {info_select}
             {rating_expr} AS rating,
             {rides_expr} AS rides
@@ -198,6 +211,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     info_mode = _driver_info_mode()
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
+    has_profile_photo = _table_exists("driver_profile_photo")
 
     if info_mode == "driver_information":
         info_select = """
@@ -277,10 +291,29 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     rating_expr = "COALESCE(AVG(dr.Rating), 0)" if has_review else "0"
     rides_expr = "COUNT(DISTINCT t.TripID)" if has_trip else "0"
     review_count_expr = "COUNT(DISTINCT dr.ReviewID)" if has_review else "0"
+    photo_select = """
+            dpp.StoragePath AS profile_photo_path,
+            dpp.MimeType AS profile_photo_mime_type,
+            dpp.FileSizeBytes AS profile_photo_file_size_bytes,
+            dpp.ModerationStatus AS photo_moderation_status,
+            dpp.ModerationScore AS photo_moderation_score,
+            dpp.ModerationLabels AS photo_moderation_labels,
+            dpp.ReviewedAt AS photo_reviewed_at,
+    """ if has_profile_photo else """
+            NULL AS profile_photo_path,
+            NULL AS profile_photo_mime_type,
+            NULL AS profile_photo_file_size_bytes,
+            NULL AS photo_moderation_status,
+            NULL AS photo_moderation_score,
+            NULL AS photo_moderation_labels,
+            NULL AS photo_reviewed_at,
+    """
 
     joins: list[str] = []
     if info_join:
         joins.append(info_join)
+    if has_profile_photo:
+        joins.append("LEFT JOIN driver_profile_photo dpp ON dpp.DriverID = d.AccountID")
     if has_trip:
         joins.append("LEFT JOIN trip t ON t.DriverID = d.AccountID")
     if has_review:
@@ -295,6 +328,16 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
         "d.Status",
         "d.Preferences",
     ]
+    if has_profile_photo:
+        group_by_parts.extend([
+            "dpp.StoragePath",
+            "dpp.MimeType",
+            "dpp.FileSizeBytes",
+            "dpp.ModerationStatus",
+            "dpp.ModerationScore",
+            "dpp.ModerationLabels",
+            "dpp.ReviewedAt",
+        ])
     group_by_parts.extend(info_group_by)
 
     rows = _fetch_all(
@@ -303,6 +346,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             d.AccountID AS account_id,
             d.Status AS status,
             d.Preferences AS preferences,
+            {photo_select}
             {info_select}
             {rating_expr} AS avg_rating,
             {rides_expr} AS total_rides,
@@ -466,6 +510,7 @@ def create_driver_signup(
     license_expires: str | None,
     insurance_provider: str,
     insurance_policy: str,
+    profile_photo: dict[str, Any] | None = None,
 ) -> int:
     account_id = _insert_returning_id(
         """
@@ -525,6 +570,27 @@ def create_driver_signup(
                 license_expires or None,
                 insurance_provider,
                 insurance_policy,
+            ),
+        )
+
+    if profile_photo and _table_exists("driver_profile_photo"):
+        _execute(
+            """
+            INSERT INTO driver_profile_photo
+            (
+                DriverID, StoragePath, MimeType, FileSizeBytes,
+                ModerationStatus, ModerationScore, ModerationLabels
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                account_id,
+                profile_photo.get("storage_path"),
+                profile_photo.get("mime_type"),
+                profile_photo.get("file_size_bytes"),
+                profile_photo.get("moderation_status") or "pending",
+                profile_photo.get("moderation_score"),
+                profile_photo.get("moderation_labels"),
             ),
         )
 
@@ -890,3 +956,64 @@ def update_portal_profile(role: str, account_id: int, profile: dict[str, Any]) -
             ),
         )
     return True
+
+
+def update_driver_profile_photo(account_id: int, profile_photo: dict[str, Any]) -> bool:
+    if not _table_exists("driver_profile_photo"):
+        return False
+
+    _execute(
+        """
+        INSERT INTO driver_profile_photo
+        (
+            DriverID, StoragePath, MimeType, FileSizeBytes,
+            ModerationStatus, ModerationScore, ModerationLabels, ReviewedAt
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)
+        ON DUPLICATE KEY UPDATE
+            StoragePath = VALUES(StoragePath),
+            MimeType = VALUES(MimeType),
+            FileSizeBytes = VALUES(FileSizeBytes),
+            ModerationStatus = VALUES(ModerationStatus),
+            ModerationScore = VALUES(ModerationScore),
+            ModerationLabels = VALUES(ModerationLabels),
+            ReviewedAt = NULL,
+            ReviewedBy = NULL
+        """,
+        (
+            account_id,
+            profile_photo.get("storage_path"),
+            profile_photo.get("mime_type"),
+            profile_photo.get("file_size_bytes"),
+            profile_photo.get("moderation_status") or "pending",
+            profile_photo.get("moderation_score"),
+            profile_photo.get("moderation_labels"),
+        ),
+    )
+
+    _execute(
+        """
+        UPDATE driver
+        SET Status = %s
+        WHERE AccountID = %s
+        """,
+        ("under_review", account_id),
+    )
+    return True
+
+
+def fetch_driver_profile_photo_path(account_id: int) -> str | None:
+    if not _table_exists("driver_profile_photo"):
+        return None
+    rows = _fetch_all(
+        """
+        SELECT StoragePath AS storage_path
+        FROM driver_profile_photo
+        WHERE DriverID = %s
+        LIMIT 1
+        """,
+        (account_id,),
+    )
+    if not rows:
+        return None
+    return rows[0].get("storage_path")

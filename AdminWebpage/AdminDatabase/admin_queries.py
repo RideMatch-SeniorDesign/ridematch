@@ -75,6 +75,7 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
     info_mode = _driver_info_mode()
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
+    has_profile_photo = _table_exists("driver_profile_photo")
 
     if info_mode == "driver_information":
         info_select = """
@@ -148,10 +149,19 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
 
     rating_expr = "ROUND(COALESCE(AVG(dr.Rating), 0), 1)" if has_review else "0.0"
     rides_expr = "COUNT(DISTINCT t.TripID)" if has_trip else "0"
+    photo_select = """
+            dpp.ModerationStatus AS photo_moderation_status,
+            dpp.ModerationLabels AS photo_moderation_labels,
+    """ if has_profile_photo else """
+            NULL AS photo_moderation_status,
+            NULL AS photo_moderation_labels,
+    """
 
     joins: list[str] = []
     if info_join:
         joins.append(info_join)
+    if has_profile_photo:
+        joins.append("LEFT JOIN driver_profile_photo dpp ON dpp.DriverID = d.AccountID")
     if has_trip:
         joins.append("LEFT JOIN trip t ON t.DriverID = d.AccountID")
     if has_review:
@@ -165,12 +175,15 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
         "a.PhoneNum",
         "d.Status",
     ]
+    if has_profile_photo:
+        group_by_parts.extend(["dpp.ModerationStatus", "dpp.ModerationLabels"])
     group_by_parts.extend(info_group_by)
 
     query = f"""
         SELECT
             d.AccountID AS account_id,
             d.Status AS status,
+            {photo_select}
             {info_select}
             {rating_expr} AS rating,
             {rides_expr} AS rides
