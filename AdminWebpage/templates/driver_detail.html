@@ -5,7 +5,13 @@
 {% block content %}
 <section>
   <article class="panel">
-    <h2>{{ driver.name }}</h2>
+    <div class="section-head">
+      <div>
+        <h2>{{ driver.name }}</h2>
+        <p>Full verification profile and moderation details.</p>
+      </div>
+      <span class="status-tag status-info">{{ driver.status or "Unknown" }}</span>
+    </div>
     {% if verification_notice == "approved" %}
     <div class="success">Driver approved.</div>
     {% elif verification_notice == "denied" %}
@@ -143,8 +149,9 @@
     </div>
 
     <div class="detail-back-link">
-      <a href="{{ url_for('drivers') }}">
-        <button class="mini">Back to Drivers</button>
+      <a href="{{ url_for('drivers') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i>
+        Back to Drivers
       </a>
     </div>
 
