@@ -20,6 +20,34 @@
 
   <article class="panel">
     <h2>Riders</h2>
+    <form method="get" action="{{ url_for('riders') }}" class="row g-2 align-items-end mb-3">
+      <div class="col-lg-4 col-md-6">
+        <label class="form-label mb-1">Search</label>
+        <input
+          type="text"
+          class="form-control"
+          name="rider_query"
+          value="{{ rider_filters.query }}"
+          placeholder="Name, phone, or email"
+        />
+      </div>
+      <div class="col-lg-3 col-md-6">
+        <label class="form-label mb-1">Riding Since (On or Before)</label>
+        <input type="date" class="form-control" name="riding_since_before" value="{{ rider_filters.riding_since_before }}" />
+      </div>
+      <div class="col-lg-2 col-md-3">
+        <label class="form-label mb-1">Rating Min</label>
+        <input type="number" class="form-control" name="rider_rating_min" step="0.1" min="0" max="5" value="{{ rider_filters.rating_min }}" />
+      </div>
+      <div class="col-lg-2 col-md-3">
+        <label class="form-label mb-1">Rating Max</label>
+        <input type="number" class="form-control" name="rider_rating_max" step="0.1" min="0" max="5" value="{{ rider_filters.rating_max }}" />
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('riders') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
 
     {% if all_riders %}
     <div class="table-responsive">
@@ -29,6 +57,7 @@
             <th>Rider</th>
             <th>Contact</th>
             <th>Preferences</th>
+            <th>Riding Since</th>
             <th>Rides Taken</th>
             <th>Average Rating</th>
           </tr>
@@ -46,10 +75,18 @@
             <td>
               <span class="badge bg-light text-dark">{{ rider.preferences or 'None' }}</span>
             </td>
+            <td>
+              {% set riding_since = rider.riding_since %}
+              {% if riding_since %}
+              {{ riding_since if riding_since is string else riding_since.strftime('%Y-%m-%d') }}
+              {% else %}
+              N/A
+              {% endif %}
+            </td>
             <td>{{ rider.rides | default(0) }}</td>
             <td>
               <span class="text-warning">
-                {% if rider.rating %}★ {{ rider.rating }}/5{% else %}No ratings{% endif %}
+                {% if rider.rating %}&#9733; {{ rider.rating }}/5{% else %}No ratings{% endif %}
               </span>
             </td>
           </tr>
@@ -86,3 +123,4 @@
   </article>
 </section>
 {% endblock %}
+
