@@ -63,6 +63,8 @@ CREATE TABLE `driver` (
     `Preferences` varchar(100),
     `Rating` int DEFAULT 5,
     `Status` varchar(50) DEFAULT 'pending',
+    `SubmittedAt` timestamp(6) NOT NULL DEFAULT current_timestamp(6),
+    `ApprovedAt` timestamp(6) DEFAULT NULL,
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Driver_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );

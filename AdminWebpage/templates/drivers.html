@@ -40,8 +40,50 @@
     {% endif %}
 
     {% if active_driver_tab == 'all' %}
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h3 class="mb-0">Drivers</h3>
+      <small class="text-muted">Showing {{ driver_directory_filtered }} of {{ driver_directory_total }}</small>
+    </div>
+    <form method="get" action="{{ url_for('drivers') }}" class="row g-2 align-items-end mb-3">
+      <input type="hidden" name="tab" value="all" />
+      <div class="col-12 col-md-4">
+        <label class="form-label mb-1" for="driver-search">Search</label>
+        <input
+          id="driver-search"
+          type="text"
+          class="form-control"
+          name="search"
+          value="{{ driver_search }}"
+          placeholder="Name, phone, or email"
+        />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label mb-1" for="driver-status-filter">Status</label>
+        <select id="driver-status-filter" class="form-select" name="status">
+          <option value="all" {{ 'selected' if driver_status_filter == 'all' else '' }}>All statuses</option>
+          {% for status in driver_status_options %}
+          <option value="{{ status }}" {{ 'selected' if driver_status_filter == status else '' }}>
+            {{ status.replace('_', ' ')|title }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label mb-1" for="driver-min-rating">Min Rating</label>
+        <input id="driver-min-rating" type="number" class="form-control" name="min_rating" min="0" max="5" step="0.1" value="{{ driver_min_rating }}" />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label mb-1" for="driver-min-rides">Min Rides</label>
+        <input id="driver-min-rides" type="number" class="form-control" name="min_rides" min="0" step="1" value="{{ driver_min_rides }}" />
+      </div>
+      <div class="col-6 col-md-1 d-grid">
+        <button type="submit" class="btn btn-primary">Apply</button>
+      </div>
+      <div class="col-6 col-md-1 d-grid">
+        <a class="btn btn-outline-secondary" href="{{ url_for('drivers', tab='all') }}">Clear</a>
+      </div>
+    </form>
     <div class="table-responsive">
-      <h3>Active Drivers</h3>
       <table class="table table-hover align-middle">
         <thead>
           <tr>
@@ -53,7 +95,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for row in all_drivers %}
+          {% for row in driver_directory %}
           <tr>
             <td>
               <div class="d-flex align-items-center gap-2">
@@ -81,7 +123,13 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="5" class="text-center text-muted">No approved or pending drivers found.</td>
+            <td colspan="5" class="text-center text-muted">
+              {% if driver_search or driver_status_filter != 'all' or driver_min_rating or driver_min_rides %}
+              No drivers matched your search and filters.
+              {% else %}
+              No approved or pending drivers found.
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -89,6 +137,7 @@
     </div>
 
     {% if selected_driver %}
+    {% set selected_driver_since_days = selected_driver.get('driver_since_days') %}
     <div class="card driver-detail mt-3">
       <div class="card-body">
         <h5 class="card-title mb-2">{{ selected_driver.name }}</h5>
@@ -100,6 +149,14 @@
           <div class="col-md-4">
             <small class="text-muted d-block">Age</small>
             <span class="fw-semibold">{{ selected_driver.age if selected_driver.age is not none else 'N/A' }}</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">Approved On</small>
+            <span class="fw-semibold">{{ selected_driver.approved_at.strftime('%Y-%m-%d') if selected_driver.get('approved_at') else 'N/A' }}</span>
+          </div>
+          <div class="col-md-4">
+            <small class="text-muted d-block">Driver Since</small>
+            <span class="fw-semibold">{{ (selected_driver_since_days ~ ' day(s)') if selected_driver_since_days is not none else 'N/A' }}</span>
           </div>
           <div class="col-md-4">
             <small class="text-muted d-block">Average Rating</small>
@@ -158,6 +215,40 @@
     {% endif %}
 
     {% if active_driver_tab == 'verification' %}
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h3 class="mb-0">Driver Verification Queue</h3>
+      <small class="text-muted">Showing {{ verification_driver_filtered }} of {{ verification_driver_total }}</small>
+    </div>
+    <form method="get" action="{{ url_for('drivers') }}" class="row g-2 align-items-end mb-3">
+      <input type="hidden" name="tab" value="verification" />
+      <div class="col-12 col-md-4">
+        <label class="form-label mb-1" for="verification-search">Search</label>
+        <input
+          id="verification-search"
+          type="text"
+          class="form-control"
+          name="verification_search"
+          value="{{ verification_search }}"
+          placeholder="Name, phone, or email"
+        />
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label mb-1" for="verification-submitted-date">Submitted Before</label>
+        <input
+          id="verification-submitted-date"
+          type="date"
+          class="form-control"
+          name="verification_submitted_date"
+          value="{{ verification_submitted_date }}"
+        />
+      </div>
+      <div class="col-6 col-md-2 d-grid">
+        <button type="submit" class="btn btn-primary">Apply</button>
+      </div>
+      <div class="col-6 col-md-2 d-grid">
+        <a class="btn btn-outline-secondary" href="{{ url_for('drivers', tab='verification') }}">Clear</a>
+      </div>
+    </form>
     <div class="table-responsive">
       <table class="table table-striped align-middle">
         <thead>
@@ -165,6 +256,7 @@
             <th>Applicant</th>
             <th>Contact</th>
             <th>Status</th>
+            <th>Submitted</th>
             <th>Age</th>
             <th>License Exp.</th>
             <th>Insurance</th>
@@ -174,7 +266,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for row in unapproved_drivers %}
+          {% for row in verification_driver_directory %}
           <tr>
             <td>{{ row.name }}</td>
             <td>
@@ -189,6 +281,7 @@
                 {{ row.status }}
               </span>
             </td>
+            <td>{{ row.submitted_at.strftime('%Y-%m-%d') if row.submitted_at else 'N/A' }}</td>
             <td>{{ row.age if row.age is not none else 'N/A' }}</td>
             <td>{{ row.license_expires.strftime('%Y-%m-%d') if row.license_expires else 'N/A' }}</td>
             <td>{{ row.insurance_provider or 'N/A' }}</td>
@@ -197,6 +290,8 @@
             <td class="text-end verify-actions">
               <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
                 <input type="hidden" name="action" value="approve" />
+                <input type="hidden" name="verification_search" value="{{ verification_search }}" />
+                <input type="hidden" name="verification_submitted_date" value="{{ verification_submitted_date }}" />
                 <button type="submit" class="btn btn-sm btn-success btn-approve shadow-sm">
                   <i class="bi bi-check-circle"></i>
                   Approve
@@ -204,6 +299,8 @@
               </form>
               <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
                 <input type="hidden" name="action" value="deny" />
+                <input type="hidden" name="verification_search" value="{{ verification_search }}" />
+                <input type="hidden" name="verification_submitted_date" value="{{ verification_submitted_date }}" />
                 <button type="submit" class="btn btn-sm btn-danger btn-deny shadow-sm">
                   <i class="bi bi-x-circle"></i>
                   Deny
@@ -213,7 +310,13 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="9" class="text-center text-muted">No unapproved drivers waiting for verification.</td>
+            <td colspan="10" class="text-center text-muted">
+              {% if verification_search or verification_submitted_date %}
+              No drivers matched your search and filters.
+              {% else %}
+              No unapproved drivers waiting for verification.
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

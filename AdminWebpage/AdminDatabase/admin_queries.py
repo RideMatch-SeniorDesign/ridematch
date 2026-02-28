@@ -40,6 +40,21 @@ def _table_exists(table_name: str) -> bool:
     return bool(rows)
 
 
+def _column_exists(table_name: str, column_name: str) -> bool:
+    rows = _fetch_all(
+        """
+        SELECT 1 AS has_column
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = %s
+          AND column_name = %s
+        LIMIT 1
+        """,
+        (table_name, column_name),
+    )
+    return bool(rows)
+
+
 def _driver_info_mode() -> str | None:
     if _table_exists("driver_information"):
         return "driver_information"
@@ -75,6 +90,8 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
     info_mode = _driver_info_mode()
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
+    has_submitted_at = _column_exists("driver", "SubmittedAt")
+    has_approved_at = _column_exists("driver", "ApprovedAt")
 
     if info_mode == "driver_information":
         info_select = """
@@ -148,6 +165,13 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
 
     rating_expr = "ROUND(COALESCE(AVG(dr.Rating), 0), 1)" if has_review else "0.0"
     rides_expr = "COUNT(DISTINCT t.TripID)" if has_trip else "0"
+    submitted_expr = "d.SubmittedAt" if has_submitted_at else "NULL"
+    approved_expr = "d.ApprovedAt" if has_approved_at else "NULL"
+    driver_since_expr = (
+        "CASE WHEN d.ApprovedAt IS NULL THEN NULL ELSE TIMESTAMPDIFF(DAY, d.ApprovedAt, CURRENT_TIMESTAMP()) END"
+        if has_approved_at
+        else "NULL"
+    )
 
     joins: list[str] = []
     if info_join:
@@ -165,12 +189,19 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
         "a.PhoneNum",
         "d.Status",
     ]
+    if has_submitted_at:
+        group_by_parts.append("d.SubmittedAt")
+    if has_approved_at:
+        group_by_parts.append("d.ApprovedAt")
     group_by_parts.extend(info_group_by)
 
     query = f"""
         SELECT
             d.AccountID AS account_id,
             d.Status AS status,
+            {submitted_expr} AS submitted_at,
+            {approved_expr} AS approved_at,
+            {driver_since_expr} AS driver_since_days,
             {info_select}
             {rating_expr} AS rating,
             {rides_expr} AS rides
@@ -187,6 +218,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     info_mode = _driver_info_mode()
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
+    has_submitted_at = _column_exists("driver", "SubmittedAt")
+    has_approved_at = _column_exists("driver", "ApprovedAt")
 
     if info_mode == "driver_information":
         info_select = """
@@ -266,6 +299,13 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     rating_expr = "COALESCE(AVG(dr.Rating), 0)" if has_review else "0"
     rides_expr = "COUNT(DISTINCT t.TripID)" if has_trip else "0"
     review_count_expr = "COUNT(DISTINCT dr.ReviewID)" if has_review else "0"
+    submitted_expr = "d.SubmittedAt" if has_submitted_at else "NULL"
+    approved_expr = "d.ApprovedAt" if has_approved_at else "NULL"
+    driver_since_expr = (
+        "CASE WHEN d.ApprovedAt IS NULL THEN NULL ELSE TIMESTAMPDIFF(DAY, d.ApprovedAt, CURRENT_TIMESTAMP()) END"
+        if has_approved_at
+        else "NULL"
+    )
 
     joins: list[str] = []
     if info_join:
@@ -284,6 +324,10 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
         "d.Status",
         "d.Preferences",
     ]
+    if has_submitted_at:
+        group_by_parts.append("d.SubmittedAt")
+    if has_approved_at:
+        group_by_parts.append("d.ApprovedAt")
     group_by_parts.extend(info_group_by)
 
     rows = _fetch_all(
@@ -292,6 +336,9 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             d.AccountID AS account_id,
             d.Status AS status,
             d.Preferences AS preferences,
+            {submitted_expr} AS submitted_at,
+            {approved_expr} AS approved_at,
+            {driver_since_expr} AS driver_since_days,
             {info_select}
             {rating_expr} AS avg_rating,
             {rides_expr} AS total_rides,
@@ -309,14 +356,29 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
 
 def update_driver_status(driver_id: int, action: str) -> bool:
     status = "approved" if action == "approve" else "denied"
-    rows = _execute(
-        """
-        UPDATE driver
-        SET Status = %s
-        WHERE AccountID = %s
-        """,
-        (status, driver_id),
-    )
+    if _column_exists("driver", "ApprovedAt"):
+        rows = _execute(
+            """
+            UPDATE driver
+            SET
+                Status = %s,
+                ApprovedAt = CASE
+                    WHEN %s = 'approved' THEN COALESCE(ApprovedAt, CURRENT_TIMESTAMP(6))
+                    ELSE NULL
+                END
+            WHERE AccountID = %s
+            """,
+            (status, status, driver_id),
+        )
+    else:
+        rows = _execute(
+            """
+            UPDATE driver
+            SET Status = %s
+            WHERE AccountID = %s
+            """,
+            (status, driver_id),
+        )
     return rows > 0
 
 

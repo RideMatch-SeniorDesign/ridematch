@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, redirect, render_template, request, session, url_for
 from dotenv import load_dotenv, set_key
@@ -81,6 +81,9 @@ def _dashboard_data() -> dict:
                 "rating": "5.0",
                 "rides": 100,
                 "status": "approved",
+                "submitted_at": today - timedelta(days=110),
+                "approved_at": today - timedelta(days=103),
+                "driver_since_days": 103,
                 "age": 32,
                 "license_state": "IA",
                 "license_number": "IA-214334",
@@ -93,6 +96,9 @@ def _dashboard_data() -> dict:
                 "rating": "3.5",
                 "rides": 50,
                 "status": "pending",
+                "submitted_at": today - timedelta(days=4),
+                "approved_at": None,
+                "driver_since_days": None,
                 "age": 29,
                 "license_state": "IA",
                 "license_number": "IA-992191",
@@ -107,6 +113,9 @@ def _dashboard_data() -> dict:
                 "rating": "3.5",
                 "rides": 50,
                 "status": "pending",
+                "submitted_at": today - timedelta(days=4),
+                "approved_at": None,
+                "driver_since_days": None,
                 "age": 29,
                 "license_expires": None,
                 "insurance_provider": "N/A",
@@ -221,6 +230,131 @@ def _dashboard_data() -> dict:
         return fallback_data
 
 
+def _coerce_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _driver_directory_rows(data: dict) -> list[dict]:
+    merged_by_id: dict[int, dict] = {}
+
+    for source in ("all_drivers", "unapproved_drivers"):
+        for row in data.get(source, []):
+            account_id = _coerce_int(row.get("account_id"))
+            if account_id is None:
+                continue
+
+            existing = merged_by_id.get(account_id)
+            if existing is None:
+                merged_by_id[account_id] = dict(row)
+                continue
+
+            for key, value in row.items():
+                if existing.get(key) in {None, ""} and value not in {None, ""}:
+                    existing[key] = value
+
+    return sorted(
+        merged_by_id.values(),
+        key=lambda row: ((row.get("name") or "").lower(), _coerce_int(row.get("account_id")) or 0),
+    )
+
+
+def _filter_driver_directory(
+    rows: list[dict],
+    search: str,
+    status: str,
+    min_rating: float | None,
+    min_rides: int | None,
+) -> list[dict]:
+    lowered_search = search.lower()
+    status = status.lower()
+
+    filtered: list[dict] = []
+    for row in rows:
+        row_status = (row.get("status") or "").strip().lower()
+        row_rating = _coerce_float(row.get("rating")) or 0.0
+        row_rides = _coerce_int(row.get("rides")) or 0
+
+        if lowered_search:
+            searchable_values = (
+                str(row.get("name") or "").lower(),
+                str(row.get("email") or "").lower(),
+                str(row.get("phone") or "").lower(),
+            )
+            if not any(lowered_search in value for value in searchable_values):
+                continue
+
+        if status and status != "all" and row_status != status:
+            continue
+        if min_rating is not None and row_rating < min_rating:
+            continue
+        if min_rides is not None and row_rides < min_rides:
+            continue
+
+        filtered.append(row)
+
+    return filtered
+
+
+def _as_date(value) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            return datetime.fromisoformat(candidate).date()
+        except ValueError:
+            try:
+                return date.fromisoformat(candidate[:10])
+            except ValueError:
+                return None
+    return None
+
+
+def _filter_verification_rows(
+    rows: list[dict],
+    search: str,
+    submitted_date: date | None,
+) -> list[dict]:
+    lowered_search = search.lower()
+    filtered: list[dict] = []
+
+    for row in rows:
+        if lowered_search:
+            searchable_values = (
+                str(row.get("name") or "").lower(),
+                str(row.get("email") or "").lower(),
+                str(row.get("phone") or "").lower(),
+            )
+            if not any(lowered_search in value for value in searchable_values):
+                continue
+
+        row_submitted_date = _as_date(row.get("submitted_at"))
+        if submitted_date is not None:
+            # Keep drivers submitted on or before the selected cutoff date.
+            if row_submitted_date is None or row_submitted_date > submitted_date:
+                continue
+
+        filtered.append(row)
+
+    return filtered
+
+
 @app.route("/")
 def index():
     return redirect(url_for("login"))
@@ -308,6 +442,65 @@ def drivers():
     if active_tab not in {"all", "verification", "reviews"}:
         active_tab = "all"
 
+    search = request.args.get("search", "").strip()
+    status_filter = request.args.get("status", "all").strip().lower() or "all"
+
+    min_rating = None
+    min_rating_input = request.args.get("min_rating", "").strip()
+    if min_rating_input:
+        parsed_rating = _coerce_float(min_rating_input)
+        if parsed_rating is not None:
+            min_rating = max(0.0, min(5.0, parsed_rating))
+            min_rating_input = f"{min_rating:g}"
+        else:
+            min_rating_input = ""
+
+    min_rides = None
+    min_rides_input = request.args.get("min_rides", "").strip()
+    if min_rides_input:
+        parsed_rides = _coerce_int(min_rides_input)
+        if parsed_rides is not None:
+            min_rides = max(0, parsed_rides)
+            min_rides_input = str(min_rides)
+        else:
+            min_rides_input = ""
+
+    data = _dashboard_data()
+    driver_directory_all = _driver_directory_rows(data)
+    status_options = sorted(
+        {
+            (row.get("status") or "").strip().lower()
+            for row in driver_directory_all
+            if (row.get("status") or "").strip()
+        }
+    )
+    if status_filter != "all" and status_filter not in status_options:
+        status_filter = "all"
+
+    driver_directory = _filter_driver_directory(
+        driver_directory_all,
+        search=search,
+        status=status_filter,
+        min_rating=min_rating,
+        min_rides=min_rides,
+    )
+
+    verification_search = request.args.get("verification_search", "").strip()
+    verification_submitted_date_input = request.args.get("verification_submitted_date", "").strip()
+    verification_submitted_date = None
+    if verification_submitted_date_input:
+        try:
+            verification_submitted_date = date.fromisoformat(verification_submitted_date_input)
+        except ValueError:
+            verification_submitted_date_input = ""
+
+    verification_rows_all = list(data.get("unapproved_drivers", []))
+    verification_rows = _filter_verification_rows(
+        verification_rows_all,
+        search=verification_search,
+        submitted_date=verification_submitted_date,
+    )
+
     selected_driver_id = request.args.get("driver_id", type=int)
     selected_driver = None
     if selected_driver_id:
@@ -323,9 +516,22 @@ def drivers():
         username=session.get("username"),
         current_tab="drivers",
         active_driver_tab=active_tab,
+        driver_directory=driver_directory,
+        driver_directory_total=len(driver_directory_all),
+        driver_directory_filtered=len(driver_directory),
+        driver_search=search,
+        driver_status_filter=status_filter,
+        driver_status_options=status_options,
+        driver_min_rating=min_rating_input,
+        driver_min_rides=min_rides_input,
+        verification_driver_directory=verification_rows,
+        verification_driver_total=len(verification_rows_all),
+        verification_driver_filtered=len(verification_rows),
+        verification_search=verification_search,
+        verification_submitted_date=verification_submitted_date_input,
         selected_driver=selected_driver,
         verification_notice=request.args.get("notice"),
-        **_dashboard_data(),
+        **data,
     )
 
 
@@ -348,7 +554,15 @@ def verify_driver(driver_id: int):
     except Exception as exc:
         app.logger.warning("Driver verification update failed: %s", exc)
 
-    return redirect(url_for("drivers", tab="verification", notice=notice))
+    redirect_args = {"tab": "verification", "notice": notice}
+    verification_search = request.form.get("verification_search", "").strip()
+    verification_submitted_date = request.form.get("verification_submitted_date", "").strip()
+    if verification_search:
+        redirect_args["verification_search"] = verification_search
+    if verification_submitted_date:
+        redirect_args["verification_submitted_date"] = verification_submitted_date
+
+    return redirect(url_for("drivers", **redirect_args))
 
 
 @app.route("/drivers/detail/<int:driver_id>")

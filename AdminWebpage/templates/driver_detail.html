@@ -76,6 +76,18 @@
         <span><strong>Status:</strong></span>
         <span class="text-capitalize">{{ driver.status or "Unknown" }}</span>
       </div>
+      <div class="row">
+        <span><strong>Submitted:</strong></span>
+        <span>{{ driver.submitted_at.strftime('%Y-%m-%d') if driver.get('submitted_at') else "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Approved:</strong></span>
+        <span>{{ driver.approved_at.strftime('%Y-%m-%d') if driver.get('approved_at') else "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Driver Since:</strong></span>
+        <span>{% if driver.get('driver_since_days') is not none %}{{ driver.get('driver_since_days') }} day(s){% else %}N/A{% endif %}</span>
+      </div>
     </div>
 
     <div style="margin-top: 20px;">

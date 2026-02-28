@@ -69,20 +69,20 @@ VALUES
 (18, 'quiet ride');
 
 -- create drivers
-INSERT INTO `driver` (AccountID, Preferences)
+INSERT INTO `driver` (AccountID, Preferences, SubmittedAt, ApprovedAt)
 VALUES
-(1, 'quiet rider'),
-(2, 'music low'),
-(3, 'conversation okay'),
-(7, 'quiet rider'),
-(8, 'music low'),
-(9, 'pet friendly'),
-(10, 'conversation okay'),
-(11, 'quiet rider'),
-(12, 'music low'),
-(13, 'quiet rider'),
-(14, 'conversation okay'),
-(15, 'quiet rider');
+(1, 'quiet rider', '2025-09-03 09:15:00', '2025-09-08 10:00:00'),
+(2, 'music low', '2025-09-10 08:40:00', '2025-09-14 11:20:00'),
+(3, 'conversation okay', '2026-02-20 14:10:00', NULL),
+(7, 'quiet rider', '2026-02-18 09:30:00', NULL),
+(8, 'music low', '2025-08-22 13:00:00', '2025-08-28 16:45:00'),
+(9, 'pet friendly', '2025-07-11 15:20:00', '2025-07-18 09:50:00'),
+(10, 'conversation okay', '2026-02-21 12:05:00', NULL),
+(11, 'quiet rider', '2025-10-02 07:55:00', '2025-10-07 10:10:00'),
+(12, 'music low', '2025-11-16 10:30:00', '2025-11-21 11:45:00'),
+(13, 'quiet rider', '2026-02-24 16:15:00', NULL),
+(14, 'conversation okay', '2026-02-23 09:05:00', NULL),
+(15, 'quiet rider', '2026-02-10 13:35:00', NULL);
 
 -- set driver statuses for admin workflows
 UPDATE `driver`
