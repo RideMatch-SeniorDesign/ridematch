@@ -340,7 +340,7 @@ def verify_driver(driver_id: int):
 
     notice = "update_failed"
     try:
-        from Database.admin_queries import update_driver_status
+        from AdminDatabase.admin_queries import update_driver_status
 
         updated = update_driver_status(driver_id, action)
         if updated:
