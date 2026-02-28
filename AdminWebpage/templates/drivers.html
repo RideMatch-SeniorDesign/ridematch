@@ -5,16 +5,16 @@
 <section class="driver-shell">
   <div class="driver-metrics">
     <div class="metric-card metric-blue">
-      <small>Active Drivers</small>
-      <strong>{{ total_driver_count }}</strong>
+      <small>Total Drivers</small>
+      <strong>{{ all_driver_count_raw if all_driver_count_raw is defined else total_driver_count }}</strong>
     </div>
     <div class="metric-card metric-amber">
       <small>Pending Verification</small>
-      <strong>{{ unapproved_drivers|length }}</strong>
+      <strong>{{ pending_driver_count_raw if pending_driver_count_raw is defined else (unapproved_drivers|length) }}</strong>
     </div>
     <div class="metric-card metric-indigo">
       <small>Reviews</small>
-      <strong>{{ driver_reviews|length }}</strong>
+      <strong>{{ driver_review_count_raw if driver_review_count_raw is defined else (driver_reviews|length) }}</strong>
     </div>
   </div>
 
@@ -40,14 +40,62 @@
     {% endif %}
 
     {% if active_driver_tab == 'all' %}
+    <form method="get" action="{{ url_for('drivers') }}" class="row g-2 align-items-end mb-3">
+      <input type="hidden" name="tab" value="all" />
+      <div class="col-lg-3 col-md-6">
+        <label class="form-label mb-1">Search</label>
+        <input
+          type="text"
+          class="form-control"
+          name="driver_query"
+          value="{{ all_driver_filters.query }}"
+          placeholder="Name, phone, or email"
+        />
+      </div>
+      <div class="col-lg-2 col-md-6">
+        <label class="form-label mb-1">Status</label>
+        <select class="form-select" name="driver_status">
+          <option value="">All statuses</option>
+          {% for status in driver_status_options %}
+          <option value="{{ status }}" {{ 'selected' if all_driver_filters.status == status else '' }}>{{ status|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2 col-md-6">
+        <label class="form-label mb-1">Driving Since (On or Before)</label>
+        <input type="date" class="form-control" name="driving_since_before" value="{{ all_driver_filters.driving_since_before }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rating Min</label>
+        <input type="number" class="form-control" name="driver_rating_min" step="0.1" min="0" max="5" value="{{ all_driver_filters.rating_min }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rating Max</label>
+        <input type="number" class="form-control" name="driver_rating_max" step="0.1" min="0" max="5" value="{{ all_driver_filters.rating_max }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rides Min</label>
+        <input type="number" class="form-control" name="driver_rides_min" min="0" value="{{ all_driver_filters.rides_min }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rides Max</label>
+        <input type="number" class="form-control" name="driver_rides_max" min="0" value="{{ all_driver_filters.rides_max }}" />
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('drivers', tab='all') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
+
     <div class="table-responsive">
-      <h3>Active Drivers</h3>
+      <h3>All Drivers</h3>
       <table class="table table-hover align-middle">
         <thead>
           <tr>
             <th>Driver</th>
             <th>Contact</th>
             <th>Status</th>
+            <th>Driving Since</th>
             <th>Rating</th>
             <th>Rides</th>
           </tr>
@@ -76,12 +124,20 @@
                 {{ row.status }}
               </span>
             </td>
+            <td>
+              {% set driving_since = row.date_approved %}
+              {% if driving_since %}
+              {{ driving_since if driving_since is string else driving_since.strftime('%Y-%m-%d') }}
+              {% else %}
+              N/A
+              {% endif %}
+            </td>
             <td>{{ row.rating }} / 5</td>
             <td>{{ row.rides }}</td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="5" class="text-center text-muted">No approved or pending drivers found.</td>
+            <td colspan="6" class="text-center text-muted">No drivers match the current filters.</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -158,6 +214,27 @@
     {% endif %}
 
     {% if active_driver_tab == 'verification' %}
+    <form method="get" action="{{ url_for('drivers') }}" class="row g-2 align-items-end mb-3">
+      <input type="hidden" name="tab" value="verification" />
+      <div class="col-md-3">
+        <label class="form-label mb-1">Status</label>
+        <select class="form-select" name="verification_status">
+          <option value="">All statuses</option>
+          {% for status in verification_status_options %}
+          <option value="{{ status }}" {{ 'selected' if verification_filters.status == status else '' }}>{{ status|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label mb-1">Submitted On or Before</label>
+        <input type="date" class="form-control" name="submitted_before" value="{{ verification_filters.submitted_before }}" />
+      </div>
+      <div class="col-md-5 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('drivers', tab='verification') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
+
     <div class="table-responsive">
       <table class="table table-striped align-middle">
         <thead>
@@ -165,9 +242,10 @@
             <th>Applicant</th>
             <th>Contact</th>
             <th>Status</th>
+            <th>Submitted</th>
             <th>Rating</th>
             <th>Rides</th>
-            <th class="text-end">    </th>
+            <th class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -185,6 +263,14 @@
               >
                 {{ row.status }}
               </span>
+            </td>
+            <td>
+              {% set submitted_on = row.date_submitted %}
+              {% if submitted_on %}
+              {{ submitted_on if submitted_on is string else submitted_on.strftime('%Y-%m-%d') }}
+              {% else %}
+              N/A
+              {% endif %}
             </td>
             <td>{{ row.rating }} / 5</td>
             <td>{{ row.rides }}</td>
@@ -224,7 +310,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="6" class="text-center text-muted">No unapproved drivers waiting for verification.</td>
+            <td colspan="7" class="text-center text-muted">No unapproved drivers match the current filters.</td>
           </tr>
           {% endfor %}
         </tbody>
