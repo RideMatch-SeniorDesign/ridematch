@@ -95,7 +95,7 @@
       </table>
     </div>
     {% else %}
-    <div class="empty-message" style="text-align: center; padding: 40px;">
+    <div class="empty-message empty-centered">
       <i class="bi bi-people"></i>
       <p>No riders found.</p>
     </div>
@@ -106,7 +106,7 @@
     <h2>Rider Activity</h2>
 
     {% if recent_rides %}
-    <div style="padding: 20px;">
+    <div class="activity-block">
       <h3>Recent Rides</h3>
       <ul class="list-box">
         {% for ride in recent_rides[:10] %}
@@ -115,7 +115,7 @@
       </ul>
     </div>
     {% else %}
-    <div class="empty-message" style="text-align: center; padding: 40px;">
+    <div class="empty-message empty-centered">
       <i class="bi bi-calendar2-check"></i>
       <p>No recent rides.</p>
     </div>

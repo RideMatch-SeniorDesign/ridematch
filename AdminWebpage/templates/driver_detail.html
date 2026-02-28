@@ -41,7 +41,7 @@
           <img
             src="{{ url_for('driver_photo', driver_id=driver.account_id) }}"
             alt="Driver profile photo for {{ driver.name }}"
-            style="max-width: 220px; width: 100%; height: auto; border-radius: 8px; border: 1px solid #d1d5db;"
+            class="detail-photo"
           />
         </span>
       </div>
@@ -142,7 +142,7 @@
       </div>
     </div>
 
-    <div style="margin-top: 20px;">
+    <div class="detail-back-link">
       <a href="{{ url_for('drivers') }}">
         <button class="mini">Back to Drivers</button>
       </a>
