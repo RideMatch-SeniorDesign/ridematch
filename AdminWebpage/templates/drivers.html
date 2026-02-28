@@ -167,7 +167,7 @@
             <th>Status</th>
             <th>Rating</th>
             <th>Rides</th>
-            <th class="text-end">Actions</th>
+            <th class="text-end">    </th>
           </tr>
         </thead>
         <tbody>
@@ -198,18 +198,27 @@
                   <i class="bi bi-exclamation-triangle-fill"></i>
                   Flagged: {{ moderation_labels or 'content warning' }}
                 </span>
-                <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
-                  <input type="hidden" name="action" value="deny" />
-                  <button type="submit" class="btn btn-sm btn-danger verify-reject-btn">
-                    <i class="bi bi-x-circle"></i>
-                    Reject
-                  </button>
-                </form>
                 {% endif %}
                 <a class="btn btn-sm btn-outline-primary verify-view-btn" href="{{ url_for('driver_detail', driver_id=row.account_id) }}">
                   <i class="bi bi-info-circle"></i>
-                  View Details
+                  Info
                 </a>
+                {% if verify_status not in ['denied', 'rejected', 'removed'] %}
+                <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
+                  <input type="hidden" name="action" value="approve" />
+                  <button type="submit" class="btn btn-sm btn-success btn-approve">
+                    <i class="bi bi-check-circle"></i>
+                    Approve
+                  </button>
+                </form>
+                {% endif %}
+                <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
+                  <input type="hidden" name="action" value="deny" />
+                  <button type="submit" class="btn btn-sm btn-danger btn-deny">
+                    <i class="bi bi-x-circle"></i>
+                    Deny
+                  </button>
+                </form>
               </div>
             </td>
           </tr>
