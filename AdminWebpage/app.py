@@ -31,6 +31,8 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 ONGOING_TRIP_STATUSES = {"requested", "accepted", "in_progress"}
+DRIVER_FARE_SHARE = 0.75
+ADMIN_FARE_SHARE = 0.25
 
 
 def _is_logged_in() -> bool:
@@ -297,6 +299,167 @@ def _filter_rider_reviews(rows: list[dict[str, Any]], filters: dict[str, str]) -
     )
 
 
+def _merge_reviews(
+    rider_to_driver_rows: list[dict[str, Any]],
+    driver_to_rider_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+
+    for row in rider_to_driver_rows:
+        enriched = dict(row)
+        enriched["review_scope"] = "rider"
+        enriched["review_type_label"] = "Rider -> Driver"
+        merged.append(enriched)
+
+    for row in driver_to_rider_rows:
+        enriched = dict(row)
+        enriched["review_scope"] = "driver"
+        enriched["review_type_label"] = "Driver -> Rider"
+        merged.append(enriched)
+
+    return sorted(
+        merged,
+        key=lambda row: (
+            _coerce_datetime(row.get("review_date")) or datetime.min,
+            _coerce_int(row.get("review_id")) or 0,
+        ),
+        reverse=True,
+    )
+
+
+def _filter_analytics_reviews(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    scope = (filters.get("scope") or "").strip().lower()
+    scope_filtered = rows
+    if scope in {"driver", "rider"}:
+        scope_filtered = [row for row in rows if str(row.get("review_scope") or "").lower() == scope]
+
+    base_filters = {
+        "query": filters.get("query", ""),
+        "rating_min": filters.get("rating_min", ""),
+        "rating_max": filters.get("rating_max", ""),
+        "sort_by": filters.get("sort_by", "newest"),
+    }
+    return _filter_rider_reviews(scope_filtered, base_filters)
+
+
+def _filter_analytics_trips(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    scope = (filters.get("scope") or "").strip().lower()
+    query = (filters.get("query") or "").strip().lower()
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        status = str(row.get("status") or "").strip().lower()
+        is_ongoing = status in ONGOING_TRIP_STATUSES
+
+        if scope == "ongoing" and not is_ongoing:
+            continue
+        if scope == "past" and status != "completed":
+            continue
+        if scope == "canceled" and status != "canceled":
+            continue
+
+        if query:
+            haystack = " ".join(
+                [
+                    str(row.get("trip_id") or ""),
+                    str(row.get("rider_name") or ""),
+                    str(row.get("driver_name") or ""),
+                    str(row.get("start_loc") or ""),
+                    str(row.get("end_loc") or ""),
+                    status,
+                ]
+            ).lower()
+            if query not in haystack:
+                continue
+
+        filtered.append(row)
+
+    return sorted(
+        filtered,
+        key=lambda row: (
+            0 if str(row.get("status") or "").strip().lower() in ONGOING_TRIP_STATUSES else 1,
+            -(_coerce_int(row.get("trip_id")) or 0),
+        ),
+    )
+
+
+def _build_financial_summary(trip_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    completed_rows = [row for row in trip_rows if str(row.get("status") or "").strip().lower() == "completed"]
+
+    fare_total = sum(_coerce_float(row.get("final_cost")) or 0.0 for row in completed_rows)
+    fee_total = sum(_coerce_float(row.get("platform_fee")) or 0.0 for row in completed_rows)
+    tax_total = sum(_coerce_float(row.get("tax_amount")) or 0.0 for row in completed_rows)
+    tip_total = sum(_coerce_float(row.get("tip_amount")) or 0.0 for row in completed_rows)
+
+    driver_income = fare_total * DRIVER_FARE_SHARE
+    admin_income = fare_total * ADMIN_FARE_SHARE
+    driver_payout_total = driver_income + tip_total
+    admin_gross_revenue = admin_income + fee_total
+    gross_bookings = fare_total + fee_total + tax_total + tip_total
+    net_profit = admin_gross_revenue - tax_total
+
+    income_breakdown = [
+        {"label": "Driver Income", "value": round(driver_income, 2), "color": "#22c55e"},
+        {"label": "Admin Income", "value": round(admin_income, 2), "color": "#2563eb"},
+        {"label": "Taxes & Fees", "value": round(tax_total + fee_total, 2), "color": "#f59e0b"},
+        {"label": "Tips", "value": round(tip_total, 2), "color": "#7c3aed"},
+    ]
+
+    return {
+        "analytics_income_breakdown": income_breakdown,
+        "completed_trip_count": len(completed_rows),
+        "fare_total": round(fare_total, 2),
+        "fee_total": round(fee_total, 2),
+        "tax_total": round(tax_total, 2),
+        "tip_total": round(tip_total, 2),
+        "driver_income": round(driver_income, 2),
+        "admin_income": round(admin_income, 2),
+        "driver_payout_total": round(driver_payout_total, 2),
+        "admin_gross_revenue": round(admin_gross_revenue, 2),
+        "gross_bookings": round(gross_bookings, 2),
+        "net_profit": round(net_profit, 2),
+        "driver_fare_share_pct": int(DRIVER_FARE_SHARE * 100),
+        "admin_fare_share_pct": int(ADMIN_FARE_SHARE * 100),
+    }
+
+
+def _build_driver_pay_summary(trip_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    completed_rows = [row for row in trip_rows if str(row.get("status") or "").strip().lower() == "completed"]
+    by_driver: dict[int, dict[str, Any]] = {}
+
+    for row in completed_rows:
+        driver_id = _coerce_int(row.get("driver_id")) or 0
+        driver_name = str(row.get("driver_name") or "Unknown Driver").strip() or "Unknown Driver"
+        fare_amount = _coerce_float(row.get("final_cost")) or 0.0
+        tip_amount = _coerce_float(row.get("tip_amount")) or 0.0
+        payout_amount = (fare_amount * DRIVER_FARE_SHARE) + tip_amount
+
+        if driver_id not in by_driver:
+            by_driver[driver_id] = {
+                "driver_id": driver_id,
+                "driver_name": driver_name,
+                "completed_trips": 0,
+                "fare_total": 0.0,
+                "tip_total": 0.0,
+                "estimated_payout": 0.0,
+            }
+
+        driver_row = by_driver[driver_id]
+        driver_row["completed_trips"] += 1
+        driver_row["fare_total"] += fare_amount
+        driver_row["tip_total"] += tip_amount
+        driver_row["estimated_payout"] += payout_amount
+
+    rows = list(by_driver.values())
+    rows.sort(key=lambda row: (-(_coerce_float(row.get("estimated_payout")) or 0.0), str(row.get("driver_name") or "")))
+
+    total_payout = round(sum(_coerce_float(row.get("estimated_payout")) or 0.0 for row in rows), 2)
+    return {
+        "analytics_driver_pay_rows": rows,
+        "analytics_driver_pay_total": total_payout,
+    }
+
+
 def _dashboard_data() -> dict:
     today = date.today()
     upcoming_events = [
@@ -429,6 +592,28 @@ def _dashboard_data() -> dict:
                 "review_date": today - timedelta(days=3),
             },
         ],
+        "driver_to_rider_reviews": [
+            {
+                "review_id": 201,
+                "driver_id": 1,
+                "driver_name": "Bob Johnson",
+                "rider_id": 22,
+                "rider_name": "Sarah Lee",
+                "rating": 5,
+                "comment": "Trip #201: Iowa City to Coralville",
+                "review_date": None,
+            },
+            {
+                "review_id": 202,
+                "driver_id": 2,
+                "driver_name": "Sally Smith",
+                "rider_id": 25,
+                "rider_name": "Kylie Ross",
+                "rating": 3,
+                "comment": "Trip #202: North Liberty to Iowa City",
+                "review_date": None,
+            },
+        ],
         "rider_trip_activity": [
             {
                 "trip_id": 5001,
@@ -439,6 +624,9 @@ def _dashboard_data() -> dict:
                 "start_loc": "Iowa City",
                 "end_loc": "Coralville",
                 "final_cost": 0.0,
+                "platform_fee": 0.0,
+                "tax_amount": 0.0,
+                "tip_amount": 0.0,
             },
             {
                 "trip_id": 5000,
@@ -449,6 +637,9 @@ def _dashboard_data() -> dict:
                 "start_loc": "North Liberty",
                 "end_loc": "Iowa City",
                 "final_cost": 14.25,
+                "platform_fee": 1.43,
+                "tax_amount": 1.00,
+                "tip_amount": 1.14,
             },
         ],
         "total_rider_count": 6,
@@ -459,6 +650,7 @@ def _dashboard_data() -> dict:
     try:
         from AdminDatabase.admin_queries import (
             fetch_dashboard_data,
+            fetch_driver_to_rider_reviews,
             fetch_rider_reviews,
             fetch_rider_statistics,
             fetch_rider_trip_activity,
@@ -471,15 +663,18 @@ def _dashboard_data() -> dict:
             riders_list = fetch_riders()
             rider_stats = fetch_rider_statistics()
             rider_reviews = fetch_rider_reviews()
+            driver_to_rider_reviews = fetch_driver_to_rider_reviews()
             rider_trip_activity = fetch_rider_trip_activity()
             data["all_riders"] = riders_list
             data["rider_reviews"] = rider_reviews
+            data["driver_to_rider_reviews"] = driver_to_rider_reviews
             data["rider_trip_activity"] = rider_trip_activity
             data["total_rider_count"] = rider_stats.get("total_rider_count", 0)
             data["total_rides"] = rider_stats.get("total_rides", 0)
         except Exception:
             data["all_riders"] = []
             data["rider_reviews"] = []
+            data["driver_to_rider_reviews"] = []
             data["rider_trip_activity"] = []
             data["total_rider_count"] = 0
             data["total_rides"] = 0
@@ -594,7 +789,32 @@ def home():
     if not _is_logged_in():
         return redirect(url_for("login"))
 
-    return render_template("home.html", username=session.get("username"), current_tab="home", **_dashboard_data())
+    data = _dashboard_data()
+    trip_rows = list(data.get("rider_trip_activity", []))
+    rider_review_rows = list(data.get("rider_reviews", []))
+    driver_review_rows = list(data.get("driver_to_rider_reviews", []))
+    all_reviews = _merge_reviews(rider_review_rows, driver_review_rows)
+
+    ongoing_rows = _filter_analytics_trips(trip_rows, {"scope": "ongoing", "query": ""})
+    recent_reviews = _filter_analytics_reviews(
+        all_reviews,
+        {"scope": "all", "query": "", "rating_min": "", "rating_max": "", "sort_by": "newest"},
+    )
+    financial_summary = _build_financial_summary(trip_rows)
+
+    return render_template(
+        "home.html",
+        username=session.get("username"),
+        current_tab="home",
+        home_queue_preview=list(data.get("new_applications", []))[:3],
+        home_queue_count=len(list(data.get("new_applications", []))),
+        home_ongoing_trips=ongoing_rows[:5],
+        home_ongoing_count=len(ongoing_rows),
+        home_recent_reviews=recent_reviews[:6],
+        home_review_count=len(all_reviews),
+        **financial_summary,
+        **data,
+    )
 
 
 @app.route("/drivers")
@@ -603,15 +823,18 @@ def drivers():
         return redirect(url_for("login"))
 
     active_tab = request.args.get("tab", "all")
-    if active_tab not in {"all", "verification", "reviews"}:
+    if active_tab == "reviews":
+        return redirect(url_for("analytics", tab="reviews", review_scope="driver"))
+    if active_tab not in {"all", "verification"}:
         active_tab = "all"
 
     data = _dashboard_data()
     all_driver_rows = list(data.get("all_drivers", []))
     unapproved_rows = list(data.get("unapproved_drivers", []))
+    driver_review_rows = list(data.get("driver_to_rider_reviews", []))
     all_driver_count_raw = len(all_driver_rows)
     pending_driver_count_raw = len(unapproved_rows)
-    driver_review_count_raw = len(data.get("driver_reviews", []))
+    driver_review_count_raw = len(driver_review_rows)
 
     driver_status_options = sorted(
         {
@@ -767,7 +990,9 @@ def riders():
         return redirect(url_for("login"))
 
     active_tab = request.args.get("tab", "all")
-    if active_tab not in {"all", "activity", "reviews"}:
+    if active_tab == "reviews":
+        return redirect(url_for("analytics", tab="reviews", review_scope="rider"))
+    if active_tab not in {"all", "activity"}:
         active_tab = "all"
 
     data = _dashboard_data()
@@ -789,16 +1014,9 @@ def riders():
         "query": request.args.get("activity_query", "").strip(),
         "scope": request.args.get("activity_scope", "").strip().lower(),
     }
-    review_filters = {
-        "query": request.args.get("review_query", "").strip(),
-        "rating_min": request.args.get("review_rating_min", "").strip(),
-        "rating_max": request.args.get("review_rating_max", "").strip(),
-        "sort_by": request.args.get("review_sort", "newest").strip().lower(),
-    }
 
     data["all_riders"] = _filter_riders(rider_rows, all_rider_filters)
     data["rider_trip_activity"] = _filter_rider_trip_activity(rider_activity_rows, activity_filters)
-    data["rider_reviews"] = _filter_rider_reviews(rider_review_rows, review_filters)
 
     return render_template(
         "riders.html",
@@ -807,7 +1025,6 @@ def riders():
         active_rider_tab=active_tab,
         all_rider_filters=all_rider_filters,
         activity_filters=activity_filters,
-        review_filters=review_filters,
         all_rider_count_raw=all_rider_count_raw,
         rider_activity_count_raw=rider_activity_count_raw,
         rider_review_count_raw=rider_review_count_raw,
@@ -820,11 +1037,64 @@ def analytics():
     if not _is_logged_in():
         return redirect(url_for("login"))
 
+    active_tab = (request.args.get("tab") or "dashboard").strip().lower()
+    if active_tab not in {"dashboard", "budget", "reviews", "trips"}:
+        active_tab = "dashboard"
+
+    data = _dashboard_data()
+    trip_rows = list(data.get("rider_trip_activity", []))
+    rider_review_rows = list(data.get("rider_reviews", []))
+    driver_review_rows = list(data.get("driver_to_rider_reviews", []))
+    all_review_rows = _merge_reviews(rider_review_rows, driver_review_rows)
+
+    analytics_review_filters = {
+        "scope": (request.args.get("review_scope") or "all").strip().lower(),
+        "query": request.args.get("review_query", "").strip(),
+        "rating_min": request.args.get("review_rating_min", "").strip(),
+        "rating_max": request.args.get("review_rating_max", "").strip(),
+        "sort_by": (request.args.get("review_sort") or "newest").strip().lower(),
+    }
+    analytics_trip_filters = {
+        "scope": (request.args.get("trip_scope") or "all").strip().lower(),
+        "query": request.args.get("trip_query", "").strip(),
+    }
+    if analytics_review_filters["scope"] not in {"all", "driver", "rider"}:
+        analytics_review_filters["scope"] = "all"
+    if analytics_review_filters["sort_by"] not in {"newest", "oldest", "rating_high", "rating_low"}:
+        analytics_review_filters["sort_by"] = "newest"
+    if analytics_trip_filters["scope"] not in {"all", "ongoing", "past", "canceled"}:
+        analytics_trip_filters["scope"] = "all"
+
+    analytics_reviews = _filter_analytics_reviews(all_review_rows, analytics_review_filters)
+    analytics_trips = _filter_analytics_trips(trip_rows, analytics_trip_filters)
+    analytics_ongoing_rows = _filter_analytics_trips(trip_rows, {"scope": "ongoing", "query": ""})
+    analytics_ongoing_preview = analytics_ongoing_rows[:6]
+    analytics_review_preview = _filter_analytics_reviews(
+        all_review_rows,
+        {"scope": "all", "query": "", "rating_min": "", "rating_max": "", "sort_by": "newest"},
+    )[:6]
+    financial_summary = _build_financial_summary(trip_rows)
+    driver_pay_summary = _build_driver_pay_summary(trip_rows)
+
     return render_template(
         "analytics.html",
         username=session.get("username"),
         current_tab="analytics",
-        **_dashboard_data(),
+        active_analytics_tab=active_tab,
+        analytics_reviews=analytics_reviews,
+        analytics_trips=analytics_trips,
+        analytics_review_filters=analytics_review_filters,
+        analytics_trip_filters=analytics_trip_filters,
+        analytics_ongoing_preview=analytics_ongoing_preview,
+        analytics_review_preview=analytics_review_preview,
+        analytics_all_review_count=len(all_review_rows),
+        analytics_driver_review_count=len(driver_review_rows),
+        analytics_rider_review_count=len(rider_review_rows),
+        analytics_trip_count=len(trip_rows),
+        analytics_ongoing_count=len(analytics_ongoing_rows),
+        **financial_summary,
+        **driver_pay_summary,
+        **data,
     )
 
 
