@@ -30,6 +30,8 @@ SESSION_DAYS = int(os.environ.get("ADMIN_SESSION_DAYS", "365"))
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
+ONGOING_TRIP_STATUSES = {"requested", "accepted", "in_progress"}
+
 
 def _is_logged_in() -> bool:
     return bool(session.get("logged_in"))
@@ -71,6 +73,23 @@ def _coerce_date(value: Any) -> date | None:
             return date.fromisoformat(text[:10])
         except ValueError:
             return None
+    return None
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        for candidate in (text, text.replace(" ", "T", 1), text[:19], text[:10]):
+            try:
+                return datetime.fromisoformat(candidate)
+            except ValueError:
+                continue
     return None
 
 
@@ -183,6 +202,99 @@ def _filter_riders(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[
 
         filtered.append(row)
     return filtered
+
+
+def _filter_rider_trip_activity(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    query = (filters.get("query") or "").strip().lower()
+    scope = (filters.get("scope") or "").strip().lower()
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_status = str(row.get("status") or "").strip().lower()
+        is_ongoing = row_status in ONGOING_TRIP_STATUSES
+        if scope == "ongoing" and not is_ongoing:
+            continue
+        if scope == "recent" and is_ongoing:
+            continue
+
+        if query:
+            haystack = " ".join(
+                [
+                    str(row.get("rider_name") or ""),
+                    str(row.get("driver_name") or ""),
+                    str(row.get("start_loc") or ""),
+                    str(row.get("end_loc") or ""),
+                    row_status,
+                ]
+            ).lower()
+            if query not in haystack:
+                continue
+
+        filtered.append(row)
+    return filtered
+
+
+def _filter_rider_reviews(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    query = (filters.get("query") or "").strip().lower()
+    rating_min = _coerce_float(filters.get("rating_min"))
+    rating_max = _coerce_float(filters.get("rating_max"))
+    sort_by = (filters.get("sort_by") or "newest").strip().lower()
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        rating = _coerce_float(row.get("rating"))
+        if rating_min is not None and (rating is None or rating < rating_min):
+            continue
+        if rating_max is not None and (rating is None or rating > rating_max):
+            continue
+
+        if query:
+            haystack = " ".join(
+                [
+                    str(row.get("rider_name") or ""),
+                    str(row.get("driver_name") or ""),
+                    str(row.get("comment") or ""),
+                ]
+            ).lower()
+            if query not in haystack:
+                continue
+
+        filtered.append(row)
+
+    if sort_by == "oldest":
+        return sorted(
+            filtered,
+            key=lambda row: (
+                _coerce_datetime(row.get("review_date")) or datetime.min,
+                _coerce_int(row.get("review_id")) or 0,
+            ),
+        )
+    if sort_by == "rating_high":
+        return sorted(
+            filtered,
+            key=lambda row: (
+                _coerce_float(row.get("rating")) is None,
+                -(_coerce_float(row.get("rating")) or 0),
+                -(_coerce_int(row.get("review_id")) or 0),
+            ),
+        )
+    if sort_by == "rating_low":
+        return sorted(
+            filtered,
+            key=lambda row: (
+                _coerce_float(row.get("rating")) is None,
+                _coerce_float(row.get("rating")) or 0,
+                -(_coerce_int(row.get("review_id")) or 0),
+            ),
+        )
+    return sorted(
+        filtered,
+        key=lambda row: (
+            _coerce_datetime(row.get("review_date")) or datetime.min,
+            _coerce_int(row.get("review_id")) or 0,
+        ),
+        reverse=True,
+    )
 
 
 def _dashboard_data() -> dict:
@@ -299,24 +411,76 @@ def _dashboard_data() -> dict:
             {"name": "Liam Carter", "email": "liam.carter@example.com", "phone": "319-555-0105", "preferences": "music okay", "rating": "4.0", "rides": 5, "riding_since": today - timedelta(days=170)},
             {"name": "Noah Bennett", "email": "noah.bennett@example.com", "phone": "319-555-0106", "preferences": "pet friendly", "rating": "4.8", "rides": 12, "riding_since": today - timedelta(days=330)},
         ],
+        "rider_reviews": [
+            {
+                "review_id": 9001,
+                "rating": 5,
+                "rider_name": "Sofia Ramirez",
+                "driver_name": "Bob Johnson",
+                "comment": "Great pickup timing and smooth drive.",
+                "review_date": today - timedelta(days=1),
+            },
+            {
+                "review_id": 9002,
+                "rating": 3,
+                "rider_name": "Liam Carter",
+                "driver_name": "Sally Smith",
+                "comment": "Ride was okay but pickup was a little late.",
+                "review_date": today - timedelta(days=3),
+            },
+        ],
+        "rider_trip_activity": [
+            {
+                "trip_id": 5001,
+                "status": "in_progress",
+                "activity_type": "ongoing",
+                "rider_name": "Sofia Ramirez",
+                "driver_name": "Bob Johnson",
+                "start_loc": "Iowa City",
+                "end_loc": "Coralville",
+                "final_cost": 0.0,
+            },
+            {
+                "trip_id": 5000,
+                "status": "completed",
+                "activity_type": "recent",
+                "rider_name": "Liam Carter",
+                "driver_name": "Sally Smith",
+                "start_loc": "North Liberty",
+                "end_loc": "Iowa City",
+                "final_cost": 14.25,
+            },
+        ],
         "total_rider_count": 6,
         "total_rides": 20,
         "db_error": None,
     }
 
     try:
-        from AdminDatabase.admin_queries import fetch_dashboard_data, fetch_riders, fetch_rider_statistics
+        from AdminDatabase.admin_queries import (
+            fetch_dashboard_data,
+            fetch_rider_reviews,
+            fetch_rider_statistics,
+            fetch_rider_trip_activity,
+            fetch_riders,
+        )
         data = fetch_dashboard_data()
         
         # Add rider data
         try:
             riders_list = fetch_riders()
             rider_stats = fetch_rider_statistics()
+            rider_reviews = fetch_rider_reviews()
+            rider_trip_activity = fetch_rider_trip_activity()
             data["all_riders"] = riders_list
+            data["rider_reviews"] = rider_reviews
+            data["rider_trip_activity"] = rider_trip_activity
             data["total_rider_count"] = rider_stats.get("total_rider_count", 0)
             data["total_rides"] = rider_stats.get("total_rides", 0)
         except Exception:
             data["all_riders"] = []
+            data["rider_reviews"] = []
+            data["rider_trip_activity"] = []
             data["total_rider_count"] = 0
             data["total_rides"] = 0
         
@@ -604,21 +768,51 @@ def riders():
     if not _is_logged_in():
         return redirect(url_for("login"))
 
+    active_tab = request.args.get("tab", "all")
+    if active_tab not in {"all", "activity", "reviews"}:
+        active_tab = "all"
+
     data = _dashboard_data()
     rider_rows = list(data.get("all_riders", []))
-    rider_filters = {
+    rider_review_rows = list(data.get("rider_reviews", []))
+    rider_activity_rows = list(data.get("rider_trip_activity", []))
+
+    all_rider_count_raw = len(rider_rows)
+    rider_review_count_raw = len(rider_review_rows)
+    rider_activity_count_raw = len(rider_activity_rows)
+
+    all_rider_filters = {
         "query": request.args.get("rider_query", "").strip(),
         "riding_since_before": request.args.get("riding_since_before", "").strip(),
         "rating_min": request.args.get("rider_rating_min", "").strip(),
         "rating_max": request.args.get("rider_rating_max", "").strip(),
     }
-    data["all_riders"] = _filter_riders(rider_rows, rider_filters)
+    activity_filters = {
+        "query": request.args.get("activity_query", "").strip(),
+        "scope": request.args.get("activity_scope", "").strip().lower(),
+    }
+    review_filters = {
+        "query": request.args.get("review_query", "").strip(),
+        "rating_min": request.args.get("review_rating_min", "").strip(),
+        "rating_max": request.args.get("review_rating_max", "").strip(),
+        "sort_by": request.args.get("review_sort", "newest").strip().lower(),
+    }
+
+    data["all_riders"] = _filter_riders(rider_rows, all_rider_filters)
+    data["rider_trip_activity"] = _filter_rider_trip_activity(rider_activity_rows, activity_filters)
+    data["rider_reviews"] = _filter_rider_reviews(rider_review_rows, review_filters)
 
     return render_template(
         "riders.html",
         username=session.get("username"),
         current_tab="riders",
-        rider_filters=rider_filters,
+        active_rider_tab=active_tab,
+        all_rider_filters=all_rider_filters,
+        activity_filters=activity_filters,
+        review_filters=review_filters,
+        all_rider_count_raw=all_rider_count_raw,
+        rider_activity_count_raw=rider_activity_count_raw,
+        rider_review_count_raw=rider_review_count_raw,
         **data,
     )
 

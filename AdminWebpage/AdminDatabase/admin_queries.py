@@ -508,3 +508,63 @@ def fetch_rider_statistics() -> dict[str, Any]:
         "total_rider_count": total_riders[0]["count"] if total_riders else 0,
         "total_rides": total_rides[0]["count"] if total_rides else 0,
     }
+
+
+def fetch_rider_reviews() -> list[dict[str, Any]]:
+    """Fetch rider-submitted reviews with rider and driver names."""
+    if not _table_exists("driver_review"):
+        return []
+
+    return _fetch_all(
+        """
+        SELECT
+            dr.ReviewID AS review_id,
+            dr.Rating AS rating,
+            dr.Comment AS comment,
+            dr.ReviewDate AS review_date,
+            dr.RiderID AS rider_id,
+            dr.DriverID AS driver_id,
+            CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name,
+            CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name
+        FROM driver_review dr
+        JOIN account racc ON racc.AccountID = dr.RiderID
+        JOIN account dacc ON dacc.AccountID = dr.DriverID
+        ORDER BY dr.ReviewDate DESC, dr.ReviewID DESC
+        """
+    )
+
+
+def fetch_rider_trip_activity(limit: int = 120) -> list[dict[str, Any]]:
+    """Fetch ongoing and recent trips for admin rider activity monitoring."""
+    if not _table_exists("trip"):
+        return []
+
+    safe_limit = max(1, min(int(limit), 500))
+    return _fetch_all(
+        """
+        SELECT
+            t.TripID AS trip_id,
+            t.Status AS status,
+            CASE
+                WHEN t.Status IN ('requested', 'accepted', 'in_progress') THEN 'ongoing'
+                ELSE 'recent'
+            END AS activity_type,
+            t.StartLoc AS start_loc,
+            t.EndLoc AS end_loc,
+            t.FinalCost AS final_cost,
+            t.DriverRate AS driver_rate,
+            t.RiderRate AS rider_rate,
+            t.RiderID AS rider_id,
+            t.DriverID AS driver_id,
+            CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name,
+            CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name
+        FROM trip t
+        JOIN account racc ON racc.AccountID = t.RiderID
+        JOIN account dacc ON dacc.AccountID = t.DriverID
+        ORDER BY
+            CASE WHEN t.Status IN ('requested', 'accepted', 'in_progress') THEN 0 ELSE 1 END,
+            t.TripID DESC
+        LIMIT %s
+        """,
+        (safe_limit,),
+    )
