@@ -3,64 +3,461 @@
 {% set header_title = "Analytics" %}
 
 {% block content %}
-<section class="section-stack">
+<section class="driver-shell">
   <div class="page-intro">
     <div>
       <p class="page-kicker">Insights</p>
-      <h2 class="page-title">Business Analytics</h2>
-      <p class="page-note">Review operational performance, rider sentiment, and trip activity.</p>
+      <h2 class="page-title">Analytics Dashboard</h2>
+      <p class="page-note">Track revenue, reviews, and trips from one operations console.</p>
     </div>
     <span class="page-pill">
       <i class="bi bi-graph-up-arrow"></i>
-      Weekly Metrics
+      Live Analytics
     </span>
   </div>
 
-  <div class="grid-two">
-    <article class="panel">
-      <div class="section-head">
-        <div>
-          <h2>Performance Overview</h2>
-          <p>High-level split of core business spend and revenue categories.</p>
-        </div>
-      </div>
-      <div class="analytics-pie">
-        <div class="pie"></div>
-        <p class="muted">Income vs Expenses vs Operations</p>
-      </div>
-      <div class="button-stack">
-        <button class="secondary" type="button"><i class="bi bi-car-front"></i> View All Rides</button>
-        <button class="secondary" type="button"><i class="bi bi-chat-left-text"></i> View All Reviews</button>
-        <button class="secondary" type="button"><i class="bi bi-file-earmark-bar-graph"></i> View Expense Reports</button>
-      </div>
-    </article>
-
-    <article class="panel">
-      <div class="section-head">
-        <div>
-          <h2>Recent Activity</h2>
-          <p>Most recent reviews and ride events from the platform.</p>
-        </div>
-      </div>
-      <div class="split-lists">
-        <div>
-          <h3>Recent Reviews</h3>
-          <ul class="notes">
-            {% for review in recent_reviews %}
-            <li>{{ review }}</li>
-            {% endfor %}
-          </ul>
-        </div>
-        <div>
-          <h3>Recent Rides</h3>
-          <ul class="notes">
-            {% for ride in recent_rides %}
-            <li>{{ ride }} <button class="mini">view</button></li>
-            {% endfor %}
-          </ul>
-        </div>
-      </div>
-    </article>
+  <div class="driver-metrics">
+    <div class="metric-card metric-blue">
+      <small>Gross Bookings</small>
+      <strong>${{ "{:,.0f}".format(gross_bookings) }}</strong>
+    </div>
+    <div class="metric-card metric-amber">
+      <small>Ongoing Trips</small>
+      <strong>{{ analytics_ongoing_count }}</strong>
+    </div>
+    <div class="metric-card metric-indigo">
+      <small>Total Reviews</small>
+      <strong>{{ analytics_all_review_count }}</strong>
+    </div>
   </div>
+
+  <article class="panel">
+    <div class="section-head">
+      <div>
+        <h2>Analytics Workflow</h2>
+        <p>Use tabs for dashboard overview, financials, reviews, and trips.</p>
+      </div>
+    </div>
+
+    <ul class="nav nav-pills driver-nav mb-3">
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_analytics_tab == 'dashboard' else '' }}" href="{{ url_for('analytics', tab='dashboard') }}">Dashboard</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_analytics_tab == 'budget' else '' }}" href="{{ url_for('analytics', tab='budget') }}">Budget/Income</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_analytics_tab == 'reviews' else '' }}" href="{{ url_for('analytics', tab='reviews') }}">Reviews</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_analytics_tab == 'trips' else '' }}" href="{{ url_for('analytics', tab='trips') }}">Trips</a>
+      </li>
+    </ul>
+
+    {% if active_analytics_tab == 'dashboard' %}
+    <div class="grid-two">
+      <article class="panel">
+        <div class="section-head">
+          <div>
+            <h3>Income Split</h3>
+            <p>Driver income, admin income, taxes/fees, and tips.</p>
+          </div>
+        </div>
+        <div class="budget-layout">
+          <div class="budget-ring" id="analyticsIncomeRing" role="img" aria-label="Income breakdown chart"></div>
+          <div>
+            <ul class="budget-legend-list">
+              {% for item in analytics_income_breakdown %}
+              <li>
+                <span class="legend-dot" style="background-color: {{ item.color }};"></span>
+                <span>{{ item.label }}</span>
+                <strong>${{ "{:,.0f}".format(item.value) }}</strong>
+              </li>
+              {% endfor %}
+            </ul>
+            <p class="budget-total">
+              Total:
+              <strong>${{ "{:,.0f}".format(analytics_income_breakdown|sum(attribute='value')) }}</strong>
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="section-head">
+          <div>
+            <h3>Ongoing Trips</h3>
+            <p>Quick view of in-progress or requested trips.</p>
+          </div>
+        </div>
+        <div class="data-card">
+          <div class="data-card-body table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>Trip #</th>
+                  <th>Status</th>
+                  <th>Rider</th>
+                  <th>Driver</th>
+                  <th>Route</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in analytics_ongoing_preview %}
+                <tr>
+                  <td>#{{ row.trip_id }}</td>
+                  <td><span class="status-tag status-pending text-capitalize">{{ row.status|replace('_', ' ') }}</span></td>
+                  <td>{{ row.rider_name or 'N/A' }}</td>
+                  <td>{{ row.driver_name or 'N/A' }}</td>
+                  <td>{{ row.start_loc or 'N/A' }} to {{ row.end_loc or 'N/A' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="5" class="text-center text-muted">No ongoing trips.</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <article class="panel mt-3">
+      <div class="section-head">
+        <div>
+          <h3>All Reviews Snapshot</h3>
+          <p>Recent rider-to-driver and driver-to-rider reviews.</p>
+        </div>
+      </div>
+      <div class="data-card">
+        <div class="data-card-body table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Rating</th>
+                <th>Reviewer</th>
+                <th>Reviewee</th>
+                <th>Short Text</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in analytics_review_preview %}
+              {% set review_text = row.comment or 'No comment provided.' %}
+              <tr>
+                <td>
+                  {% if row.review_date %}
+                  {{ row.review_date if row.review_date is string else row.review_date.strftime('%Y-%m-%d') }}
+                  {% else %}
+                  N/A
+                  {% endif %}
+                </td>
+                <td>{{ row.review_type_label }}</td>
+                <td>{{ row.rating }}/5</td>
+                <td>{{ row.driver_name if row.review_scope == 'driver' else row.rider_name }}</td>
+                <td>{{ row.rider_name if row.review_scope == 'driver' else row.driver_name }}</td>
+                <td>{{ review_text[:95] }}{% if review_text|length > 95 %}...{% endif %}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="6" class="text-center text-muted">No reviews available.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </article>
+    {% endif %}
+
+    {% if active_analytics_tab == 'budget' %}
+    <div class="grid-two">
+      <article class="panel">
+        <div class="section-head">
+          <div>
+            <h3>Income & Expenses</h3>
+            <p>Revenue components and payout obligations.</p>
+          </div>
+        </div>
+        <div class="data-card">
+          <div class="data-card-body table-responsive">
+            <table class="table table-hover align-middle">
+              <tbody>
+                <tr><td>Completed Trips</td><td><strong>{{ completed_trip_count }}</strong></td></tr>
+                <tr><td>Trip Fares</td><td><strong>${{ "{:,.2f}".format(fare_total) }}</strong></td></tr>
+                <tr><td>Tips</td><td><strong>${{ "{:,.2f}".format(tip_total) }}</strong></td></tr>
+                <tr><td>Platform Fees</td><td><strong>${{ "{:,.2f}".format(fee_total) }}</strong></td></tr>
+                <tr><td>Taxes Collected</td><td><strong>${{ "{:,.2f}".format(tax_total) }}</strong></td></tr>
+                <tr><td>Gross Booking Volume</td><td><strong>${{ "{:,.2f}".format(gross_bookings) }}</strong></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="section-head">
+          <div>
+            <h3>Profit Split</h3>
+            <p>Configured fare split between admin and drivers.</p>
+          </div>
+        </div>
+        <div class="data-card">
+          <div class="data-card-body table-responsive">
+            <table class="table table-hover align-middle">
+              <tbody>
+                <tr><td>Driver Fare Share ({{ driver_fare_share_pct }}%)</td><td><strong>${{ "{:,.2f}".format(driver_income) }}</strong></td></tr>
+                <tr><td>Admin Fare Share ({{ admin_fare_share_pct }}%)</td><td><strong>${{ "{:,.2f}".format(admin_income) }}</strong></td></tr>
+                <tr><td>Driver Payout Total (Fare Share + Tips)</td><td><strong>${{ "{:,.2f}".format(driver_payout_total) }}</strong></td></tr>
+                <tr><td>Admin Gross Revenue (Fare Share + Fees)</td><td><strong>${{ "{:,.2f}".format(admin_gross_revenue) }}</strong></td></tr>
+                <tr><td>Tax Liability</td><td><strong>${{ "{:,.2f}".format(tax_total) }}</strong></td></tr>
+                <tr><td>Estimated Net Profit</td><td><strong>${{ "{:,.2f}".format(net_profit) }}</strong></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <article class="panel mt-3">
+      <div class="section-head">
+        <div>
+          <h3>Driver Pay Breakdown</h3>
+          <p>Total driver pay from fares and tips.</p>
+        </div>
+        <span class="status-tag status-info">Total Payout: ${{ "{:,.2f}".format(analytics_driver_pay_total) }}</span>
+      </div>
+      <div class="data-card">
+        <div class="data-card-body table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Driver</th>
+                <th>Completed Trips</th>
+                <th>Gross Fares</th>
+                <th>Tips</th>
+                <th>Driver Pay</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in analytics_driver_pay_rows %}
+              <tr>
+                <td>{{ row.driver_name }}</td>
+                <td>{{ row.completed_trips }}</td>
+                <td>${{ "{:,.2f}".format((row.fare_total or 0)|float) }}</td>
+                <td>${{ "{:,.2f}".format((row.tip_total or 0)|float) }}</td>
+                <td><strong>${{ "{:,.2f}".format((row.estimated_payout or 0)|float) }}</strong></td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="text-center text-muted">No completed trip payouts available.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </article>
+    {% endif %}
+
+    {% if active_analytics_tab == 'reviews' %}
+    <form method="get" action="{{ url_for('analytics') }}" class="filter-toolbar row g-2 align-items-end">
+      <input type="hidden" name="tab" value="reviews" />
+      <div class="col-lg-2 col-md-6">
+        <label class="form-label mb-1">Review Type</label>
+        <select class="form-select" name="review_scope">
+          <option value="all" {{ 'selected' if analytics_review_filters.scope == 'all' }}>All Reviews</option>
+          <option value="driver" {{ 'selected' if analytics_review_filters.scope == 'driver' }}>Driver Reviews</option>
+          <option value="rider" {{ 'selected' if analytics_review_filters.scope == 'rider' }}>Rider Reviews</option>
+        </select>
+      </div>
+      <div class="col-lg-4 col-md-6">
+        <label class="form-label mb-1">Keyword</label>
+        <input
+          type="text"
+          class="form-control"
+          name="review_query"
+          value="{{ analytics_review_filters.query }}"
+          placeholder="Search names or review text"
+        />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rating Min</label>
+        <input type="number" class="form-control" name="review_rating_min" step="0.1" min="0" max="5" value="{{ analytics_review_filters.rating_min }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rating Max</label>
+        <input type="number" class="form-control" name="review_rating_max" step="0.1" min="0" max="5" value="{{ analytics_review_filters.rating_max }}" />
+      </div>
+      <div class="col-lg-2 col-md-6">
+        <label class="form-label mb-1">Sort By</label>
+        <select class="form-select" name="review_sort">
+          <option value="newest" {{ 'selected' if analytics_review_filters.sort_by == 'newest' }}>Newest</option>
+          <option value="oldest" {{ 'selected' if analytics_review_filters.sort_by == 'oldest' }}>Oldest</option>
+          <option value="rating_high" {{ 'selected' if analytics_review_filters.sort_by == 'rating_high' }}>Rating: High to Low</option>
+          <option value="rating_low" {{ 'selected' if analytics_review_filters.sort_by == 'rating_low' }}>Rating: Low to High</option>
+        </select>
+      </div>
+      <div class="col-lg-2 col-md-6 filter-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+        <a href="{{ url_for('analytics', tab='reviews') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
+
+    <div class="data-card">
+      <div class="data-card-header">
+        <h3>Reviews</h3>
+        <span class="status-tag status-info">{{ analytics_reviews|length }} records</span>
+      </div>
+      <div class="data-card-body table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Rating</th>
+              <th>Reviewer</th>
+              <th>Reviewee</th>
+              <th>Short Text</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in analytics_reviews %}
+            {% set review_text = row.comment or 'No comment provided.' %}
+            <tr>
+              <td>
+                {% if row.review_date %}
+                {{ row.review_date if row.review_date is string else row.review_date.strftime('%Y-%m-%d') }}
+                {% else %}
+                N/A
+                {% endif %}
+              </td>
+              <td>{{ row.review_type_label }}</td>
+              <td>
+                <span class="rating-chip">
+                  <i class="bi bi-star-fill"></i>
+                  {{ row.rating }}/5
+                </span>
+              </td>
+              <td>{{ row.driver_name if row.review_scope == 'driver' else row.rider_name }}</td>
+              <td>{{ row.rider_name if row.review_scope == 'driver' else row.driver_name }}</td>
+              <td>{{ review_text[:95] }}{% if review_text|length > 95 %}...{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted">No reviews match the current filters.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if active_analytics_tab == 'trips' %}
+    <form method="get" action="{{ url_for('analytics') }}" class="filter-toolbar row g-2 align-items-end">
+      <input type="hidden" name="tab" value="trips" />
+      <div class="col-lg-3 col-md-6">
+        <label class="form-label mb-1">Trip Scope</label>
+        <select class="form-select" name="trip_scope">
+          <option value="all" {{ 'selected' if analytics_trip_filters.scope == 'all' }}>All Trips</option>
+          <option value="ongoing" {{ 'selected' if analytics_trip_filters.scope == 'ongoing' }}>Ongoing</option>
+          <option value="past" {{ 'selected' if analytics_trip_filters.scope == 'past' }}>Past (Completed)</option>
+          <option value="canceled" {{ 'selected' if analytics_trip_filters.scope == 'canceled' }}>Canceled</option>
+        </select>
+      </div>
+      <div class="col-lg-5 col-md-6">
+        <label class="form-label mb-1">Search</label>
+        <input
+          type="text"
+          class="form-control"
+          name="trip_query"
+          value="{{ analytics_trip_filters.query }}"
+          placeholder="Trip ID, rider, driver, route, or status"
+        />
+      </div>
+      <div class="col-lg-4 col-md-12 filter-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('analytics', tab='trips') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
+
+    <div class="data-card">
+      <div class="data-card-header">
+        <h3>Trip Tracking</h3>
+        <span class="status-tag status-info">{{ analytics_trips|length }} records</span>
+      </div>
+      <div class="data-card-body table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Trip #</th>
+              <th>Status</th>
+              <th>Rider</th>
+              <th>Driver</th>
+              <th>Route</th>
+              <th>Fare</th>
+              <th>Fees</th>
+              <th>Tax</th>
+              <th>Tip</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in analytics_trips %}
+            {% set trip_status = (row.status or 'unknown')|lower %}
+            <tr>
+              <td>#{{ row.trip_id }}</td>
+              <td>
+                <span
+                  class="status-tag {% if trip_status in ['requested', 'accepted', 'in_progress'] %}status-pending{% elif trip_status == 'completed' %}status-approved{% elif trip_status == 'canceled' %}status-rejected{% else %}status-info{% endif %} text-capitalize"
+                >
+                  {{ row.status|replace('_', ' ') }}
+                </span>
+              </td>
+              <td>{{ row.rider_name or 'N/A' }}</td>
+              <td>{{ row.driver_name or 'N/A' }}</td>
+              <td>{{ row.start_loc or 'N/A' }} to {{ row.end_loc or 'N/A' }}</td>
+              <td>${{ "{:,.2f}".format((row.final_cost or 0)|float) }}</td>
+              <td>${{ "{:,.2f}".format((row.platform_fee or 0)|float) }}</td>
+              <td>${{ "{:,.2f}".format((row.tax_amount or 0)|float) }}</td>
+              <td>${{ "{:,.2f}".format((row.tip_amount or 0)|float) }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="9" class="text-center text-muted">No trips match the current filters.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </article>
 </section>
+{% endblock %}
+
+{% block page_scripts %}
+<script id="analytics-income-data" type="application/json">{{ analytics_income_breakdown|tojson }}</script>
+<script>
+  (function () {
+    const ring = document.getElementById("analyticsIncomeRing");
+    const dataEl = document.getElementById("analytics-income-data");
+    if (!ring || !dataEl) {
+      return;
+    }
+
+    const data = JSON.parse(dataEl.textContent || "[]");
+    const total = data.reduce((sum, item) => sum + Number(item.value || 0), 0) || 1;
+    let angle = 0;
+    const sections = data.map((item) => {
+      const start = angle;
+      const sweep = (Number(item.value || 0) / total) * 360;
+      angle += sweep;
+      return `${item.color} ${start}deg ${angle}deg`;
+    });
+    ring.style.background = `conic-gradient(${sections.join(", ")})`;
+  })();
+</script>
 {% endblock %}

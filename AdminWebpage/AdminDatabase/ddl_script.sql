@@ -140,6 +140,9 @@ CREATE TABLE `trip` (
     `StartLoc` varchar(100) NOT NULL,
     `EndLoc` varchar(100) NOT NULL,
     `FinalCost` decimal(10,2) DEFAULT 0.00,
+    `PlatformFee` decimal(10,2) DEFAULT 0.00,
+    `TaxAmount` decimal(10,2) DEFAULT 0.00,
+    `TipAmount` decimal(10,2) DEFAULT 0.00,
     `DriverRate` int,
     `RiderRate` int,
     PRIMARY KEY (`TripID`),
@@ -160,6 +163,21 @@ CREATE TABLE `driver_review` (
     CONSTRAINT `FK_DriverID_driver_review` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`),
     CONSTRAINT `FK_RiderID_driver_review` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
     CONSTRAINT `FK_TripID_driver_review` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
+);
+
+-- RIDER_REVIEW TABLE
+CREATE TABLE `rider_review` (
+    `ReviewID` int AUTO_INCREMENT,
+    `RiderID` int NOT NULL,
+    `DriverID` int NOT NULL,
+    `TripID` int,
+    `Rating` int NOT NULL,
+    `Comment` varchar(255),
+    `ReviewDate` timestamp(6) DEFAULT current_timestamp(6),
+    PRIMARY KEY (`ReviewID`),
+    CONSTRAINT `FK_RiderID_rider_review` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
+    CONSTRAINT `FK_DriverID_rider_review` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`),
+    CONSTRAINT `FK_TripID_rider_review` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
 );
 
 -- Triggers --

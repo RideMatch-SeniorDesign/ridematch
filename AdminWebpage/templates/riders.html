@@ -7,7 +7,7 @@
     <div>
       <p class="page-kicker">Rider Ops</p>
       <h2 class="page-title">Rider Management Hub</h2>
-      <p class="page-note">Track rider accounts, trip activity, and review quality in one workflow.</p>
+      <p class="page-note">Track rider accounts and trip activity.</p>
     </div>
     <span class="page-pill">
       <i class="bi bi-people-fill"></i>
@@ -34,7 +34,7 @@
     <div class="section-head">
       <div>
         <h2>Rider Workflow</h2>
-        <p>Switch between all riders, trip activity, and rider reviews.</p>
+        <p>Switch between all riders and trip activity. Review data now lives in Analytics.</p>
       </div>
     </div>
 
@@ -44,9 +44,6 @@
       </li>
       <li class="nav-item">
         <a class="nav-link {{ 'active' if active_rider_tab == 'activity' else '' }}" href="{{ url_for('riders', tab='activity') }}">Recent Activity</a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {{ 'active' if active_rider_tab == 'reviews' else '' }}" href="{{ url_for('riders', tab='reviews') }}">Reviews</a>
       </li>
     </ul>
 
@@ -214,89 +211,6 @@
     </div>
     {% endif %}
 
-    {% if active_rider_tab == 'reviews' %}
-    <form method="get" action="{{ url_for('riders') }}" class="filter-toolbar row g-2 align-items-end">
-      <input type="hidden" name="tab" value="reviews" />
-      <div class="col-lg-4 col-md-6">
-        <label class="form-label mb-1">Keyword</label>
-        <input
-          type="text"
-          class="form-control"
-          name="review_query"
-          value="{{ review_filters.query }}"
-          placeholder="Search rider, driver, or review text"
-        />
-      </div>
-      <div class="col-lg-2 col-md-3">
-        <label class="form-label mb-1">Rating Min</label>
-        <input type="number" class="form-control" name="review_rating_min" step="0.1" min="0" max="5" value="{{ review_filters.rating_min }}" />
-      </div>
-      <div class="col-lg-2 col-md-3">
-        <label class="form-label mb-1">Rating Max</label>
-        <input type="number" class="form-control" name="review_rating_max" step="0.1" min="0" max="5" value="{{ review_filters.rating_max }}" />
-      </div>
-      <div class="col-lg-2 col-md-6">
-        <label class="form-label mb-1">Sort By</label>
-        <select class="form-select" name="review_sort">
-          <option value="newest" {{ 'selected' if review_filters.sort_by == 'newest' }}>Newest</option>
-          <option value="oldest" {{ 'selected' if review_filters.sort_by == 'oldest' }}>Oldest</option>
-          <option value="rating_high" {{ 'selected' if review_filters.sort_by == 'rating_high' }}>Rating: High to Low</option>
-          <option value="rating_low" {{ 'selected' if review_filters.sort_by == 'rating_low' }}>Rating: Low to High</option>
-        </select>
-      </div>
-      <div class="col-lg-2 col-md-6 filter-actions">
-        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
-        <a href="{{ url_for('riders', tab='reviews') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
-      </div>
-    </form>
-
-    <div class="data-card">
-      <div class="data-card-header">
-        <h3>Rider Reviews</h3>
-        <span class="status-tag status-info">{{ rider_reviews|length }} records</span>
-      </div>
-      <div class="data-card-body table-responsive">
-        <table class="table table-hover align-middle">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Rating</th>
-              <th>Rider</th>
-              <th>Driver</th>
-              <th>Info</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in rider_reviews %}
-            {% set review_text = row.comment or 'No comment provided.' %}
-            <tr>
-              <td>
-                {% if row.review_date %}
-                {{ row.review_date if row.review_date is string else row.review_date.strftime('%Y-%m-%d') }}
-                {% else %}
-                N/A
-                {% endif %}
-              </td>
-              <td>
-                <span class="rating-chip">
-                  <i class="bi bi-star-fill"></i>
-                  {{ row.rating }}/5
-                </span>
-              </td>
-              <td>{{ row.rider_name or 'N/A' }}</td>
-              <td>{{ row.driver_name or 'N/A' }}</td>
-              <td>{{ review_text[:95] }}{% if review_text|length > 95 %}...{% endif %}</td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="5" class="text-center text-muted">No reviews match the current filters.</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    {% endif %}
   </article>
 </section>
 {% endblock %}

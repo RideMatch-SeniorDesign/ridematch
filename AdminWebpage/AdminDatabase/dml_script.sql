@@ -4,6 +4,7 @@ USE `ride_match_db`;
 
 -- clear existing data before reseeding
 SET FOREIGN_KEY_CHECKS = 0;
+TRUNCATE TABLE `rider_review`;
 TRUNCATE TABLE `driver_review`;
 TRUNCATE TABLE `trip`;
 TRUNCATE TABLE `rider_saves`;
@@ -174,6 +175,13 @@ VALUES
 (2, 12, 'requested', 'Iowa City', 'Coralville', 0.00, NULL, NULL),
 (3, 1, 'completed', 'Iowa City', 'Tiffin', 17.35, 5, 5);
 
+-- derive trip finance components for analytics
+UPDATE `trip`
+SET
+    `PlatformFee` = CASE WHEN `Status` = 'completed' THEN ROUND(`FinalCost` * 0.10, 2) ELSE 0.00 END,
+    `TaxAmount` = CASE WHEN `Status` = 'completed' THEN ROUND(`FinalCost` * 0.07, 2) ELSE 0.00 END,
+    `TipAmount` = CASE WHEN `Status` = 'completed' THEN ROUND(`FinalCost` * 0.08, 2) ELSE 0.00 END;
+
 -- create rider reviews for drivers
 INSERT INTO `driver_review` (`DriverID`, `RiderID`, `TripID`, `Rating`, `Comment`)
 VALUES
@@ -193,3 +201,23 @@ VALUES
 (8, 17, 16, 5, 'Friendly and careful driver.'),
 (9, 18, 17, 5, 'Great ride and clear communication.'),
 (1, 3, 20, 5, 'Consistently reliable and courteous.');
+
+-- create driver reviews for riders
+INSERT INTO `rider_review` (`RiderID`, `DriverID`, `TripID`, `Rating`, `Comment`)
+VALUES
+(2, 1, 1, 5, 'Rider was ready on pickup and very respectful.'),
+(3, 1, 2, 4, 'Good communication and on-time arrival.'),
+(4, 2, 3, 5, 'Polite rider and clear destination details.'),
+(5, 7, 4, 4, 'Friendly during the trip and punctual.'),
+(6, 8, 5, 5, 'Excellent rider and smooth pickup process.'),
+(16, 9, 6, 5, 'Great rider, no issues during the trip.'),
+(17, 10, 7, 4, 'Rider was courteous and easy to coordinate with.'),
+(18, 11, 8, 5, 'Very respectful and prompt at pickup.'),
+(1, 12, 9, 5, 'Rider was waiting at the pickup point.'),
+(2, 13, 10, 3, 'Some confusion at pickup but trip completed fine.'),
+(3, 14, 11, 3, 'Rider was fine overall, minor delay at pickup.'),
+(4, 15, 12, 2, 'Late arrival and difficult communication.'),
+(16, 2, 15, 5, 'Excellent rider with clear communication.'),
+(17, 8, 16, 5, 'Great rider and very punctual.'),
+(18, 9, 17, 5, 'Pleasant and respectful throughout the trip.'),
+(3, 1, 20, 5, 'Reliable rider and easy drop-off coordination.');
