@@ -496,6 +496,8 @@ def fetch_dashboard_data() -> dict[str, Any]:
                 "name": row["name"],
                 "approved": (row["status"] or "").lower() == "approved",
                 "status": row["status"],
+                "photo_moderation_status": row.get("photo_moderation_status"),
+                "photo_moderation_labels": row.get("photo_moderation_labels"),
             }
             for row in pending_verification
         ],

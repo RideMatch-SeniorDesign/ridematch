@@ -190,6 +190,20 @@ button {
 }
 .stat small { display: block; color: var(--muted); margin-bottom: 3px; }
 .stat strong { display: block; word-break: break-word; }
+.profile-photo-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.profile-photo-image {
+  width: min(220px, 100%);
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid #c8daf7;
+  background: #eef4ff;
+  box-shadow: 0 8px 18px rgba(16, 44, 94, 0.08);
+}
 @media (max-width: 760px) {
   .grid { grid-template-columns: 1fr; }
   .pref-field { grid-column: auto; }

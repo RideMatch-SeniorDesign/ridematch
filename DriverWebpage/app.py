@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import uuid
+import mimetypes
 from datetime import timedelta
 from pathlib import Path
 
 import boto3
 from dotenv import load_dotenv
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = Path(__file__).resolve().parent
@@ -60,6 +62,21 @@ def _driver_logged_in() -> bool:
 
 def _driver_session_user() -> dict:
     return session.get("driver_user") or {}
+
+
+def _driver_photo_url_if_exists(account_id: int | None) -> str | None:
+    if not account_id:
+        return None
+    try:
+        from Database.admin_queries import fetch_driver_profile_photo_path
+
+        existing_path = fetch_driver_profile_photo_path(int(account_id))
+    except Exception as exc:
+        app.logger.warning("Could not check driver profile photo path for account %s: %s", account_id, exc)
+        return None
+    if not str(existing_path or "").strip():
+        return None
+    return f"{url_for('api_driver_photo', driver_id=int(account_id))}?v={int(time.time() * 1000)}"
 
 
 @app.before_request
@@ -215,6 +232,134 @@ def login():
     return redirect(url_for("dashboard"))
 
 
+@app.route("/api/driver/login", methods=["POST"])
+def api_driver_login():
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({"success": False, "error": "Username and password are required."}), 400
+
+    try:
+        from Database.admin_queries import authenticate_portal_user
+
+        user = authenticate_portal_user("driver", username, password)
+    except Exception as exc:
+        app.logger.warning("Driver API login failed: %s", exc)
+        return jsonify({"success": False, "error": "Login is unavailable right now (database error)."}), 500
+
+    if not user:
+        return jsonify({"success": False, "error": "Invalid driver login."}), 401
+    photo_url = _driver_photo_url_if_exists(int(user.get("account_id") or 0))
+    if photo_url:
+        user["photo_url"] = photo_url
+
+    return jsonify({"success": True, "user": user}), 200
+
+
+@app.route("/api/driver/photo/<int:driver_id>")
+def api_driver_photo(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_driver_profile_photo_path
+
+        stored_path = fetch_driver_profile_photo_path(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver photo lookup failed: %s", exc)
+        stored_path = None
+
+    stored_path = str(stored_path or "").strip()
+    if not stored_path:
+        abort(404)
+
+    full_path = (APP_PATH / stored_path).resolve()
+    photo_root = PROFILE_UPLOAD_DIR.resolve()
+    if not full_path.is_relative_to(photo_root) or not full_path.is_file():
+        abort(404)
+
+    guessed_mime, _ = mimetypes.guess_type(str(full_path))
+    response = send_file(full_path, mimetype=guessed_mime or "application/octet-stream", conditional=False, max_age=0)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.route("/api/driver/profile/photo", methods=["POST"])
+def api_driver_profile_photo_update():
+    account_id_raw = str(request.form.get("account_id") or "").strip()
+    if not account_id_raw.isdigit():
+        return jsonify({"success": False, "error": "A valid account_id is required."}), 400
+    account_id = int(account_id_raw)
+
+    photo_payload, photo_error = _validate_and_store_driver_profile_photo(required=True)
+    if photo_error or not photo_payload:
+        return jsonify({"success": False, "error": photo_error or "Profile photo upload failed."}), 400
+
+    try:
+        from Database.admin_queries import (
+            fetch_driver_profile_photo_path,
+            fetch_portal_profile,
+            update_driver_profile_photo,
+        )
+
+        previous_photo_path = fetch_driver_profile_photo_path(account_id)
+        updated = update_driver_profile_photo(account_id, photo_payload)
+        if not updated:
+            try:
+                (APP_PATH / str(photo_payload.get("storage_path") or "")).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return jsonify({"success": False, "error": "Could not update profile photo in database."}), 500
+
+        new_photo_path = str(photo_payload.get("storage_path") or "").strip()
+        old_photo_path = str(previous_photo_path or "").strip()
+        if old_photo_path and old_photo_path != new_photo_path:
+            try:
+                (APP_PATH / old_photo_path).unlink(missing_ok=True)
+            except Exception as delete_exc:
+                app.logger.warning("Could not delete replaced profile photo '%s': %s", old_photo_path, delete_exc)
+
+        user = fetch_portal_profile("driver", account_id) or {"account_id": account_id}
+        user["photo_url"] = f"{url_for('api_driver_photo', driver_id=account_id)}?v={int(time.time() * 1000)}"
+        user["status"] = "under_review"
+        return jsonify(
+            {
+                "success": True,
+                "message": "Profile photo updated. Your account is now under review.",
+                "user": user,
+                "photo_url": user["photo_url"],
+            }
+        ), 200
+    except Exception as exc:
+        app.logger.warning("Driver photo API update failed: %s", exc)
+        try:
+            (APP_PATH / str(photo_payload.get("storage_path") or "")).unlink(missing_ok=True)
+        except Exception:
+            pass
+        return jsonify({"success": False, "error": "Could not update profile photo right now."}), 500
+
+
+@app.route("/api/driver/profile/<int:driver_id>", methods=["GET"])
+def api_driver_profile(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_portal_profile
+
+        user = fetch_portal_profile("driver", driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver profile API load failed: %s", exc)
+        user = None
+
+    if not user:
+        return jsonify({"success": False, "error": "Driver profile not found."}), 404
+
+    photo_url = _driver_photo_url_if_exists(driver_id)
+    if photo_url:
+        user["photo_url"] = photo_url
+    else:
+        user.pop("photo_url", None)
+    return jsonify({"success": True, "user": user}), 200
+
+
 @app.route("/dashboard")
 def dashboard():
     if not session.get("driver_logged_in"):
@@ -275,6 +420,17 @@ def settings():
     success = None
     warning = None
     error = None
+    current_photo_url = None
+
+    account_id = int(user.get("account_id") or 0)
+    if account_id:
+        try:
+            from Database.admin_queries import fetch_driver_profile_photo_path
+
+            if fetch_driver_profile_photo_path(account_id):
+                current_photo_url = url_for("api_driver_photo", driver_id=account_id)
+        except Exception as exc:
+            app.logger.warning("Could not load current driver profile photo path: %s", exc)
 
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
@@ -326,7 +482,16 @@ def settings():
 
     return render_template(
         "driver_settings.html",
-        **_driver_nav_context("settings", form_data=form_data, success=success, warning=warning, error=error, preference_options=PREFERENCE_OPTIONS, state_options=US_STATE_OPTIONS),
+        **_driver_nav_context(
+            "settings",
+            form_data=form_data,
+            success=success,
+            warning=warning,
+            error=error,
+            preference_options=PREFERENCE_OPTIONS,
+            state_options=US_STATE_OPTIONS,
+            current_photo_url=current_photo_url,
+        ),
     )
 
 

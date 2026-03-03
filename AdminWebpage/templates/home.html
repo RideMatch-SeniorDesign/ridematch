@@ -43,6 +43,9 @@
       <div class="queue-list">
         {% for driver in home_queue_preview %}
         {% set driver_status = (driver.status or "pending")|lower %}
+        {% set moderation_status = (driver.photo_moderation_status or '')|trim|lower %}
+        {% set moderation_labels = (driver.photo_moderation_labels or '')|trim %}
+        {% set flagged_by_moderation = (moderation_status.startswith('flag')) or (moderation_labels|length > 0) %}
         <div class="queue-item">
           <div class="queue-avatar">
             <i class="bi bi-person-circle"></i>
@@ -63,6 +66,26 @@
               <i class="bi bi-info-circle"></i>
               Info
             </a>
+            {% if flagged_by_moderation %}
+            <span class="verify-flag-box">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              Flagged: {{ moderation_labels or 'content warning' }}
+            </span>
+            {% endif %}
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="{{ url_for('driver_detail', driver_id=driver.account_id) }}"
+            >
+              <i class="bi bi-info-circle"></i>
+              Info
+            </a>
+            <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
+              <input type="hidden" name="action" value="deny" />
+              <button type="submit" class="btn btn-sm btn-danger">
+                <i class="bi bi-x-circle"></i>
+                Deny
+              </button>
+            </form>
           </div>
         </div>
         {% else %}
