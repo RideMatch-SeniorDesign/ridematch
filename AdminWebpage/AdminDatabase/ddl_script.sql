@@ -42,6 +42,7 @@ CREATE TABLE `rider` (
 	`AccountID` int NOT NULL,
     `Preferences` varchar(100),
     `Rating` int DEFAULT 5,
+    `RidingSince` date DEFAULT (curdate()),
     `Status` varchar(50),
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Rider_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
@@ -63,6 +64,8 @@ CREATE TABLE `driver` (
     `Preferences` varchar(100),
     `Rating` int DEFAULT 5,
     `Status` varchar(50) DEFAULT 'pending',
+    `DateSubmitted` date DEFAULT (curdate()),
+    `DateApproved` date DEFAULT NULL,
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Driver_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );

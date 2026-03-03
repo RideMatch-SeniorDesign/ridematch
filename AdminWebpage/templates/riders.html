@@ -3,6 +3,18 @@
 
 {% block content %}
 <section class="driver-shell">
+  <div class="page-intro">
+    <div>
+      <p class="page-kicker">Rider Ops</p>
+      <h2 class="page-title">Rider Management Hub</h2>
+      <p class="page-note">Monitor rider growth, activity, and feedback quality in real time.</p>
+    </div>
+    <span class="page-pill">
+      <i class="bi bi-people-fill"></i>
+      Rider Directory
+    </span>
+  </div>
+
   <div class="driver-metrics">
     <div class="metric-card metric-blue">
       <small>Total Riders</small>
@@ -19,46 +31,93 @@
   </div>
 
   <article class="panel">
-    <h2>Riders</h2>
+    <div class="section-head">
+      <div>
+        <h2>Rider Directory</h2>
+        <p>Search rider accounts and narrow by tenure or rating.</p>
+      </div>
+      <span class="status-tag status-info">{{ (all_riders | length) if all_riders else 0 }} records</span>
+    </div>
+
+    <form method="get" action="{{ url_for('riders') }}" class="filter-toolbar row g-2 align-items-end">
+      <div class="col-lg-4 col-md-6">
+        <label class="form-label mb-1">Search</label>
+        <input
+          type="text"
+          class="form-control"
+          name="rider_query"
+          value="{{ rider_filters.query }}"
+          placeholder="Name, phone, or email"
+        />
+      </div>
+      <div class="col-lg-3 col-md-6">
+        <label class="form-label mb-1">Riding Since (On or Before)</label>
+        <input type="date" class="form-control" name="riding_since_before" value="{{ rider_filters.riding_since_before }}" />
+      </div>
+      <div class="col-lg-2 col-md-3">
+        <label class="form-label mb-1">Rating Min</label>
+        <input type="number" class="form-control" name="rider_rating_min" step="0.1" min="0" max="5" value="{{ rider_filters.rating_min }}" />
+      </div>
+      <div class="col-lg-2 col-md-3">
+        <label class="form-label mb-1">Rating Max</label>
+        <input type="number" class="form-control" name="rider_rating_max" step="0.1" min="0" max="5" value="{{ rider_filters.rating_max }}" />
+      </div>
+      <div class="col-12 filter-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('riders') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
 
     {% if all_riders %}
-    <div class="table-responsive">
-      <table class="table table-hover align-middle">
-        <thead>
-          <tr>
-            <th>Rider</th>
-            <th>Contact</th>
-            <th>Preferences</th>
-            <th>Rides Taken</th>
-            <th>Average Rating</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for rider in all_riders %}
-          <tr>
-            <td>
-              <strong>{{ rider.name }}</strong>
-            </td>
-            <td>
-              <div>{{ rider.email or 'N/A' }}</div>
-              <small class="text-muted">{{ rider.phone or 'N/A' }}</small>
-            </td>
-            <td>
-              <span class="badge bg-light text-dark">{{ rider.preferences or 'None' }}</span>
-            </td>
-            <td>{{ rider.rides | default(0) }}</td>
-            <td>
-              <span class="text-warning">
-                {% if rider.rating %}★ {{ rider.rating }}/5{% else %}No ratings{% endif %}
-              </span>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <div class="data-card">
+      <div class="data-card-body table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Rider</th>
+              <th>Contact</th>
+              <th>Preferences</th>
+              <th>Riding Since</th>
+              <th>Rides Taken</th>
+              <th>Average Rating</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rider in all_riders %}
+            <tr>
+              <td>
+                <strong>{{ rider.name }}</strong>
+              </td>
+              <td>
+                <div>{{ rider.email or 'N/A' }}</div>
+                <small class="text-muted">{{ rider.phone or 'N/A' }}</small>
+              </td>
+              <td>
+                <span class="badge bg-light text-dark">{{ rider.preferences or 'None' }}</span>
+              </td>
+              <td>
+                {% set riding_since = rider.riding_since %}
+                {% if riding_since %}
+                {{ riding_since if riding_since is string else riding_since.strftime('%Y-%m-%d') }}
+                {% else %}
+                N/A
+                {% endif %}
+              </td>
+              <td>{{ rider.rides | default(0) }}</td>
+              <td>
+                <span class="rating-chip">
+                  <i class="bi bi-star-fill"></i>
+                  {% if rider.rating %}{{ rider.rating }}/5{% else %}No ratings{% endif %}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
     {% else %}
-    <div class="empty-message" style="text-align: center; padding: 40px;">
+    <div class="empty-message empty-centered">
       <i class="bi bi-people"></i>
       <p>No riders found.</p>
     </div>
@@ -66,10 +125,15 @@
   </article>
 
   <article class="panel">
-    <h2>Rider Activity</h2>
+    <div class="section-head">
+      <div>
+        <h2>Rider Activity</h2>
+        <p>Latest trips and usage trends from rider accounts.</p>
+      </div>
+    </div>
 
     {% if recent_rides %}
-    <div style="padding: 20px;">
+    <div class="activity-block">
       <h3>Recent Rides</h3>
       <ul class="list-box">
         {% for ride in recent_rides[:10] %}
@@ -78,7 +142,7 @@
       </ul>
     </div>
     {% else %}
-    <div class="empty-message" style="text-align: center; padding: 40px;">
+    <div class="empty-message empty-centered">
       <i class="bi bi-calendar2-check"></i>
       <p>No recent rides.</p>
     </div>
@@ -86,3 +150,4 @@
   </article>
 </section>
 {% endblock %}
+

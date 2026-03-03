@@ -47,58 +47,74 @@ VALUES
 (3, 'developer');
 
 -- create riders (allow broad rider activity in analytics/reviews)
-INSERT INTO `rider` (AccountID, Preferences)
+INSERT INTO `rider` (AccountID, Preferences, RidingSince)
 VALUES
-(1, 'quiet ride'),
-(2, 'music okay'),
-(3, 'no highway'),
-(4, 'quiet ride'),
-(5, 'music okay'),
-(6, 'pet friendly'),
-(7, 'quiet ride'),
-(8, 'music okay'),
-(9, 'quiet ride'),
-(10, 'pet friendly'),
-(11, 'music okay'),
-(12, 'quiet ride'),
-(13, 'quiet ride'),
-(14, 'music okay'),
-(15, 'pet friendly'),
-(16, 'quiet ride'),
-(17, 'music okay'),
-(18, 'quiet ride');
+(1, 'quiet ride', '2023-09-01'),
+(2, 'music okay', '2023-10-15'),
+(3, 'no highway', '2024-01-09'),
+(4, 'quiet ride', '2024-02-03'),
+(5, 'music okay', '2024-03-28'),
+(6, 'pet friendly', '2024-04-12'),
+(7, 'quiet ride', '2024-05-07'),
+(8, 'music okay', '2024-06-14'),
+(9, 'quiet ride', '2024-07-19'),
+(10, 'pet friendly', '2024-08-23'),
+(11, 'music okay', '2024-09-30'),
+(12, 'quiet ride', '2024-11-04'),
+(13, 'quiet ride', '2024-12-15'),
+(14, 'music okay', '2025-01-22'),
+(15, 'pet friendly', '2025-03-10'),
+(16, 'quiet ride', '2025-04-18'),
+(17, 'music okay', '2025-06-01'),
+(18, 'quiet ride', '2025-07-16');
 
 -- create drivers
-INSERT INTO `driver` (AccountID, Preferences)
+INSERT INTO `driver` (AccountID, Preferences, DateSubmitted)
 VALUES
-(1, 'quiet rider'),
-(2, 'music low'),
-(3, 'conversation okay'),
-(7, 'quiet rider'),
-(8, 'music low'),
-(9, 'pet friendly'),
-(10, 'conversation okay'),
-(11, 'quiet rider'),
-(12, 'music low'),
-(13, 'quiet rider'),
-(14, 'conversation okay'),
-(15, 'quiet rider');
+(1, 'quiet rider', '2024-01-10'),
+(2, 'music low', '2024-03-14'),
+(3, 'conversation okay', '2025-11-08'),
+(7, 'quiet rider', '2025-12-02'),
+(8, 'music low', '2024-06-20'),
+(9, 'pet friendly', '2024-08-05'),
+(10, 'conversation okay', '2026-01-12'),
+(11, 'quiet rider', '2024-09-30'),
+(12, 'music low', '2024-11-22'),
+(13, 'quiet rider', '2026-02-01'),
+(14, 'conversation okay', '2026-02-14'),
+(15, 'quiet rider', '2025-10-09');
 
 -- set driver statuses for admin workflows
 UPDATE `driver`
-SET `Status` = 'approved'
+SET
+    `Status` = 'approved',
+    `DateApproved` = CASE `AccountID`
+        WHEN 1 THEN '2024-01-18'
+        WHEN 2 THEN '2024-03-20'
+        WHEN 8 THEN '2024-06-27'
+        WHEN 9 THEN '2024-08-13'
+        WHEN 11 THEN '2024-10-06'
+        WHEN 12 THEN '2024-12-01'
+        ELSE `DateApproved`
+    END
 WHERE `AccountID` IN (1, 2, 8, 9, 11, 12);
 
 UPDATE `driver`
-SET `Status` = 'pending'
+SET
+    `Status` = 'pending',
+    `DateApproved` = NULL
 WHERE `AccountID` IN (3, 7, 10, 13);
 
 UPDATE `driver`
-SET `Status` = 'under_review'
+SET
+    `Status` = 'under_review',
+    `DateApproved` = NULL
 WHERE `AccountID` = 14;
 
 UPDATE `driver`
-SET `Status` = 'denied'
+SET
+    `Status` = 'denied',
+    `DateApproved` = NULL
 WHERE `AccountID` = 15;
 
 -- create driver information records

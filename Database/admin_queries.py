@@ -51,6 +51,21 @@ def _table_exists(table_name: str) -> bool:
     return bool(rows)
 
 
+def _column_exists(table_name: str, column_name: str) -> bool:
+    rows = _fetch_all(
+        """
+        SELECT 1 AS has_column
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = %s
+          AND column_name = %s
+        LIMIT 1
+        """,
+        (table_name, column_name),
+    )
+    return bool(rows)
+
+
 def _driver_info_mode() -> str | None:
     if _table_exists("driver_information"):
         return "driver_information"
@@ -87,6 +102,8 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
     has_profile_photo = _table_exists("driver_profile_photo")
+    has_date_submitted = _column_exists("driver", "DateSubmitted")
+    has_date_approved = _column_exists("driver", "DateApproved")
 
     if info_mode == "driver_information":
         info_select = """
@@ -167,6 +184,10 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
             NULL AS photo_moderation_status,
             NULL AS photo_moderation_labels,
     """
+    date_select = f"""
+            {"d.DateSubmitted" if has_date_submitted else "NULL"} AS date_submitted,
+            {"d.DateApproved" if has_date_approved else "NULL"} AS date_approved,
+    """
 
     joins: list[str] = []
     if info_join:
@@ -186,6 +207,10 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
         "a.PhoneNum",
         "d.Status",
     ]
+    if has_date_submitted:
+        group_by_parts.append("d.DateSubmitted")
+    if has_date_approved:
+        group_by_parts.append("d.DateApproved")
     if has_profile_photo:
         group_by_parts.extend(["dpp.ModerationStatus", "dpp.ModerationLabels"])
     group_by_parts.extend(info_group_by)
@@ -194,6 +219,7 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
         SELECT
             d.AccountID AS account_id,
             d.Status AS status,
+            {date_select}
             {photo_select}
             {info_select}
             {rating_expr} AS rating,
@@ -212,6 +238,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
     has_profile_photo = _table_exists("driver_profile_photo")
+    has_date_submitted = _column_exists("driver", "DateSubmitted")
+    has_date_approved = _column_exists("driver", "DateApproved")
 
     if info_mode == "driver_information":
         info_select = """
@@ -291,6 +319,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     rating_expr = "COALESCE(AVG(dr.Rating), 0)" if has_review else "0"
     rides_expr = "COUNT(DISTINCT t.TripID)" if has_trip else "0"
     review_count_expr = "COUNT(DISTINCT dr.ReviewID)" if has_review else "0"
+    date_submitted_expr = "d.DateSubmitted" if has_date_submitted else "NULL"
+    date_approved_expr = "d.DateApproved" if has_date_approved else "NULL"
     photo_select = """
             dpp.StoragePath AS profile_photo_path,
             dpp.MimeType AS profile_photo_mime_type,
@@ -328,6 +358,10 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
         "d.Status",
         "d.Preferences",
     ]
+    if has_date_submitted:
+        group_by_parts.append("d.DateSubmitted")
+    if has_date_approved:
+        group_by_parts.append("d.DateApproved")
     if has_profile_photo:
         group_by_parts.extend([
             "dpp.StoragePath",
@@ -346,6 +380,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             d.AccountID AS account_id,
             d.Status AS status,
             d.Preferences AS preferences,
+            {date_submitted_expr} AS date_submitted,
+            {date_approved_expr} AS date_approved,
             {photo_select}
             {info_select}
             {rating_expr} AS avg_rating,
@@ -364,13 +400,25 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
 
 def update_driver_status(driver_id: int, action: str) -> bool:
     status = "approved" if action == "approve" else "denied"
+    has_date_submitted = _column_exists("driver", "DateSubmitted")
+    has_date_approved = _column_exists("driver", "DateApproved")
+
+    assignments: list[str] = ["Status = %s"]
+    params: list[Any] = [status]
+    if has_date_submitted:
+        assignments.append("DateSubmitted = COALESCE(DateSubmitted, CURDATE())")
+    if has_date_approved:
+        assignments.append("DateApproved = CASE WHEN %s = 'approved' THEN CURDATE() ELSE NULL END")
+        params.append(status)
+
+    params.append(driver_id)
     rows = _execute(
-        """
+        f"""
         UPDATE driver
-        SET Status = %s
+        SET {', '.join(assignments)}
         WHERE AccountID = %s
         """,
-        (status, driver_id),
+        tuple(params),
     )
     return rows > 0
 
@@ -485,13 +533,22 @@ def create_rider_signup(
         """,
         (username, email, phone, password, first_name, last_name),
     )
-    _execute(
-        """
-        INSERT INTO rider (AccountID, Preferences)
-        VALUES (%s, %s)
-        """,
-        (account_id, preferences or None),
-    )
+    if _column_exists("rider", "RidingSince"):
+        _execute(
+            """
+            INSERT INTO rider (AccountID, Preferences, RidingSince)
+            VALUES (%s, %s, CURDATE())
+            """,
+            (account_id, preferences or None),
+        )
+    else:
+        _execute(
+            """
+            INSERT INTO rider (AccountID, Preferences)
+            VALUES (%s, %s)
+            """,
+            (account_id, preferences or None),
+        )
     return account_id
 
 
@@ -520,13 +577,22 @@ def create_driver_signup(
         (username, email, phone, password, first_name, last_name),
     )
 
-    _execute(
-        """
-        INSERT INTO driver (AccountID, Preferences, Status)
-        VALUES (%s, %s, %s)
-        """,
-        (account_id, preferences or None, "pending"),
-    )
+    if _column_exists("driver", "DateSubmitted"):
+        _execute(
+            """
+            INSERT INTO driver (AccountID, Preferences, Status, DateSubmitted)
+            VALUES (%s, %s, %s, CURDATE())
+            """,
+            (account_id, preferences or None, "pending"),
+        )
+    else:
+        _execute(
+            """
+            INSERT INTO driver (AccountID, Preferences, Status)
+            VALUES (%s, %s, %s)
+            """,
+            (account_id, preferences or None, "pending"),
+        )
 
     if _table_exists("driver_information"):
         _execute(

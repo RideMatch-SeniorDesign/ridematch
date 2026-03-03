@@ -3,6 +3,37 @@
 
 {% block content %}
 <section class="home-shell">
+  <div class="page-intro">
+    <div>
+      <p class="page-kicker">Overview</p>
+      <h2 class="page-title">Operations Dashboard</h2>
+      <p class="page-note">Track queue health, rider feedback, and key operating metrics in one place.</p>
+    </div>
+    <span class="page-pill">
+      <i class="bi bi-activity"></i>
+      Live Snapshot
+    </span>
+  </div>
+
+  <div class="kpi-strip">
+    <article class="kpi-card">
+      <small>Pending Applications</small>
+      <strong>{{ new_applications|length }}</strong>
+    </article>
+    <article class="kpi-card">
+      <small>Active Drivers</small>
+      <strong>{{ total_driver_count }}</strong>
+    </article>
+    <article class="kpi-card">
+      <small>Total Riders</small>
+      <strong>{{ total_rider_count }}</strong>
+    </article>
+    <article class="kpi-card">
+      <small>Recent Reviews</small>
+      <strong>{{ driver_reviews|length }}</strong>
+    </article>
+  </div>
+
   <div class="home-grid">
     <article class="panel queue-panel">
       <div class="panel-headline">

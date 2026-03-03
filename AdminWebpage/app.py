@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
 
@@ -57,6 +58,133 @@ def _persist_logged_in_session() -> None:
         session.permanent = True
 
 
+def _coerce_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _matches_contact_search(row: dict[str, Any], query: str) -> bool:
+    if not query:
+        return True
+    haystack = " ".join(
+        [
+            str(row.get("name") or ""),
+            str(row.get("email") or ""),
+            str(row.get("phone") or ""),
+        ]
+    ).lower()
+    return query in haystack
+
+
+def _filter_all_drivers(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    query = (filters.get("query") or "").strip().lower()
+    status = (filters.get("status") or "").strip().lower()
+    since_before = _coerce_date(filters.get("driving_since_before"))
+    rating_min = _coerce_float(filters.get("rating_min"))
+    rating_max = _coerce_float(filters.get("rating_max"))
+    rides_min = _coerce_int(filters.get("rides_min"))
+    rides_max = _coerce_int(filters.get("rides_max"))
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if not _matches_contact_search(row, query):
+            continue
+        row_status = str(row.get("status") or "").strip().lower()
+        if status and status != "all" and row_status != status:
+            continue
+
+        driving_since = _coerce_date(row.get("date_approved"))
+        if since_before and (driving_since is None or driving_since > since_before):
+            continue
+
+        rating = _coerce_float(row.get("rating"))
+        if rating_min is not None and (rating is None or rating < rating_min):
+            continue
+        if rating_max is not None and (rating is None or rating > rating_max):
+            continue
+
+        rides = _coerce_int(row.get("rides"))
+        if rides_min is not None and (rides is None or rides < rides_min):
+            continue
+        if rides_max is not None and (rides is None or rides > rides_max):
+            continue
+
+        filtered.append(row)
+    return filtered
+
+
+def _filter_verification_drivers(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    status = (filters.get("status") or "").strip().lower()
+    submitted_before = _coerce_date(filters.get("submitted_before"))
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_status = str(row.get("status") or "").strip().lower()
+        if status and status != "all" and row_status != status:
+            continue
+
+        submitted_on = _coerce_date(row.get("date_submitted"))
+        if submitted_before and (submitted_on is None or submitted_on > submitted_before):
+            continue
+
+        filtered.append(row)
+    return filtered
+
+
+def _filter_riders(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    query = (filters.get("query") or "").strip().lower()
+    since_before = _coerce_date(filters.get("riding_since_before"))
+    rating_min = _coerce_float(filters.get("rating_min"))
+    rating_max = _coerce_float(filters.get("rating_max"))
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if not _matches_contact_search(row, query):
+            continue
+
+        riding_since = _coerce_date(row.get("riding_since"))
+        if since_before and (riding_since is None or riding_since > since_before):
+            continue
+
+        rating = _coerce_float(row.get("rating"))
+        if rating_min is not None and (rating is None or rating < rating_min):
+            continue
+        if rating_max is not None and (rating is None or rating > rating_max):
+            continue
+
+        filtered.append(row)
+    return filtered
+
+
 def _dashboard_data() -> dict:
     today = date.today()
     upcoming_events = [
@@ -86,6 +214,8 @@ def _dashboard_data() -> dict:
                 "license_number": "IA-214334",
                 "email": "bob.johnson@example.com",
                 "phone": "319-555-0201",
+                "date_submitted": today - timedelta(days=120),
+                "date_approved": today - timedelta(days=112),
             },
             {
                 "account_id": 2,
@@ -98,6 +228,8 @@ def _dashboard_data() -> dict:
                 "license_number": "IA-992191",
                 "email": "sally.smith@example.com",
                 "phone": "319-555-0202",
+                "date_submitted": today - timedelta(days=18),
+                "date_approved": None,
             },
         ],
         "unapproved_drivers": [
@@ -112,6 +244,8 @@ def _dashboard_data() -> dict:
                 "insurance_provider": "N/A",
                 "email": "sally.smith@example.com",
                 "phone": "319-555-0202",
+                "date_submitted": today - timedelta(days=18),
+                "date_approved": None,
             }
         ],
         "new_applications": [
@@ -161,9 +295,9 @@ def _dashboard_data() -> dict:
         "upcoming_events": upcoming_events,
         "total_driver_count": 3,
         "all_riders": [
-            {"name": "Sofia Ramirez", "email": "sofia.ramirez@example.com", "phone": "319-555-0104", "preferences": "quiet ride", "rating": "4.5", "rides": 8},
-            {"name": "Liam Carter", "email": "liam.carter@example.com", "phone": "319-555-0105", "preferences": "music okay", "rating": "4.0", "rides": 5},
-            {"name": "Noah Bennett", "email": "noah.bennett@example.com", "phone": "319-555-0106", "preferences": "pet friendly", "rating": "4.8", "rides": 12},
+            {"name": "Sofia Ramirez", "email": "sofia.ramirez@example.com", "phone": "319-555-0104", "preferences": "quiet ride", "rating": "4.5", "rides": 8, "riding_since": today - timedelta(days=260)},
+            {"name": "Liam Carter", "email": "liam.carter@example.com", "phone": "319-555-0105", "preferences": "music okay", "rating": "4.0", "rides": 5, "riding_since": today - timedelta(days=170)},
+            {"name": "Noah Bennett", "email": "noah.bennett@example.com", "phone": "319-555-0106", "preferences": "pet friendly", "rating": "4.8", "rides": 12, "riding_since": today - timedelta(days=330)},
         ],
         "total_rider_count": 6,
         "total_rides": 20,
@@ -308,6 +442,45 @@ def drivers():
     if active_tab not in {"all", "verification", "reviews"}:
         active_tab = "all"
 
+    data = _dashboard_data()
+    all_driver_rows = list(data.get("all_drivers", []))
+    unapproved_rows = list(data.get("unapproved_drivers", []))
+    all_driver_count_raw = len(all_driver_rows)
+    pending_driver_count_raw = len(unapproved_rows)
+    driver_review_count_raw = len(data.get("driver_reviews", []))
+
+    driver_status_options = sorted(
+        {
+            str(row.get("status") or "").strip().lower()
+            for row in all_driver_rows
+            if str(row.get("status") or "").strip()
+        }
+    )
+    verification_status_options = sorted(
+        {
+            str(row.get("status") or "").strip().lower()
+            for row in unapproved_rows
+            if str(row.get("status") or "").strip()
+        }
+    )
+
+    all_driver_filters = {
+        "query": request.args.get("driver_query", "").strip(),
+        "status": request.args.get("driver_status", "").strip().lower(),
+        "driving_since_before": request.args.get("driving_since_before", "").strip(),
+        "rating_min": request.args.get("driver_rating_min", "").strip(),
+        "rating_max": request.args.get("driver_rating_max", "").strip(),
+        "rides_min": request.args.get("driver_rides_min", "").strip(),
+        "rides_max": request.args.get("driver_rides_max", "").strip(),
+    }
+    verification_filters = {
+        "status": request.args.get("verification_status", "").strip().lower(),
+        "submitted_before": request.args.get("submitted_before", "").strip(),
+    }
+
+    data["all_drivers"] = _filter_all_drivers(all_driver_rows, all_driver_filters)
+    data["unapproved_drivers"] = _filter_verification_drivers(unapproved_rows, verification_filters)
+
     selected_driver_id = request.args.get("driver_id", type=int)
     selected_driver = None
     if selected_driver_id:
@@ -325,7 +498,14 @@ def drivers():
         active_driver_tab=active_tab,
         selected_driver=selected_driver,
         verification_notice=request.args.get("notice"),
-        **_dashboard_data(),
+        all_driver_filters=all_driver_filters,
+        verification_filters=verification_filters,
+        driver_status_options=driver_status_options,
+        verification_status_options=verification_status_options,
+        all_driver_count_raw=all_driver_count_raw,
+        pending_driver_count_raw=pending_driver_count_raw,
+        driver_review_count_raw=driver_review_count_raw,
+        **data,
     )
 
 
@@ -345,7 +525,7 @@ def verify_driver(driver_id: int):
 
     notice = "update_failed"
     try:
-        from Database.admin_queries import update_driver_status
+        from AdminDatabase.admin_queries import update_driver_status
 
         updated = update_driver_status(driver_id, action)
         if updated:
@@ -422,11 +602,22 @@ def riders():
     if not _is_logged_in():
         return redirect(url_for("login"))
 
+    data = _dashboard_data()
+    rider_rows = list(data.get("all_riders", []))
+    rider_filters = {
+        "query": request.args.get("rider_query", "").strip(),
+        "riding_since_before": request.args.get("riding_since_before", "").strip(),
+        "rating_min": request.args.get("rider_rating_min", "").strip(),
+        "rating_max": request.args.get("rider_rating_max", "").strip(),
+    }
+    data["all_riders"] = _filter_riders(rider_rows, rider_filters)
+
     return render_template(
         "riders.html",
         username=session.get("username"),
         current_tab="riders",
-        **_dashboard_data(),
+        rider_filters=rider_filters,
+        **data,
     )
 
 

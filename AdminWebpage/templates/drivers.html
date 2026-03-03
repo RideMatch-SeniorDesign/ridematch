@@ -3,22 +3,41 @@
 
 {% block content %}
 <section class="driver-shell">
+  <div class="page-intro">
+    <div>
+      <p class="page-kicker">Driver Ops</p>
+      <h2 class="page-title">Driver Management Hub</h2>
+      <p class="page-note">Manage onboarding, monitor quality, and review account performance.</p>
+    </div>
+    <span class="page-pill">
+      <i class="bi bi-shield-check"></i>
+      Verification Console
+    </span>
+  </div>
+
   <div class="driver-metrics">
     <div class="metric-card metric-blue">
-      <small>Active Drivers</small>
-      <strong>{{ total_driver_count }}</strong>
+      <small>Total Drivers</small>
+      <strong>{{ all_driver_count_raw if all_driver_count_raw is defined else total_driver_count }}</strong>
     </div>
     <div class="metric-card metric-amber">
       <small>Pending Verification</small>
-      <strong>{{ unapproved_drivers|length }}</strong>
+      <strong>{{ pending_driver_count_raw if pending_driver_count_raw is defined else (unapproved_drivers|length) }}</strong>
     </div>
     <div class="metric-card metric-indigo">
       <small>Reviews</small>
-      <strong>{{ driver_reviews|length }}</strong>
+      <strong>{{ driver_review_count_raw if driver_review_count_raw is defined else (driver_reviews|length) }}</strong>
     </div>
   </div>
 
   <article class="panel">
+    <div class="section-head">
+      <div>
+        <h2>Driver Workflow</h2>
+        <p>Use tabs to switch between all drivers, pending verification, and reviews.</p>
+      </div>
+    </div>
+
     <ul class="nav nav-pills driver-nav mb-3">
       <li class="nav-item">
         <a class="nav-link {{ 'active' if active_driver_tab == 'all' else '' }}" href="{{ url_for('drivers', tab='all') }}">All Drivers</a>
@@ -40,52 +59,113 @@
     {% endif %}
 
     {% if active_driver_tab == 'all' %}
-    <div class="table-responsive">
-      <h3>Active Drivers</h3>
-      <table class="table table-hover align-middle">
-        <thead>
-          <tr>
-            <th>Driver</th>
-            <th>Contact</th>
-            <th>Status</th>
-            <th>Rating</th>
-            <th>Rides</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in all_drivers %}
-          <tr>
-            <td>
-              <div class="d-flex align-items-center gap-2">
-                <span>{{ row.name }}</span>
-                <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('driver_detail', driver_id=row.account_id) }}">
-                  <i class="bi bi-arrow-up-right"></i>
-                  Details
-                </a>
-              </div>
-            </td>
-            <td>
-              <div>{{ row.email or 'N/A' }}</div>
-              <small class="text-muted">{{ row.phone or 'N/A' }}</small>
-            </td>
-            <td>
-              {% set status = (row.status or 'unknown')|lower %}
-              <span
-                class="status-tag {% if status == 'approved' %}status-approved{% elif status in ['pending', 'under_review'] %}status-pending{% elif status in ['denied', 'rejected'] %}status-rejected{% else %}status-info{% endif %}"
-              >
-                {{ row.status }}
-              </span>
-            </td>
-            <td>{{ row.rating }} / 5</td>
-            <td>{{ row.rides }}</td>
-          </tr>
-          {% else %}
-          <tr>
-            <td colspan="5" class="text-center text-muted">No approved or pending drivers found.</td>
-          </tr>
+    <form method="get" action="{{ url_for('drivers') }}" class="filter-toolbar row g-2 align-items-end">
+      <input type="hidden" name="tab" value="all" />
+      <div class="col-lg-3 col-md-6">
+        <label class="form-label mb-1">Search</label>
+        <input
+          type="text"
+          class="form-control"
+          name="driver_query"
+          value="{{ all_driver_filters.query }}"
+          placeholder="Name, phone, or email"
+        />
+      </div>
+      <div class="col-lg-2 col-md-6">
+        <label class="form-label mb-1">Status</label>
+        <select class="form-select" name="driver_status">
+          <option value="">All statuses</option>
+          {% for status in driver_status_options %}
+          <option value="{{ status }}" {{ 'selected' if all_driver_filters.status == status else '' }}>{{ status|replace('_', ' ')|title }}</option>
           {% endfor %}
-        </tbody>
-      </table>
+        </select>
+      </div>
+      <div class="col-lg-2 col-md-6">
+        <label class="form-label mb-1">Driving Since (On or Before)</label>
+        <input type="date" class="form-control" name="driving_since_before" value="{{ all_driver_filters.driving_since_before }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rating Min</label>
+        <input type="number" class="form-control" name="driver_rating_min" step="0.1" min="0" max="5" value="{{ all_driver_filters.rating_min }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rating Max</label>
+        <input type="number" class="form-control" name="driver_rating_max" step="0.1" min="0" max="5" value="{{ all_driver_filters.rating_max }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rides Min</label>
+        <input type="number" class="form-control" name="driver_rides_min" min="0" value="{{ all_driver_filters.rides_min }}" />
+      </div>
+      <div class="col-lg-1 col-md-3">
+        <label class="form-label mb-1">Rides Max</label>
+        <input type="number" class="form-control" name="driver_rides_max" min="0" value="{{ all_driver_filters.rides_max }}" />
+      </div>
+      <div class="col-12 filter-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('drivers', tab='all') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
+
+    <div class="data-card">
+      <div class="data-card-header">
+        <h3>All Drivers</h3>
+        <span class="status-tag status-info">{{ all_drivers|length }} records</span>
+      </div>
+      <div class="data-card-body table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Driver</th>
+              <th>Contact</th>
+              <th>Status</th>
+              <th>Driving Since</th>
+              <th>Rating</th>
+              <th>Rides</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in all_drivers %}
+            <tr>
+              <td>
+                <div class="d-flex align-items-center gap-2">
+                  <span>{{ row.name }}</span>
+                  <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('driver_detail', driver_id=row.account_id) }}">
+                    <i class="bi bi-arrow-up-right"></i>
+                    Details
+                  </a>
+                </div>
+              </td>
+              <td>
+                <div>{{ row.email or 'N/A' }}</div>
+                <small class="text-muted">{{ row.phone or 'N/A' }}</small>
+              </td>
+              <td>
+                {% set status = (row.status or 'unknown')|lower %}
+                <span
+                  class="status-tag {% if status == 'approved' %}status-approved{% elif status in ['pending', 'under_review'] %}status-pending{% elif status in ['denied', 'rejected'] %}status-rejected{% else %}status-info{% endif %}"
+                >
+                  {{ row.status }}
+                </span>
+              </td>
+              <td>
+                {% set driving_since = row.date_approved %}
+                {% if driving_since %}
+                {{ driving_since if driving_since is string else driving_since.strftime('%Y-%m-%d') }}
+                {% else %}
+                N/A
+                {% endif %}
+              </td>
+              <td>{{ row.rating }} / 5</td>
+              <td>{{ row.rides }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted">No drivers match the current filters.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     {% if selected_driver %}
@@ -158,68 +238,113 @@
     {% endif %}
 
     {% if active_driver_tab == 'verification' %}
-    <div class="table-responsive">
-      <table class="table table-striped align-middle">
-        <thead>
-          <tr>
-            <th>Applicant</th>
-            <th>Contact</th>
-            <th>Status</th>
-            <th>Rating</th>
-            <th>Rides</th>
-            <th class="text-end">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in unapproved_drivers %}
-          <tr>
-            <td>{{ row.name }}</td>
-            <td>
-              <div>{{ row.email or 'N/A' }}</div>
-              <small class="text-muted">{{ row.phone or 'N/A' }}</small>
-            </td>
-            <td>
-              {% set verify_status = (row.status or 'unknown')|lower %}
-              <span
-                class="status-tag {% if verify_status == 'approved' %}status-approved{% elif verify_status in ['pending', 'under_review'] %}status-pending{% elif verify_status in ['denied', 'rejected'] %}status-rejected{% else %}status-info{% endif %} text-capitalize"
-              >
-                {{ row.status }}
-              </span>
-            </td>
-            <td>{{ row.rating }} / 5</td>
-            <td>{{ row.rides }}</td>
-            <td class="text-end verify-actions">
-              <div class="verify-inline-actions">
-                {% set moderation_status = (row.photo_moderation_status or '')|trim|lower %}
-                {% set moderation_labels = (row.photo_moderation_labels or '')|trim %}
-                {% set flagged_by_moderation = (moderation_status.startswith('flag')) or (moderation_labels|length > 0) %}
-                {% if flagged_by_moderation %}
-                <span class="verify-flag-box">
-                  <i class="bi bi-exclamation-triangle-fill"></i>
-                  Flagged: {{ moderation_labels or 'content warning' }}
-                </span>
-                <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
-                  <input type="hidden" name="action" value="deny" />
-                  <button type="submit" class="btn btn-sm btn-danger verify-reject-btn">
-                    <i class="bi bi-x-circle"></i>
-                    Reject
-                  </button>
-                </form>
-                {% endif %}
-                <a class="btn btn-sm btn-outline-primary verify-view-btn" href="{{ url_for('driver_detail', driver_id=row.account_id) }}">
-                  <i class="bi bi-info-circle"></i>
-                  View Details
-                </a>
-              </div>
-            </td>
-          </tr>
-          {% else %}
-          <tr>
-            <td colspan="6" class="text-center text-muted">No unapproved drivers waiting for verification.</td>
-          </tr>
+    <form method="get" action="{{ url_for('drivers') }}" class="filter-toolbar row g-2 align-items-end">
+      <input type="hidden" name="tab" value="verification" />
+      <div class="col-md-3">
+        <label class="form-label mb-1">Status</label>
+        <select class="form-select" name="verification_status">
+          <option value="">All statuses</option>
+          {% for status in verification_status_options %}
+          <option value="{{ status }}" {{ 'selected' if verification_filters.status == status else '' }}>{{ status|replace('_', ' ')|title }}</option>
           {% endfor %}
-        </tbody>
-      </table>
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label mb-1">Submitted On or Before</label>
+        <input type="date" class="form-control" name="submitted_before" value="{{ verification_filters.submitted_before }}" />
+      </div>
+      <div class="col-md-5 filter-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('drivers', tab='verification') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
+
+    <div class="data-card">
+      <div class="data-card-header">
+        <h3>Driver Verification Queue</h3>
+        <span class="status-tag status-pending">{{ unapproved_drivers|length }} applicants</span>
+      </div>
+      <div class="data-card-body table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Applicant</th>
+              <th>Contact</th>
+              <th>Status</th>
+              <th>Submitted</th>
+              <th>Rating</th>
+              <th>Rides</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in unapproved_drivers %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td>
+                <div>{{ row.email or 'N/A' }}</div>
+                <small class="text-muted">{{ row.phone or 'N/A' }}</small>
+              </td>
+              <td>
+                {% set verify_status = (row.status or 'unknown')|lower %}
+                <span
+                  class="status-tag {% if verify_status == 'approved' %}status-approved{% elif verify_status in ['pending', 'under_review'] %}status-pending{% elif verify_status in ['denied', 'rejected'] %}status-rejected{% else %}status-info{% endif %} text-capitalize"
+                >
+                  {{ row.status }}
+                </span>
+              </td>
+              <td>
+                {% set submitted_on = row.date_submitted %}
+                {% if submitted_on %}
+                {{ submitted_on if submitted_on is string else submitted_on.strftime('%Y-%m-%d') }}
+                {% else %}
+                N/A
+                {% endif %}
+              </td>
+              <td>{{ row.rating }} / 5</td>
+              <td>{{ row.rides }}</td>
+              <td class="text-end verify-actions">
+                <div class="verify-inline-actions">
+                  {% set moderation_status = (row.photo_moderation_status or '')|trim|lower %}
+                  {% set moderation_labels = (row.photo_moderation_labels or '')|trim %}
+                  {% set flagged_by_moderation = (moderation_status.startswith('flag')) or (moderation_labels|length > 0) %}
+                  {% if flagged_by_moderation %}
+                  <span class="verify-flag-box">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    Flagged: {{ moderation_labels or 'content warning' }}
+                  </span>
+                  {% endif %}
+                  <a class="btn btn-sm btn-outline-primary verify-view-btn" href="{{ url_for('driver_detail', driver_id=row.account_id) }}">
+                    <i class="bi bi-info-circle"></i>
+                    Info
+                  </a>
+                  {% if verify_status not in ['denied', 'rejected', 'removed'] %}
+                  <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
+                    <input type="hidden" name="action" value="approve" />
+                    <button type="submit" class="btn btn-sm btn-success btn-approve">
+                      <i class="bi bi-check-circle"></i>
+                      Approve
+                    </button>
+                  </form>
+                  {% endif %}
+                  <form method="post" action="{{ url_for('verify_driver', driver_id=row.account_id) }}" class="d-inline">
+                    <input type="hidden" name="action" value="deny" />
+                    <button type="submit" class="btn btn-sm btn-danger btn-deny">
+                      <i class="bi bi-x-circle"></i>
+                      Deny
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted">No unapproved drivers match the current filters.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
     {% endif %}
 

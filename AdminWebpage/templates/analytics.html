@@ -3,40 +3,64 @@
 {% set header_title = "Analytics" %}
 
 {% block content %}
-<section class="grid-two">
-  <article class="panel">
-    <h2>Performance Overview</h2>
-    <div class="analytics-pie">
-      <div class="pie"></div>
-      <p class="muted">Income vs Expenses vs Operations</p>
+<section class="section-stack">
+  <div class="page-intro">
+    <div>
+      <p class="page-kicker">Insights</p>
+      <h2 class="page-title">Business Analytics</h2>
+      <p class="page-note">Review operational performance, rider sentiment, and trip activity.</p>
     </div>
-    <div class="button-stack">
-      <button class="secondary">View All Rides</button>
-      <button class="secondary">View All Reviews</button>
-      <button class="secondary">View Expense Reports</button>
-    </div>
-  </article>
+    <span class="page-pill">
+      <i class="bi bi-graph-up-arrow"></i>
+      Weekly Metrics
+    </span>
+  </div>
 
-  <article class="panel">
-    <h2>Recent Activity</h2>
-    <div class="split-lists">
-      <div>
-        <h3>Recent Reviews</h3>
-        <ul class="notes">
-          {% for review in recent_reviews %}
-          <li>{{ review }}</li>
-          {% endfor %}
-        </ul>
+  <div class="grid-two">
+    <article class="panel">
+      <div class="section-head">
+        <div>
+          <h2>Performance Overview</h2>
+          <p>High-level split of core business spend and revenue categories.</p>
+        </div>
       </div>
-      <div>
-        <h3>Recent Rides</h3>
-        <ul class="notes">
-          {% for ride in recent_rides %}
-          <li>{{ ride }} <button class="mini">view</button></li>
-          {% endfor %}
-        </ul>
+      <div class="analytics-pie">
+        <div class="pie"></div>
+        <p class="muted">Income vs Expenses vs Operations</p>
       </div>
-    </div>
-  </article>
+      <div class="button-stack">
+        <button class="secondary" type="button"><i class="bi bi-car-front"></i> View All Rides</button>
+        <button class="secondary" type="button"><i class="bi bi-chat-left-text"></i> View All Reviews</button>
+        <button class="secondary" type="button"><i class="bi bi-file-earmark-bar-graph"></i> View Expense Reports</button>
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="section-head">
+        <div>
+          <h2>Recent Activity</h2>
+          <p>Most recent reviews and ride events from the platform.</p>
+        </div>
+      </div>
+      <div class="split-lists">
+        <div>
+          <h3>Recent Reviews</h3>
+          <ul class="notes">
+            {% for review in recent_reviews %}
+            <li>{{ review }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div>
+          <h3>Recent Rides</h3>
+          <ul class="notes">
+            {% for ride in recent_rides %}
+            <li>{{ ride }} <button class="mini">view</button></li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </article>
+  </div>
 </section>
 {% endblock %}
