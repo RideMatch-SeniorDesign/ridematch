@@ -72,20 +72,7 @@
               Flagged: {{ moderation_labels or 'content warning' }}
             </span>
             {% endif %}
-            <a
-              class="btn btn-sm btn-outline-primary"
-              href="{{ url_for('driver_detail', driver_id=driver.account_id) }}"
-            >
-              <i class="bi bi-info-circle"></i>
-              Info
-            </a>
-            <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
-              <input type="hidden" name="action" value="deny" />
-              <button type="submit" class="btn btn-sm btn-danger">
-                <i class="bi bi-x-circle"></i>
-                Deny
-              </button>
-            </form>
+            
           </div>
         </div>
         {% else %}
