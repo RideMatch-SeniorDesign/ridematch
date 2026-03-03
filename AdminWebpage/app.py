@@ -340,6 +340,8 @@ def _dashboard_data() -> dict:
                     "name": row.get("name"),
                     "approved": False,
                     "status": row.get("status"),
+                    "photo_moderation_status": row.get("photo_moderation_status"),
+                    "photo_moderation_labels": row.get("photo_moderation_labels"),
                 }
                 for row in data.get("unapproved_drivers", [])
                 if row.get("account_id")

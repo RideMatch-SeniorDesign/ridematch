@@ -43,6 +43,9 @@
       <div class="queue-list">
         {% for driver in new_applications %}
         {% set driver_status = (driver.status or "pending")|lower %}
+        {% set moderation_status = (driver.photo_moderation_status or '')|trim|lower %}
+        {% set moderation_labels = (driver.photo_moderation_labels or '')|trim %}
+        {% set flagged_by_moderation = (moderation_status.startswith('flag')) or (moderation_labels|length > 0) %}
         <div class="queue-item">
           <div class="queue-avatar">
             <i class="bi bi-person-circle"></i>
@@ -59,6 +62,12 @@
             </p>
           </div>
           <div class="queue-actions">
+            {% if flagged_by_moderation %}
+            <span class="verify-flag-box">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              Flagged: {{ moderation_labels or 'content warning' }}
+            </span>
+            {% endif %}
             <a
               class="btn btn-sm btn-outline-primary"
               href="{{ url_for('driver_detail', driver_id=driver.account_id) }}"
@@ -66,15 +75,6 @@
               <i class="bi bi-info-circle"></i>
               Info
             </a>
-            {% if driver_status not in ['denied', 'rejected', 'removed'] %}
-            <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
-              <input type="hidden" name="action" value="approve" />
-              <button type="submit" class="btn btn-sm btn-success">
-                <i class="bi bi-check-circle"></i>
-                Approve
-              </button>
-            </form>
-            {% endif %}
             <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}">
               <input type="hidden" name="action" value="deny" />
               <button type="submit" class="btn btn-sm btn-danger">
