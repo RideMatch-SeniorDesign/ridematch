@@ -170,21 +170,18 @@ def _validate_and_store_driver_profile_photo(*, required: bool = True):
 def _moderate_profile_photo_with_aws(data: bytes) -> dict[str, object]:
     region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
     client = boto3.client("rekognition", region_name=region)
-    response = client.detect_moderation_labels(
+    moderation_response = client.detect_moderation_labels(
         Image={"Bytes": data},
         MinConfidence=float(os.environ.get("AWS_REKOGNITION_MIN_SCAN_CONFIDENCE", "50")),
     )
 
-    labels = response.get("ModerationLabels", []) or []
-    if not labels:
-        return {"status": "approved", "score": 0.0, "labels": None}
-
+    labels = moderation_response.get("ModerationLabels", []) or []
     top_score = 0.0
-    label_names: list[str] = []
+    moderation_label_names: list[str] = []
     for label in labels:
         name = str(label.get("Name") or "").strip()
         if name:
-            label_names.append(name)
+            moderation_label_names.append(name)
         try:
             conf = float(label.get("Confidence") or 0.0)
         except (TypeError, ValueError):
@@ -192,13 +189,53 @@ def _moderate_profile_photo_with_aws(data: bytes) -> dict[str, object]:
         if conf > top_score:
             top_score = conf
 
+    detected_label_response = client.detect_labels(
+        Image={"Bytes": data},
+        MaxLabels=int(os.environ.get("AWS_REKOGNITION_MAX_LABELS", "20")),
+        MinConfidence=float(os.environ.get("AWS_REKOGNITION_MIN_HUMAN_CONFIDENCE", "80")),
+    )
+    detected_labels = detected_label_response.get("Labels", []) or []
+    detected_label_names = {str(label.get("Name") or "").strip().lower() for label in detected_labels}
+    has_person_label = any(name in {"person", "human", "people"} for name in detected_label_names)
+
+    face_response = client.detect_faces(
+        Image={"Bytes": data},
+        Attributes=["DEFAULT"],
+    )
+    face_count = len(face_response.get("FaceDetails", []) or [])
+    require_single_face = os.environ.get("AWS_REKOGNITION_REQUIRE_SINGLE_FACE", "false").strip().lower() in {"1", "true", "yes"}
+    non_human_flag = (not has_person_label) or (face_count < 1) or (require_single_face and face_count != 1)
+
     min_flag_conf = float(os.environ.get("AWS_REKOGNITION_MIN_FLAG_CONFIDENCE", "85"))
-    status = "flagged" if top_score >= min_flag_conf else "pending"
-    return {
-        "status": status,
-        "score": round(top_score / 100.0, 4),
-        "labels": ", ".join(sorted(set(label_names))) or None,
-    }
+    if top_score >= min_flag_conf:
+        return {
+            "status": "flagged",
+            "score": round(top_score / 100.0, 4),
+            "labels": ", ".join(sorted(set(moderation_label_names))) or "content_warning",
+        }
+
+    if non_human_flag:
+        non_human_labels = []
+        if not has_person_label:
+            non_human_labels.append("no_person_detected")
+        if face_count < 1:
+            non_human_labels.append("no_face_detected")
+        if require_single_face and face_count != 1:
+            non_human_labels.append(f"face_count_{face_count}")
+        return {
+            "status": "flagged",
+            "score": 1.0,
+            "labels": ", ".join(non_human_labels) or "non_human_or_invalid_face",
+        }
+
+    if labels:
+        return {
+            "status": "pending",
+            "score": round(top_score / 100.0, 4),
+            "labels": ", ".join(sorted(set(moderation_label_names))) or None,
+        }
+
+    return {"status": "approved", "score": 0.0, "labels": None}
 
 
 @app.route("/")
