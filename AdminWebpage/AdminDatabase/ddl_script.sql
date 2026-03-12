@@ -1,8 +1,7 @@
+-- DDL --
 DROP DATABASE IF EXISTS `ride_match_db`;
 CREATE DATABASE `ride_match_db`;
 USE `ride_match_db`;
-
--- DDL --
 
 -- ACCOUNT TABLE
 CREATE TABLE `account` (
@@ -43,6 +42,8 @@ CREATE TABLE `rider` (
 	`AccountID` int NOT NULL,
     `Preferences` varchar(100),
     `Rating` int DEFAULT 5,
+    `RidingSince` date DEFAULT (curdate()),
+    `Status` varchar(50),
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Rider_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );
@@ -62,8 +63,51 @@ CREATE TABLE `driver` (
 	`AccountID` int NOT NULL,
     `Preferences` varchar(100),
     `Rating` int DEFAULT 5,
+    `Status` varchar(50) DEFAULT 'pending',
+    `DateSubmitted` date DEFAULT (curdate()),
+    `DateApproved` date DEFAULT NULL,
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Driver_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
+);
+
+-- DRIVER_INFORMATION TABLE
+CREATE TABLE `driver_information` (
+    `DriverID` int NOT NULL,
+    `FirstName` varchar(50) DEFAULT NULL,
+    `LastName` varchar(50) DEFAULT NULL,
+    `Email` varchar(100) DEFAULT NULL,
+    `PhoneNum` varchar(20) DEFAULT NULL,
+    `DateOfBirth` date DEFAULT NULL,
+    `LicenseState` varchar(2) DEFAULT NULL,
+    `LicenseNumber` varchar(50) DEFAULT NULL,
+    `LicenseExpires` date DEFAULT NULL,
+    `InsuranceProvider` varchar(100) DEFAULT NULL,
+    `InsurancePolicy` varchar(50) DEFAULT NULL,
+    `InformationNotes` varchar(255) DEFAULT NULL,
+    `UpdatedAt` timestamp(6) DEFAULT current_timestamp(6) ON UPDATE current_timestamp(6),
+    PRIMARY KEY (`DriverID`),
+    UNIQUE KEY `DriverInfoEmail_UQ` (`Email`),
+    UNIQUE KEY `LicenseNumber_UQ` (`LicenseNumber`),
+    CONSTRAINT `FK_DriverID_driver_information` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)
+);
+
+-- DRIVER_PROFILE_PHOTO TABLE
+CREATE TABLE `driver_profile_photo` (
+    `PhotoID` int AUTO_INCREMENT,
+    `DriverID` int NOT NULL,
+    `StoragePath` varchar(255) NOT NULL,
+    `MimeType` varchar(50) DEFAULT NULL,
+    `FileSizeBytes` int DEFAULT NULL,
+    `ModerationStatus` varchar(50) DEFAULT 'pending',
+    `ModerationScore` decimal(5,4) DEFAULT NULL,
+    `ModerationLabels` varchar(255) DEFAULT NULL,
+    `ReviewedBy` int DEFAULT NULL,
+    `ReviewedAt` timestamp(6) NULL DEFAULT NULL,
+    `CreatedAt` timestamp(6) DEFAULT current_timestamp(6),
+    PRIMARY KEY (`PhotoID`),
+    UNIQUE KEY `DriverProfilePhoto_DriverID_UQ` (`DriverID`),
+    CONSTRAINT `FK_DriverID_driver_profile_photo` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`),
+    CONSTRAINT `FK_ReviewedBy_driver_profile_photo` FOREIGN KEY (`ReviewedBy`) REFERENCES `admin` (`AccountID`)
 );
 
 -- CAR TABLE
@@ -95,12 +139,45 @@ CREATE TABLE `trip` (
     `Status` enum('requested', 'accepted', 'in_progress', 'canceled', 'completed') NOT NULL,
     `StartLoc` varchar(100) NOT NULL,
     `EndLoc` varchar(100) NOT NULL,
-    `FinalCost` decimal(2) DEFAULT 0.00,
+    `FinalCost` decimal(10,2) DEFAULT 0.00,
+    `PlatformFee` decimal(10,2) DEFAULT 0.00,
+    `TaxAmount` decimal(10,2) DEFAULT 0.00,
+    `TipAmount` decimal(10,2) DEFAULT 0.00,
     `DriverRate` int,
     `RiderRate` int,
     PRIMARY KEY (`TripID`),
     CONSTRAINT `FK_RiderID_trip` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
     CONSTRAINT `FK_DriverID_trip` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)
+);
+
+-- DRIVER_REVIEW TABLE
+CREATE TABLE `driver_review` (
+    `ReviewID` int AUTO_INCREMENT,
+    `DriverID` int NOT NULL,
+    `RiderID` int NOT NULL,
+    `TripID` int,
+    `Rating` int NOT NULL,
+    `Comment` varchar(255),
+    `ReviewDate` timestamp(6) DEFAULT current_timestamp(6),
+    PRIMARY KEY (`ReviewID`),
+    CONSTRAINT `FK_DriverID_driver_review` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`),
+    CONSTRAINT `FK_RiderID_driver_review` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
+    CONSTRAINT `FK_TripID_driver_review` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
+);
+
+-- RIDER_REVIEW TABLE
+CREATE TABLE `rider_review` (
+    `ReviewID` int AUTO_INCREMENT,
+    `RiderID` int NOT NULL,
+    `DriverID` int NOT NULL,
+    `TripID` int,
+    `Rating` int NOT NULL,
+    `Comment` varchar(255),
+    `ReviewDate` timestamp(6) DEFAULT current_timestamp(6),
+    PRIMARY KEY (`ReviewID`),
+    CONSTRAINT `FK_RiderID_rider_review` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
+    CONSTRAINT `FK_DriverID_rider_review` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`),
+    CONSTRAINT `FK_TripID_rider_review` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
 );
 
 -- Triggers --
@@ -112,7 +189,10 @@ CREATE VIEW `admin_login` AS
 SELECT
 	A.UserName,
     A.Email,
-    A.Password
+    A.Password,
+    A.PhoneNum,
+    A.FirstName,
+    A.LastName
 FROM `account` A
 JOIN `admin` Ad ON Ad.AccountID = A.AccountID;
 
@@ -121,7 +201,11 @@ CREATE VIEW `rider_login` AS
 SELECT
 	A.UserName,
     A.Email,
-    A.Password
+    A.Password,
+    A.PhoneNum,
+    A.FirstName,
+    A.LastName,
+    R.Status
 FROM `account` A
 JOIN `rider` R ON R.AccountID = A.AccountID;
 
@@ -130,6 +214,10 @@ CREATE VIEW `driver_login` AS
 SELECT
 	A.UserName,
     A.Email,
-    A.Password
+    A.Password,
+    A.PhoneNum,
+    A.FirstName,
+    A.LastName,
+    D.Status
 FROM `account` A
 JOIN `driver` D ON D.AccountID = A.AccountID;

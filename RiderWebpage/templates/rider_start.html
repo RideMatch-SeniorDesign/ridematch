@@ -1,0 +1,41 @@
+{% extends "portal_base.html" %}
+{% block title %}Start Ride{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Start Ride</h2>
+  <p>Starter page for beginning a ride request.</p>
+  {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+  <form method="post" action="{{ url_for('start_ride') }}">
+    <div class="grid">
+      <div>
+        <label for="start_loc">Pickup Location</label>
+        <input id="start_loc" name="start_loc" value="{{ form_data.start_loc }}" placeholder="Iowa City" />
+      </div>
+      <div>
+        <label for="end_loc">Dropoff Location</label>
+        <input id="end_loc" name="end_loc" value="{{ form_data.end_loc }}" placeholder="Coralville" />
+      </div>
+      <div>
+        <label for="ride_type">Ride Type</label>
+        <select id="ride_type" name="ride_type">
+          <option value="standard" {% if form_data.ride_type == "standard" %}selected{% endif %}>Standard</option>
+          <option value="shared" {% if form_data.ride_type == "shared" %}selected{% endif %}>Shared</option>
+          <option value="priority" {% if form_data.ride_type == "priority" %}selected{% endif %}>Priority</option>
+        </select>
+      </div>
+      <div>
+        <label for="time_pref">Time Preference</label>
+        <select id="time_pref" name="time_pref">
+          <option value="asap" {% if form_data.time_pref == "asap" %}selected{% endif %}>ASAP</option>
+          <option value="schedule" {% if form_data.time_pref == "schedule" %}selected{% endif %}>Schedule</option>
+        </select>
+      </div>
+      <div class="full-span">
+        <label for="notes">Ride Notes</label>
+        <textarea id="notes" name="notes" rows="3" placeholder="Pickup details, accessibility notes, etc.">{{ form_data.notes }}</textarea>
+      </div>
+    </div>
+    <button type="submit">Start Ride (Test)</button>
+  </form>
+</section>
+{% endblock %}

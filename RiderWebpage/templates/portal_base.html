@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Rider Portal{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='portal.css') }}" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card nav-card">
+        <div class="brand">RideMatch Rider</div>
+        <div class="portal-top">
+          <div>
+            <h1 class="portal-title">{{ user.first_name }} {{ user.last_name }}</h1>
+            <p class="portal-subtitle">@{{ user.username }}</p>
+          </div>
+          <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+            <button type="submit" class="ghost-btn">Log Out</button>
+          </form>
+        </div>
+        <nav class="portal-nav">
+          <a class="nav-link {% if current_page == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a>
+          <a class="nav-link {% if current_page == 'start' %}active{% endif %}" href="{{ url_for('start_ride') }}">Start Ride</a>
+          <a class="nav-link {% if current_page == 'reviews' %}active{% endif %}" href="{{ url_for('reviews') }}">Reviews</a>
+          <a class="nav-link {% if current_page == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
+        </nav>
+      </section>
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+  </html>

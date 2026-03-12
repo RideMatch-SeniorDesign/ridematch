@@ -1,0 +1,34 @@
+{% extends "portal_base.html" %}
+{% block title %}Driver Dashboard{% endblock %}
+{% block content %}
+<section class="card wide">
+  <h2>Dashboard</h2>
+  <p>Driver overview and recent trips.</p>
+  {% if page_error %}<div class="error">{{ page_error }}</div>{% endif %}
+  <div class="grid stats">
+    <div class="stat"><small>Total Trips</small><strong>{{ summary.trip_count or 0 }}</strong></div>
+    <div class="stat"><small>Completed</small><strong>{{ summary.completed_count or 0 }}</strong></div>
+    <div class="stat"><small>Active</small><strong>{{ summary.active_count or 0 }}</strong></div>
+    <div class="stat"><small>Given Rating</small><strong>{{ summary.avg_given_rating if summary.avg_given_rating is not none else "N/A" }}</strong></div>
+    <div class="stat"><small>Received Rating</small><strong>{{ summary.avg_received_rating if summary.avg_received_rating is not none else "N/A" }}</strong></div>
+    <div class="stat"><small>Preferences</small><strong>{{ user.preferences or "None" }}</strong></div>
+  </div>
+</section>
+
+<section class="card wide">
+  <h2>Recent Trips</h2>
+  {% if trips %}
+  <div class="list-table">
+    {% for trip in trips %}
+    <div class="rowline">
+      <div><strong>#{{ trip.trip_id }}</strong> {{ trip.status }}</div>
+      <div>{{ trip.start_loc or "N/A" }} -> {{ trip.end_loc or "N/A" }}</div>
+      <div>Rider: {{ trip.rider_name }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted-line">No trips yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
