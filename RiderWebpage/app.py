@@ -6,7 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = Path(__file__).resolve().parent
@@ -14,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 if str(APP_PATH) not in sys.path:
     sys.path.insert(0, str(APP_PATH))
+
+from realtime import publish_trip_event, realtime_client_script_url, realtime_public_url
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -140,14 +142,106 @@ def start_ride():
     if not _rider_logged_in():
         return redirect(url_for("home"))
     notice = None
-    form_data = {"start_loc": "", "end_loc": "", "ride_type": "standard", "time_pref": "asap", "notes": ""}
+    error = None
+    form_data = {
+        "start_loc": "",
+        "end_loc": "",
+        "ride_type": "standard",
+        "time_pref": "asap",
+        "notes": "",
+        "start_lat": "",
+        "start_lng": "",
+        "end_lat": "",
+        "end_lng": "",
+    }
+    active_trip = None
+    user = _rider_session_user()
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
         session["rider_last_start"] = form_data
-        notice = "Ride request started (test mode). This is a starter workflow page."
+        if not form_data["start_loc"] or not form_data["end_loc"]:
+            error = "Pickup and dropoff locations are required."
+        else:
+            try:
+                from Database.admin_queries import create_matched_trip
+
+                active_trip = create_matched_trip(
+                    rider_id=int(user.get("account_id")),
+                    start_loc=form_data["start_loc"],
+                    end_loc=form_data["end_loc"],
+                    ride_type=form_data["ride_type"],
+                    notes=form_data["notes"],
+                )
+                publish_trip_event("trip_created", active_trip)
+                notice = f"Ride request sent to {active_trip.get('driver_name') or 'a driver'}."
+            except ValueError as exc:
+                error = str(exc)
+            except Exception as exc:
+                app.logger.warning("Rider ride request failed: %s", exc)
+                error = "Could not request a ride right now."
     else:
         form_data.update(session.get("rider_last_start") or {})
-    return render_template("rider_start.html", **_rider_nav_context("start", notice=notice, form_data=form_data))
+    if active_trip is None:
+        try:
+            from Database.admin_queries import fetch_active_rider_trip
+
+            active_trip = fetch_active_rider_trip(int(user.get("account_id")))
+        except Exception as exc:
+            app.logger.warning("Rider active trip lookup failed: %s", exc)
+    last_start_data = session.get("rider_last_start") or {}
+    return render_template(
+        "rider_start.html",
+        **_rider_nav_context(
+            "start",
+            notice=notice,
+            error=error,
+            form_data=form_data,
+            active_trip=active_trip,
+            last_start_data=last_start_data,
+            realtime_server_url=realtime_public_url(),
+            realtime_client_script_url=realtime_client_script_url(),
+            geoapify_api_key=os.environ.get("GEOAPIFY_API_KEY", "").strip(),
+        ),
+    )
+
+
+@app.route("/start/cancel", methods=["POST"])
+def cancel_active_ride():
+    if not _rider_logged_in():
+        return redirect(url_for("home"))
+    trip_id_raw = str(request.form.get("trip_id") or "").strip()
+    if not trip_id_raw.isdigit():
+        return redirect(url_for("start_ride"))
+    try:
+        from Database.admin_queries import cancel_trip_for_rider, fetch_trip_by_id
+
+        trip_before_cancel = fetch_trip_by_id(int(trip_id_raw))
+
+        canceled = cancel_trip_for_rider(
+            trip_id=int(trip_id_raw),
+            rider_id=int(_rider_session_user().get("account_id")),
+        )
+        if canceled and trip_before_cancel:
+            trip_before_cancel["status"] = "canceled"
+            publish_trip_event("trip_canceled", trip_before_cancel)
+        if not canceled:
+            app.logger.warning("Rider cancel request had no effect for trip_id=%s", trip_id_raw)
+    except Exception as exc:
+        app.logger.warning("Rider cancel request failed: %s", exc)
+    return redirect(url_for("start_ride"))
+
+
+@app.route("/api/rider/active-trip/<int:rider_id>")
+def api_rider_active_trip(rider_id: int):
+    try:
+        from Database.admin_queries import fetch_active_rider_trip
+
+        trip = fetch_active_rider_trip(rider_id)
+    except Exception as exc:
+        app.logger.warning("Rider active trip API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load active trip."}), 500
+
+    return jsonify({"success": True, "trip": trip}), 200
 
 
 @app.route("/settings", methods=["GET", "POST"])
