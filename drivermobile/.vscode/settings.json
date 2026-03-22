@@ -6,5 +6,6 @@
       "default": true
     }
   ],
-  "java.import.gradle.java.home": "C:\\Program Files\\Android\\Android Studio\\jbr"
+  "java.import.gradle.java.home": "C:\\Program Files\\Android\\Android Studio\\jbr",
+  "dart.flutterSdkPath": "C:\\Users\\ammfc\\flutter"
 }

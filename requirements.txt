@@ -1,0 +1,6 @@
+Flask
+Flask-SocketIO
+boto3
+mysql-connector-python
+python-dotenv
+python-socketio[client]
