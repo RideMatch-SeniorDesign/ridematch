@@ -7,7 +7,11 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
+<<<<<<< HEAD
 	<string>Ridermobile</string>
+=======
+	<string>Drivermobile</string>
+>>>>>>> d02ff88393509a9726ca22f89b2e82446b991c6f
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +19,11 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
+<<<<<<< HEAD
 	<string>ridermobile</string>
+=======
+	<string>drivermobile</string>
+>>>>>>> d02ff88393509a9726ca22f89b2e82446b991c6f
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

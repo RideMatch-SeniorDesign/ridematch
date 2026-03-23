@@ -3,10 +3,15 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+<<<<<<< HEAD
   file_selector_windows
   flutter_secure_storage_windows
   geolocator_windows
   url_launcher_windows
+=======
+  flutter_secure_storage_windows
+  geolocator_windows
+>>>>>>> d02ff88393509a9726ca22f89b2e82446b991c6f
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

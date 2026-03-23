@@ -3,4 +3,27 @@ drivermobile/pubspec.lock
 =======
 DriverWebpage/oracleJdk-26/
 DriverWebpage/oracleJdk-26.local-backup/
+<<<<<<< HEAD
 >>>>>>> bd198a6cf4ce326af226cea12b3c8f290f56c637
+=======
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.gradle/
+**/.kotlin/
+**/ios/Flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+**/windows/flutter/ephemeral/
+**/linux/flutter/ephemeral/
+**/.idea/
+**/.vscode/
+*.iml
+*.pyc
+__pycache__/
+>>>>>>> d02ff88393509a9726ca22f89b2e82446b991c6f

@@ -1,10 +1,18 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
+<<<<<<< HEAD
 project(ridermobile LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "ridermobile")
+=======
+project(drivermobile LANGUAGES CXX)
+
+# The name of the executable created for the application. Change this to change
+# the on-disk name of your application.
+set(BINARY_NAME "drivermobile")
+>>>>>>> d02ff88393509a9726ca22f89b2e82446b991c6f
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.

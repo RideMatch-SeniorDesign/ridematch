@@ -5,6 +5,7 @@
 import FlutterMacOS
 import Foundation
 
+<<<<<<< HEAD
 import file_selector_macos
 import flutter_secure_storage_macos
 import geolocator_apple
@@ -15,4 +16,14 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   FlutterSecureStoragePlugin.register(with: registry.registrar(forPlugin: "FlutterSecureStoragePlugin"))
   GeolocatorPlugin.register(with: registry.registrar(forPlugin: "GeolocatorPlugin"))
   UrlLauncherPlugin.register(with: registry.registrar(forPlugin: "UrlLauncherPlugin"))
+=======
+import flutter_secure_storage_darwin
+import geolocator_apple
+import package_info_plus
+
+func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
+  FlutterSecureStorageDarwinPlugin.register(with: registry.registrar(forPlugin: "FlutterSecureStorageDarwinPlugin"))
+  GeolocatorPlugin.register(with: registry.registrar(forPlugin: "GeolocatorPlugin"))
+  FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
+>>>>>>> d02ff88393509a9726ca22f89b2e82446b991c6f
 }
