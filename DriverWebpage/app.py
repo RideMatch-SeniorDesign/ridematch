@@ -5,12 +5,15 @@ import sys
 import time
 import uuid
 import mimetypes
+from decimal import Decimal
+from datetime import date, datetime
 from datetime import timedelta
 from pathlib import Path
 
 import boto3
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask_socketio import SocketIO, emit, join_room
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = Path(__file__).resolve().parent
@@ -22,6 +25,7 @@ if str(APP_PATH) not in sys.path:
 load_dotenv(PROJECT_ROOT / ".env")
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 SESSION_DAYS = int(os.environ.get("DRIVER_SESSION_DAYS", os.environ.get("PORTAL_SESSION_DAYS", "30")))
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
@@ -50,6 +54,85 @@ US_STATE_OPTIONS = [
     "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
     "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
 ]
+
+
+def _emit_trip_update(event_name: str, trip: dict | None) -> None:
+    if not trip:
+        return
+
+    def _json_safe(value):
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {key: _json_safe(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [_json_safe(item) for item in value]
+        return value
+
+    safe_trip = _json_safe(trip)
+    payload = {"event": event_name, "trip": safe_trip}
+    rider_id = safe_trip.get("rider_id")
+    driver_id = safe_trip.get("driver_id")
+    if rider_id:
+        socketio.emit("trip_updated", payload, room=f"rider:{rider_id}")
+    if driver_id:
+        socketio.emit("trip_updated", payload, room=f"driver:{driver_id}")
+
+
+def _emit_driver_location_update(trip: dict | None) -> None:
+    if not trip:
+        return
+
+    def _json_safe(value):
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {key: _json_safe(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [_json_safe(item) for item in value]
+        return value
+
+    payload = _json_safe({
+        "trip": {
+            "trip_id": trip.get("trip_id"),
+            "rider_id": trip.get("rider_id"),
+            "driver_id": trip.get("driver_id"),
+            "driver_latitude": trip.get("driver_latitude"),
+            "driver_longitude": trip.get("driver_longitude"),
+            "driver_location_updated_at": trip.get("driver_location_updated_at"),
+        }
+    })
+    rider_id = trip.get("rider_id")
+    driver_id = trip.get("driver_id")
+    if rider_id:
+        socketio.emit("driver_location_updated", payload, room=f"rider:{rider_id}")
+    if driver_id:
+        socketio.emit("driver_location_updated", payload, room=f"driver:{driver_id}")
+
+
+@socketio.on("subscribe")
+def socket_subscribe(data):
+    payload = data if isinstance(data, dict) else {}
+    role = str(payload.get("role") or "").strip().lower()
+    account_id = str(payload.get("account_id") or "").strip()
+    if role not in {"rider", "driver"} or not account_id.isdigit():
+        emit("subscription_error", {"error": "Invalid subscription payload."})
+        return
+    join_room(f"{role}:{account_id}")
+    emit("subscribed", {"room": f"{role}:{account_id}"})
+
+
+@socketio.on("publish_trip_event")
+def socket_publish_trip_event(data):
+    payload = data if isinstance(data, dict) else {}
+    event_name = str(payload.get("event") or "trip_updated").strip() or "trip_updated"
+    trip = payload.get("trip")
+    if isinstance(trip, dict):
+        _emit_trip_update(event_name, trip)
 
 
 def _v(name: str) -> str:
@@ -397,6 +480,157 @@ def api_driver_profile(driver_id: int):
     return jsonify({"success": True, "user": user}), 200
 
 
+@app.route("/api/driver/dispatch/<int:driver_id>", methods=["GET"])
+def api_driver_dispatch(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_active_driver_trip, fetch_driver_availability
+
+        trip = fetch_active_driver_trip(driver_id)
+        is_available = fetch_driver_availability(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver dispatch API load failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load driver dispatch."}), 500
+
+    return jsonify({"success": True, "trip": trip, "is_available": is_available}), 200
+
+
+@app.route("/api/driver/availability", methods=["POST"])
+def api_driver_availability():
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+    is_available = bool(payload.get("is_available"))
+
+    try:
+        from Database.admin_queries import fetch_driver_availability, fetch_portal_profile, set_driver_availability
+
+        driver_profile = fetch_portal_profile("driver", driver_id)
+        if not driver_profile:
+            return jsonify({"success": False, "error": "Driver was not found."}), 404
+        if (driver_profile.get("status") or "").strip().lower() != "approved":
+            return jsonify({"success": False, "error": "Only approved drivers can go online."}), 409
+
+        set_driver_availability(driver_id, is_available)
+        current = fetch_driver_availability(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver availability update failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not update driver availability."}), 500
+
+    return jsonify({"success": True, "is_available": current}), 200
+
+
+@app.route("/api/driver/location", methods=["POST"])
+def api_driver_location():
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+
+    try:
+        latitude = float(payload.get("latitude"))
+        longitude = float(payload.get("longitude"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "latitude and longitude are required."}), 400
+
+    try:
+        from Database.admin_queries import fetch_active_driver_trip, update_driver_live_location
+
+        update_driver_live_location(driver_id, latitude, longitude)
+        trip = fetch_active_driver_trip(driver_id)
+        if trip:
+          _emit_driver_location_update(trip)
+    except Exception as exc:
+        app.logger.warning("Driver location update failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not update driver location."}), 500
+
+    return jsonify({"success": True}), 200
+
+
+@app.route("/api/config/maps", methods=["GET"])
+def api_maps_config():
+    return jsonify(
+        {
+            "success": True,
+            "geoapify_api_key": os.environ.get("GEOAPIFY_API_KEY", "").strip(),
+        }
+    ), 200
+
+
+@app.route("/api/driver/trip/<int:trip_id>/accept", methods=["POST"])
+def api_driver_accept_trip(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+
+    try:
+        from Database.admin_queries import update_trip_status_for_driver
+
+        trip = update_trip_status_for_driver(trip_id=trip_id, driver_id=driver_id, next_status="accepted")
+    except Exception as exc:
+        app.logger.warning("Driver accept trip failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not accept trip right now."}), 500
+
+    if not trip:
+        return jsonify({"success": False, "error": "Trip is no longer available to accept."}), 409
+    _emit_trip_update("trip_accepted", trip)
+    return jsonify({"success": True, "trip": trip}), 200
+
+
+@app.route("/api/driver/trip/<int:trip_id>/start", methods=["POST"])
+def api_driver_start_trip(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+
+    try:
+        from Database.admin_queries import update_trip_status_for_driver
+
+        trip = update_trip_status_for_driver(trip_id=trip_id, driver_id=driver_id, next_status="in_progress")
+    except Exception as exc:
+        app.logger.warning("Driver start trip failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not start trip right now."}), 500
+
+    if not trip:
+        return jsonify({"success": False, "error": "Trip cannot be started from its current state."}), 409
+    _emit_trip_update("trip_started", trip)
+    return jsonify({"success": True, "trip": trip}), 200
+
+
+@app.route("/api/driver/trip/<int:trip_id>/complete", methods=["POST"])
+def api_driver_complete_trip(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+
+    final_cost_raw = payload.get("final_cost")
+    try:
+        final_cost = float(final_cost_raw) if final_cost_raw is not None else 0.00
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "final_cost must be numeric."}), 400
+
+    try:
+        from Database.admin_queries import update_trip_status_for_driver
+
+        trip = update_trip_status_for_driver(
+            trip_id=trip_id,
+            driver_id=driver_id,
+            next_status="completed",
+            final_cost=final_cost,
+        )
+    except Exception as exc:
+        app.logger.warning("Driver complete trip failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not complete trip right now."}), 500
+
+    if not trip:
+        return jsonify({"success": False, "error": "Trip cannot be completed from its current state."}), 409
+    _emit_trip_update("trip_completed", trip)
+    return jsonify({"success": True, "trip": trip}), 200
+
+
 @app.route("/dashboard")
 def dashboard():
     if not session.get("driver_logged_in"):
@@ -631,4 +865,4 @@ def signup():
 
 if __name__ == "__main__":
     port = int(os.environ.get("DRIVER_PORT", "8002"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
