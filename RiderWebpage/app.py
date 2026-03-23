@@ -354,6 +354,297 @@ def signup():
         preference_options=PREFERENCE_OPTIONS,
     )
 
+# API endpoints compatible with mobile app
+# NOTE: These return json responses and do not render templates in backend. Currently for html webpages we have no middle end for managing API calls so if we get around to adding that we should update to use these API endpoints
+@app.route("/rider/login", methods=["POST"])
+def api_rider_login():
+    data = _json_body()
+
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", "")).strip()
+
+    if not username or not password:
+        return _json_error("Username and password are required.")
+
+    try:
+        from Database.admin_queries import authenticate_portal_user
+
+        user = authenticate_portal_user("rider", username, password)
+    except Exception as exc:
+        app.logger.warning("Rider API login failed: %s", exc)
+        return _json_error("Login is unavailable right now.", 500)
+
+    if not user:
+        return _json_error("Invalid rider login.", 401)
+
+    return jsonify({"success": True, "user": user}), 200
+
+
+@app.route("/rider/signup", methods=["POST"])
+def api_rider_signup():
+    data = _json_body()
+
+    first_name = str(data.get("first_name", "")).strip()
+    last_name = str(data.get("last_name", "")).strip()
+    username = str(data.get("username", "")).strip()
+    email = str(data.get("email", "")).strip()
+    phone = str(data.get("phone", "")).strip()
+    password = str(data.get("password", "")).strip()
+    confirm_password = str(data.get("confirm_password", "")).strip()
+    preferences = _normalize_preferences(data.get("preferences"))
+
+    required = [first_name, last_name, username, email, phone]
+    if any(not value for value in required):
+        return _json_error("Please fill in all required fields.")
+    if len(password) < 6:
+        return _json_error("Password must be at least 6 characters.")
+    if password != confirm_password:
+        return _json_error("Passwords do not match.")
+
+    try:
+        from Database.admin_queries import create_rider_signup, fetch_portal_profile
+
+        account_id = create_rider_signup(
+            username=username,
+            email=email,
+            phone=phone,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            preferences=", ".join(preferences),
+        )
+        user = fetch_portal_profile("rider", int(account_id))
+    except Exception as exc:
+        app.logger.warning("Rider API signup failed: %s", exc)
+        return _json_error(
+            "Could not create rider account. Username/email may already exist or the database is unavailable.",
+            500,
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Rider account created.",
+            "account_id": int(account_id),
+            "user": user,
+        }
+    ), 201
+
+
+@app.route("/rider/dashboard/<int:rider_id>", methods=["GET"])
+def api_rider_dashboard(rider_id: int):
+    try:
+        from Database.admin_queries import (
+            fetch_portal_dashboard_summary,
+            fetch_portal_profile,
+            fetch_portal_trip_history,
+        )
+
+        user = fetch_portal_profile("rider", rider_id)
+        if not user:
+            return _json_error("Rider not found.", 404)
+
+        summary = fetch_portal_dashboard_summary("rider", rider_id)
+        trips = fetch_portal_trip_history("rider", rider_id)[:5]
+    except Exception as exc:
+        app.logger.warning("Rider dashboard API failed: %s", exc)
+        return _json_error("Could not load dashboard.", 500)
+
+    return jsonify(
+        {
+            "success": True,
+            "user": user,
+            "summary": summary,
+            "trips": trips,
+        }
+    ), 200
+
+
+@app.route("/rider/active-trip/<int:rider_id>", methods=["GET"])
+def api_rider_active_trip_mobile(rider_id: int):
+    try:
+        from Database.admin_queries import fetch_active_rider_trip
+
+        trip = fetch_active_rider_trip(rider_id)
+    except Exception as exc:
+        app.logger.warning("Rider active trip API failed: %s", exc)
+        return _json_error("Could not load active trip.", 500)
+
+    return jsonify({"success": True, "trip": trip}), 200
+
+
+@app.route("/rider/request-ride", methods=["POST"])
+def api_rider_request_ride():
+    data = _json_body()
+
+    rider_id_raw = data.get("rider_id")
+    start_loc = str(data.get("start_loc", "")).strip()
+    end_loc = str(data.get("end_loc", "")).strip()
+    ride_type = str(data.get("ride_type", "standard")).strip() or "standard"
+    time_pref = str(data.get("time_pref", "asap")).strip() or "asap"
+    notes = str(data.get("notes", "")).strip()
+
+    try:
+        rider_id = int(rider_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("A valid rider_id is required.")
+
+    if not start_loc or not end_loc:
+        return _json_error("Pickup and dropoff locations are required.")
+
+    try:
+        from Database.admin_queries import create_matched_trip
+
+        trip = create_matched_trip(
+            rider_id=rider_id,
+            start_loc=start_loc,
+            end_loc=end_loc,
+            ride_type=ride_type,
+            time_pref=time_pref,
+            notes=notes,
+        )
+        publish_trip_event("trip_created", trip)
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+    except Exception as exc:
+        app.logger.warning("Rider request ride API failed: %s", exc)
+        return _json_error("Could not request a ride right now.", 500)
+
+    return jsonify(
+        {
+            "success": True,
+            "message": f"Ride request sent to {trip.get('driver_name') or 'a driver'}.",
+            "trip": trip,
+        }
+    ), 200
+
+
+@app.route("/rider/cancel-ride", methods=["POST"])
+def api_rider_cancel_ride():
+    data = _json_body()
+
+    trip_id_raw = data.get("trip_id")
+    if trip_id_raw is None:
+        return _json_error("trip_id is required.")
+
+    try:
+        trip_id = int(trip_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("trip_id must be a valid integer.")
+
+    try:
+        from Database.admin_queries import cancel_trip_for_rider, fetch_trip_by_id
+
+        trip_before_cancel = fetch_trip_by_id(trip_id)
+        if not trip_before_cancel:
+            return _json_error("Trip not found.", 404)
+
+        rider_id = trip_before_cancel.get("rider_id")
+        if rider_id is None:
+            return _json_error("Trip is missing rider information.", 500)
+
+        canceled = cancel_trip_for_rider(trip_id=trip_id, rider_id=int(rider_id))
+        if not canceled:
+            return _json_error("Trip could not be canceled.", 400)
+
+        trip_before_cancel["status"] = "canceled"
+        publish_trip_event("trip_canceled", trip_before_cancel)
+    except Exception as exc:
+        app.logger.warning("Rider cancel ride API failed: %s", exc)
+        return _json_error("Could not cancel ride right now.", 500)
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Ride canceled.",
+            "trip_id": trip_id,
+        }
+    ), 200
+
+
+@app.route("/rider/reviews/<int:rider_id>", methods=["GET"])
+def api_rider_reviews(rider_id: int):
+    try:
+        from Database.admin_queries import fetch_portal_reviews, fetch_portal_profile
+
+        user = fetch_portal_profile("rider", rider_id)
+        if not user:
+            return _json_error("Rider not found.", 404)
+
+        review_data = fetch_portal_reviews("rider", rider_id)
+    except Exception as exc:
+        app.logger.warning("Rider reviews API failed: %s", exc)
+        return _json_error("Could not load review history right now.", 500)
+
+    return jsonify(
+        {
+            "success": True,
+            "reviews": review_data,
+        }
+    ), 200
+
+
+@app.route("/rider/settings", methods=["POST"])
+def api_rider_settings():
+    data = _json_body()
+
+    rider_id_raw = data.get("rider_id")
+    first_name = str(data.get("first_name", "")).strip()
+    last_name = str(data.get("last_name", "")).strip()
+    email = str(data.get("email", "")).strip()
+    phone = str(data.get("phone", "")).strip()
+    preferences = _normalize_preferences(data.get("preferences"))
+
+    try:
+        rider_id = int(rider_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("A valid rider_id is required.")
+
+    if any(not value for value in [first_name, last_name, email, phone]):
+        return _json_error("First name, last name, email, and phone are required.")
+
+    try:
+        from Database.admin_queries import update_portal_profile, fetch_portal_profile
+
+        payload = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "phone": phone,
+            "preferences": ", ".join(preferences),
+        }
+
+        update_portal_profile("rider", rider_id, payload)
+        refreshed = fetch_portal_profile("rider", rider_id)
+    except Exception as exc:
+        app.logger.warning("Rider settings API failed: %s", exc)
+        return _json_error("Could not save settings right now.", 500)
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Rider settings updated.",
+            "user": refreshed,
+        }
+    ), 200
+
+#helper functions
+def _json_body() -> dict:
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _json_error(message: str, status: int = 400):
+    return jsonify({"success": False, "error": message}), status
+
+
+def _normalize_preferences(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str) and value.strip():
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return []
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("RIDER_PORT", "8003"))
