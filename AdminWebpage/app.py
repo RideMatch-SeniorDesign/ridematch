@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
-import requests
+# import requests
 
-REALTIME_HUB_URL = os.getenv("REALTIME_HUB_URL", "http://127.0.0.1:5001/publish-event")
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "my-internal-notify-key")
+# REALTIME_HUB_URL = os.getenv("REALTIME_HUB_URL", "http://127.0.0.1:5001/publish-event")
+# INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "my-internal-notify-key")
 
 # Allow running from either project root or AdminWebpage directory.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -925,7 +925,7 @@ def verify_driver(driver_id: int):
             notice = "approved" if action == "approve" else "denied"
             
             # code for sending realtime notification to driver
-            respond_to_driver_verification_update(driver_id, updated)
+            # respond_to_driver_verification_update(driver_id, updated)
 
     except Exception as exc:
         app.logger.warning("Driver verification update failed: %s", exc)
@@ -1153,22 +1153,22 @@ def logout():
     return redirect(url_for("login"))
 
 #helper for notifications
-def respond_to_driver_verification_update(driver_id: int, msg_body = None):
-    header = {"X-Internal-Secret": INTERNAL_API_KEY,
-              "Content-type": "application/json"}
-    try:
-        response = requests.post(
-            REALTIME_HUB_URL,
-            json=msg_body or {"driver_id": driver_id, "message": "Your verification status has been updated."},
-            headers=header,
-            timeout=5
-        )
+# def respond_to_driver_verification_update(driver_id: int, msg_body = None):
+#     header = {"X-Internal-Secret": INTERNAL_API_KEY,
+#               "Content-type": "application/json"}
+#     try:
+#         response = requests.post(
+#             REALTIME_HUB_URL,
+#             json=msg_body or {"driver_id": driver_id, "message": "Your verification status has been updated."},
+#             headers=header,
+#             timeout=5
+#         )
 
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as exc:
-        app.logger.warning("Failed to send realtime notification: %s", exc)
-        return None
+#         response.raise_for_status()
+#         return response.json()
+#     except requests.RequestException as exc:
+#         app.logger.warning("Failed to send realtime notification: %s", exc)
+#         return None
 
         
 
