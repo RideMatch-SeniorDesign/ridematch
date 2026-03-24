@@ -164,6 +164,60 @@ button {
 .success { border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; }
 .links { margin-top: 12px; text-align: center; }
 .hint { margin-top: 8px; font-size: 13px; }
+.ride-map-shell {
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid #d7f1ec;
+  border-radius: 14px;
+  background: #f8fffd;
+}
+.ride-map-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.map-btn {
+  width: auto;
+  white-space: nowrap;
+}
+.map-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+.ride-map {
+  width: 100%;
+  min-height: 320px;
+  border-radius: 14px;
+  border: 1px solid #cfece6;
+  overflow: hidden;
+  background: linear-gradient(180deg, #eefcf9, #ffffff);
+}
+.matched-map {
+  min-height: 260px;
+  margin-top: 10px;
+}
+.suggestions {
+  margin-top: -8px;
+  margin-bottom: 14px;
+  display: grid;
+  gap: 6px;
+}
+.suggestion-item {
+  width: 100%;
+  border: 1px solid #d7f1ec;
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--text);
+  text-align: left;
+  font-weight: 500;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.suggestion-item:hover {
+  background: #eefcf8;
+}
 .stats { margin: 8px 0 14px; }
 .list-table {
   border: 1px solid #d7f1ec;
@@ -196,4 +250,7 @@ button {
   .review-line { grid-template-columns: 1fr; }
   .portal-top { flex-direction: column; align-items: stretch; }
   .card { border-radius: 12px; padding: 16px; }
+  .ride-map-toolbar { flex-direction: column; align-items: stretch; }
+  .map-btn { width: 100%; }
+  .ride-map { min-height: 260px; }
 }

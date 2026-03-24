@@ -66,6 +66,39 @@ def _column_exists(table_name: str, column_name: str) -> bool:
     return bool(rows)
 
 
+def _ensure_driver_dispatch_state_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS driver_dispatch_state (
+            DriverID INT NOT NULL PRIMARY KEY,
+            IsAvailable TINYINT(1) NOT NULL DEFAULT 0,
+            UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_driver_dispatch_state_driver
+                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _ensure_driver_live_location_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS driver_live_location (
+            DriverID INT NOT NULL PRIMARY KEY,
+            Latitude DECIMAL(10, 7) NOT NULL,
+            Longitude DECIMAL(10, 7) NOT NULL,
+            UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_driver_live_location_driver
+                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
 def _driver_info_mode() -> str | None:
     if _table_exists("driver_information"):
         return "driver_information"
@@ -788,7 +821,7 @@ def fetch_portal_dashboard_summary(role: str, account_id: int) -> dict[str, Any]
             SELECT
                 COUNT(*) AS trip_count,
                 SUM(CASE WHEN Status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
-                SUM(CASE WHEN Status IN ('requested','in_progress') THEN 1 ELSE 0 END) AS active_count,
+                SUM(CASE WHEN Status IN ('requested','accepted','in_progress') THEN 1 ELSE 0 END) AS active_count,
                 ROUND(AVG(DriverRate), 1) AS avg_given_rating,
                 ROUND(AVG(RiderRate), 1) AS avg_received_rating
             FROM trip
@@ -802,7 +835,7 @@ def fetch_portal_dashboard_summary(role: str, account_id: int) -> dict[str, Any]
             SELECT
                 COUNT(*) AS trip_count,
                 SUM(CASE WHEN Status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
-                SUM(CASE WHEN Status IN ('requested','in_progress') THEN 1 ELSE 0 END) AS active_count,
+                SUM(CASE WHEN Status IN ('requested','accepted','in_progress') THEN 1 ELSE 0 END) AS active_count,
                 ROUND(AVG(RiderRate), 1) AS avg_given_rating,
                 ROUND(AVG(DriverRate), 1) AS avg_received_rating
             FROM trip
@@ -937,6 +970,255 @@ def fetch_portal_trip_history(role: str, account_id: int) -> list[dict[str, Any]
         """,
         (account_id,),
     )
+
+
+def _dispatch_trip_select() -> str:
+    return """
+        SELECT
+            t.TripID AS trip_id,
+            t.Status AS status,
+            t.StartLoc AS start_loc,
+            t.EndLoc AS end_loc,
+            t.FinalCost AS final_cost,
+            t.DriverID AS driver_id,
+            t.RiderID AS rider_id,
+            CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name,
+            CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name,
+            d.Status AS driver_status,
+            dl.Latitude AS driver_latitude,
+            dl.Longitude AS driver_longitude,
+            dl.UpdatedAt AS driver_location_updated_at
+        FROM trip t
+        JOIN account dacc ON dacc.AccountID = t.DriverID
+        JOIN account racc ON racc.AccountID = t.RiderID
+        LEFT JOIN driver d ON d.AccountID = t.DriverID
+        LEFT JOIN driver_live_location dl ON dl.DriverID = t.DriverID
+    """
+
+
+def fetch_active_rider_trip(account_id: int) -> dict[str, Any] | None:
+    if not _table_exists("trip"):
+        return None
+    rows = _fetch_all(
+        f"""
+        {_dispatch_trip_select()}
+        WHERE t.RiderID = %s
+          AND t.Status IN ('requested', 'accepted', 'in_progress')
+        ORDER BY FIELD(t.Status, 'in_progress', 'accepted', 'requested'), t.TripID DESC
+        LIMIT 1
+        """,
+        (account_id,),
+    )
+    return rows[0] if rows else None
+
+
+def fetch_active_driver_trip(account_id: int) -> dict[str, Any] | None:
+    if not _table_exists("trip"):
+        return None
+    rows = _fetch_all(
+        f"""
+        {_dispatch_trip_select()}
+        WHERE t.DriverID = %s
+          AND t.Status IN ('requested', 'accepted', 'in_progress')
+        ORDER BY FIELD(t.Status, 'in_progress', 'accepted', 'requested'), t.TripID DESC
+        LIMIT 1
+        """,
+        (account_id,),
+    )
+    return rows[0] if rows else None
+
+
+def _pick_best_driver_for_request() -> int | None:
+    if not _table_exists("driver") or not _table_exists("trip"):
+        return None
+    _ensure_driver_dispatch_state_table()
+    rows = _fetch_all(
+        """
+        SELECT
+            d.AccountID AS account_id,
+            COUNT(DISTINCT completed.TripID) AS completed_count
+        FROM driver d
+        JOIN driver_dispatch_state ds
+            ON ds.DriverID = d.AccountID
+        LEFT JOIN trip active_trip
+            ON active_trip.DriverID = d.AccountID
+           AND active_trip.Status IN ('requested', 'accepted', 'in_progress')
+        LEFT JOIN trip completed
+            ON completed.DriverID = d.AccountID
+           AND completed.Status = 'completed'
+        WHERE COALESCE(d.Status, '') = 'approved'
+          AND ds.IsAvailable = 1
+          AND active_trip.TripID IS NULL
+        GROUP BY d.AccountID
+        ORDER BY completed_count DESC, d.AccountID ASC
+        LIMIT 1
+        """
+    )
+    if not rows:
+        return None
+    return int(rows[0]["account_id"])
+
+
+def create_matched_trip(
+    *,
+    rider_id: int,
+    start_loc: str,
+    end_loc: str,
+    ride_type: str = "standard",
+    notes: str | None = None,
+) -> dict[str, Any]:
+    existing_trip = fetch_active_rider_trip(rider_id)
+    if existing_trip:
+        return existing_trip
+
+    driver_id = _pick_best_driver_for_request()
+    if driver_id is None:
+        raise ValueError("No approved drivers are available right now.")
+
+    normalized_start = start_loc.strip()
+    normalized_end = end_loc.strip()
+    # Keep stored trip addresses geocode-friendly for routing in the rider and
+    # driver apps. Ride type and notes can be modeled separately later.
+
+    trip_id = _insert_returning_id(
+        """
+        INSERT INTO trip (RiderID, DriverID, Status, StartLoc, EndLoc, FinalCost, DriverRate, RiderRate)
+        VALUES (%s, %s, 'requested', %s, %s, %s, NULL, NULL)
+        """,
+        (rider_id, driver_id, normalized_start, normalized_end, 0.00),
+    )
+
+    created_trip = _fetch_all(
+        f"""
+        {_dispatch_trip_select()}
+        WHERE t.TripID = %s
+        LIMIT 1
+        """,
+        (trip_id,),
+    )
+    if not created_trip:
+        raise ValueError("Ride request was created but could not be loaded.")
+    return created_trip[0]
+
+
+def update_trip_status_for_driver(
+    *,
+    trip_id: int,
+    driver_id: int,
+    next_status: str,
+    final_cost: float | None = None,
+) -> dict[str, Any] | None:
+    status_map = {
+        "accepted": ("requested",),
+        "in_progress": ("accepted",),
+        "completed": ("in_progress",),
+        "canceled": ("requested", "accepted"),
+    }
+    allowed_prior = status_map.get(next_status)
+    if not allowed_prior:
+        return None
+
+    assignments = ["Status = %s"]
+    params: list[Any] = [next_status]
+    if next_status == "completed":
+        assignments.append("FinalCost = %s")
+        params.append(final_cost if final_cost is not None else 0.00)
+
+    status_placeholders = ", ".join(["%s"] * len(allowed_prior))
+    params.extend([trip_id, driver_id, *allowed_prior])
+    rows = _execute(
+        f"""
+        UPDATE trip
+        SET {', '.join(assignments)}
+        WHERE TripID = %s
+          AND DriverID = %s
+          AND Status IN ({status_placeholders})
+        """,
+        tuple(params),
+    )
+    if rows <= 0:
+        return None
+    return fetch_active_driver_trip(driver_id) if next_status != "completed" else fetch_trip_by_id(trip_id)
+
+
+def cancel_trip_for_rider(*, trip_id: int, rider_id: int) -> bool:
+    rows = _execute(
+        """
+        UPDATE trip
+        SET Status = 'canceled'
+        WHERE TripID = %s
+          AND RiderID = %s
+          AND Status IN ('requested', 'accepted')
+        """,
+        (trip_id, rider_id),
+    )
+    return rows > 0
+
+
+def fetch_trip_by_id(trip_id: int) -> dict[str, Any] | None:
+    if not _table_exists("trip"):
+        return None
+    rows = _fetch_all(
+        f"""
+        {_dispatch_trip_select()}
+        WHERE t.TripID = %s
+        LIMIT 1
+        """,
+        (trip_id,),
+    )
+    return rows[0] if rows else None
+
+
+def fetch_driver_availability(account_id: int) -> bool:
+    _ensure_driver_dispatch_state_table()
+    rows = _fetch_all(
+        """
+        SELECT IsAvailable AS is_available
+        FROM driver_dispatch_state
+        WHERE DriverID = %s
+        LIMIT 1
+        """,
+        (account_id,),
+    )
+    if not rows:
+        _execute(
+            """
+            INSERT INTO driver_dispatch_state (DriverID, IsAvailable)
+            VALUES (%s, 0)
+            ON DUPLICATE KEY UPDATE DriverID = VALUES(DriverID)
+            """,
+            (account_id,),
+        )
+        return False
+    return bool(rows[0].get("is_available"))
+
+
+def set_driver_availability(account_id: int, is_available: bool) -> bool:
+    _ensure_driver_dispatch_state_table()
+    rows = _execute(
+        """
+        INSERT INTO driver_dispatch_state (DriverID, IsAvailable)
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE IsAvailable = VALUES(IsAvailable)
+        """,
+        (account_id, 1 if is_available else 0),
+    )
+    return rows >= 0
+
+
+def update_driver_live_location(account_id: int, latitude: float, longitude: float) -> bool:
+    _ensure_driver_live_location_table()
+    rows = _execute(
+        """
+        INSERT INTO driver_live_location (DriverID, Latitude, Longitude)
+        VALUES (%s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            Latitude = VALUES(Latitude),
+            Longitude = VALUES(Longitude)
+        """,
+        (account_id, latitude, longitude),
+    )
+    return rows >= 0
 
 
 def update_portal_profile(role: str, account_id: int, profile: dict[str, Any]) -> bool:
