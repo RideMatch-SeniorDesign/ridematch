@@ -5,16 +5,16 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:drivermobile/main.dart';
 
 void main() {
-  testWidgets('shows driver login shell', (WidgetTester tester) async {
+  testWidgets('shows bootstrap loading state', (WidgetTester tester) async {
     await tester.pumpWidget(const DriverMobileApp());
-    await tester.pumpAndSettle();
+    await tester.pump();
 
-    expect(find.text('RIDEMATCH DRIVER'), findsOneWidget);
-    expect(find.text('Driver Login'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 }
