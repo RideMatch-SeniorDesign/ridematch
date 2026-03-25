@@ -31,8 +31,14 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 ONGOING_TRIP_STATUSES = {"requested", "accepted", "in_progress"}
-DRIVER_FARE_SHARE = 0.75
-ADMIN_FARE_SHARE = 0.25
+DEFAULT_ADMIN_FARE_SHARE = 0.25
+DEFAULT_DRIVER_PAYOUT_SCHEDULE = "weekly"
+PAYOUT_SCHEDULE_LABELS = {
+    "per_trip": "After Each Ride",
+    "weekly": "Weekly",
+    "biweekly": "Biweekly",
+    "monthly": "Monthly",
+}
 
 
 def _is_logged_in() -> bool:
@@ -42,18 +48,86 @@ def _is_logged_in() -> bool:
 def _set_admin_password(new_password: str) -> tuple[bool, str | None]:
     global ADMIN_PASSWORD
     ADMIN_PASSWORD = new_password
-    os.environ["ADMIN_TEST_PASSWORD"] = new_password
+    return _persist_env_settings(
+        {"ADMIN_TEST_PASSWORD": new_password},
+        "Password changed",
+    )
+
+
+def _load_admin_fare_share() -> float:
+    raw_pct = str(os.environ.get("ADMIN_FARE_SHARE_PCT", "")).strip()
+    if raw_pct:
+        try:
+            return min(max(float(raw_pct) / 100.0, 0.0), 1.0)
+        except ValueError:
+            pass
+
+    raw_share = str(os.environ.get("ADMIN_FARE_SHARE", "")).strip()
+    if raw_share:
+        try:
+            share_value = float(raw_share)
+            if share_value > 1.0:
+                share_value = share_value / 100.0
+            return min(max(share_value, 0.0), 1.0)
+        except ValueError:
+            pass
+
+    return DEFAULT_ADMIN_FARE_SHARE
+
+
+def _normalize_payout_schedule(value: Any) -> str:
+    schedule_key = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if schedule_key in PAYOUT_SCHEDULE_LABELS:
+        return schedule_key
+    return DEFAULT_DRIVER_PAYOUT_SCHEDULE
+
+
+def _persist_env_settings(updates: dict[str, str], success_context: str) -> tuple[bool, str | None]:
+    for key, value in updates.items():
+        os.environ[key] = value
 
     try:
         if ENV_PATH.exists():
-            set_key(str(ENV_PATH), "ADMIN_TEST_PASSWORD", new_password)
+            for key, value in updates.items():
+                set_key(str(ENV_PATH), key, value)
         else:
             with ENV_PATH.open("a", encoding="utf-8") as env_file:
-                env_file.write(f"ADMIN_TEST_PASSWORD={new_password}\n")
+                for key, value in updates.items():
+                    env_file.write(f"{key}={value}\n")
         return True, None
     except Exception as exc:
-        app.logger.warning("Could not persist ADMIN_TEST_PASSWORD to .env: %s", exc)
-        return False, "Password changed for this session only; could not update .env."
+        app.logger.warning("Could not persist settings to .env for %s: %s", ", ".join(updates), exc)
+        return False, f"{success_context} for this session only; could not update .env."
+
+
+def _set_budget_settings(admin_fare_share_pct: int, payout_schedule: str) -> tuple[bool, str | None]:
+    global ADMIN_FARE_SHARE, DRIVER_FARE_SHARE, DRIVER_PAYOUT_SCHEDULE
+
+    normalized_pct = max(0, min(100, int(admin_fare_share_pct)))
+    normalized_schedule = _normalize_payout_schedule(payout_schedule)
+    admin_share = normalized_pct / 100.0
+    driver_share = 1.0 - admin_share
+
+    ADMIN_FARE_SHARE = admin_share
+    DRIVER_FARE_SHARE = driver_share
+    DRIVER_PAYOUT_SCHEDULE = normalized_schedule
+
+    return _persist_env_settings(
+        {
+            "ADMIN_FARE_SHARE_PCT": str(normalized_pct),
+            "ADMIN_FARE_SHARE": f"{admin_share:.4f}".rstrip("0").rstrip("."),
+            "DRIVER_FARE_SHARE": f"{driver_share:.4f}".rstrip("0").rstrip("."),
+            "DRIVER_PAYOUT_SCHEDULE": normalized_schedule,
+        },
+        "Budget settings updated",
+    )
+
+
+ADMIN_FARE_SHARE = _load_admin_fare_share()
+DRIVER_FARE_SHARE = 1.0 - ADMIN_FARE_SHARE
+DRIVER_PAYOUT_SCHEDULE = _normalize_payout_schedule(
+    os.environ.get("DRIVER_PAYOUT_SCHEDULE", DEFAULT_DRIVER_PAYOUT_SCHEDULE)
+)
 
 
 @app.before_request
@@ -1107,27 +1181,47 @@ def settings():
 
     settings_error = None
     settings_success = None
+    budget_error = None
+    budget_success = None
 
     if request.method == "POST":
-        current_password = request.form.get("current_password", "").strip()
-        new_password = request.form.get("new_password", "").strip()
-        confirm_password = request.form.get("confirm_password", "").strip()
+        form_name = (request.form.get("form_name") or "password").strip().lower()
 
-        if not current_password or not new_password or not confirm_password:
-            settings_error = "All password fields are required."
-        elif current_password != ADMIN_PASSWORD:
-            settings_error = "Current password is incorrect."
-        elif len(new_password) < 8:
-            settings_error = "New password must be at least 8 characters."
-        elif new_password != confirm_password:
-            settings_error = "New password and confirmation do not match."
-        elif new_password == current_password:
-            settings_error = "New password must be different from current password."
+        if form_name == "budget":
+            admin_fare_share_pct = _coerce_int(request.form.get("admin_fare_share_pct"))
+            payout_schedule = (request.form.get("driver_payout_schedule") or "").strip().lower()
+
+            if admin_fare_share_pct is None:
+                budget_error = "Admin take percentage is required."
+            elif not 0 <= admin_fare_share_pct <= 100:
+                budget_error = "Admin take percentage must be between 0 and 100."
+            elif payout_schedule not in PAYOUT_SCHEDULE_LABELS:
+                budget_error = "Select a valid driver payout schedule."
+            else:
+                _, warning = _set_budget_settings(admin_fare_share_pct, payout_schedule)
+                budget_success = "Budget settings updated successfully."
+                if warning:
+                    budget_success = f"{budget_success} {warning}"
         else:
-            _, warning = _set_admin_password(new_password)
-            settings_success = "Password updated successfully."
-            if warning:
-                settings_success = f"{settings_success} {warning}"
+            current_password = request.form.get("current_password", "").strip()
+            new_password = request.form.get("new_password", "").strip()
+            confirm_password = request.form.get("confirm_password", "").strip()
+
+            if not current_password or not new_password or not confirm_password:
+                settings_error = "All password fields are required."
+            elif current_password != ADMIN_PASSWORD:
+                settings_error = "Current password is incorrect."
+            elif len(new_password) < 8:
+                settings_error = "New password must be at least 8 characters."
+            elif new_password != confirm_password:
+                settings_error = "New password and confirmation do not match."
+            elif new_password == current_password:
+                settings_error = "New password must be different from current password."
+            else:
+                _, warning = _set_admin_password(new_password)
+                settings_success = "Password updated successfully."
+                if warning:
+                    settings_success = f"{settings_success} {warning}"
 
     return render_template(
         "settings.html",
@@ -1135,6 +1229,16 @@ def settings():
         current_tab="settings",
         settings_error=settings_error,
         settings_success=settings_success,
+        budget_error=budget_error,
+        budget_success=budget_success,
+        admin_fare_share_pct=int(round(ADMIN_FARE_SHARE * 100)),
+        driver_fare_share_pct=int(round(DRIVER_FARE_SHARE * 100)),
+        driver_payout_schedule=DRIVER_PAYOUT_SCHEDULE,
+        driver_payout_schedule_label=PAYOUT_SCHEDULE_LABELS.get(
+            DRIVER_PAYOUT_SCHEDULE,
+            PAYOUT_SCHEDULE_LABELS[DEFAULT_DRIVER_PAYOUT_SCHEDULE],
+        ),
+        payout_schedule_options=PAYOUT_SCHEDULE_LABELS.items(),
         **_dashboard_data(),
     )
 

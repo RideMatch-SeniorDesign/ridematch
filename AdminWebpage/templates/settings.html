@@ -8,11 +8,11 @@
     <div>
       <p class="page-kicker">Control Center</p>
       <h2 class="page-title">Platform Settings</h2>
-      <p class="page-note">Manage admin security and core operational flags.</p>
+      <p class="page-note">Manage admin security and budget controls.</p>
     </div>
     <span class="page-pill">
-      <i class="bi bi-shield-lock"></i>
-      Security & Ops
+      <i class="bi bi-cash-coin"></i>
+      Security & Budget
     </span>
   </div>
 
@@ -43,6 +43,7 @@
       </div>
       <div class="button-stack">
         <form method="post" action="{{ url_for('settings') }}">
+          <input type="hidden" name="form_name" value="password" />
           <label for="current_password">Current password</label>
           <input id="current_password" name="current_password" type="password" required />
 
@@ -54,32 +55,61 @@
 
           <button class="secondary" type="submit">Change Password</button>
         </form>
-        <button class="secondary" type="button">Enable 2FA</button>
       </div>
     </article>
 
     <article class="panel">
       <div class="section-head">
         <div>
-          <h2>Platform Settings</h2>
-          <p>Current configuration for automation and monitoring controls.</p>
+          <h2>Budget Settings</h2>
+          <p>Adjust RideMatch's fare split and choose how often drivers are paid.</p>
         </div>
       </div>
+      {% if budget_error %}
+      <p class="error-text">{{ budget_error }}</p>
+      {% endif %}
+      {% if budget_success %}
+      <p class="success-text">{{ budget_success }}</p>
+      {% endif %}
       <div class="table-box">
-        <h3>Operational Flags</h3>
+        <h3>Current Budget</h3>
         <div class="row">
-          <span>New Driver Auto-Approval</span>
-          <span>Disabled</span>
+          <span>Admin Take From Fares</span>
+          <span>{{ admin_fare_share_pct }}%</span>
         </div>
         <div class="row">
-          <span>Ride Monitoring Alerts</span>
-          <span>Enabled</span>
+          <span>Driver Fare Share</span>
+          <span>{{ driver_fare_share_pct }}%</span>
         </div>
         <div class="row">
-          <span>Weekly Summary Email</span>
-          <span>Enabled</span>
+          <span>Driver Payout Schedule</span>
+          <span>{{ driver_payout_schedule_label }}</span>
         </div>
       </div>
+      <form method="post" action="{{ url_for('settings') }}">
+        <input type="hidden" name="form_name" value="budget" />
+
+        <label for="admin_fare_share_pct">Admin take from driver fares (%)</label>
+        <input
+          id="admin_fare_share_pct"
+          name="admin_fare_share_pct"
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          value="{{ admin_fare_share_pct }}"
+          required
+        />
+
+        <label for="driver_payout_schedule">Driver payout schedule</label>
+        <select id="driver_payout_schedule" name="driver_payout_schedule" required>
+          {% for value, label in payout_schedule_options %}
+          <option value="{{ value }}" {{ 'selected' if driver_payout_schedule == value else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+
+        <button class="secondary" type="submit">Save Budget Settings</button>
+      </form>
     </article>
   </div>
 </section>
