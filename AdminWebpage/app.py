@@ -130,6 +130,65 @@ DRIVER_PAYOUT_SCHEDULE = _normalize_payout_schedule(
 )
 
 
+class DatabaseAdminRepository:
+    def fetch_dashboard_data(self) -> dict[str, Any]:
+        from AdminDatabase.admin_queries import (
+            fetch_dashboard_data,
+            fetch_driver_to_rider_reviews,
+            fetch_rider_reviews,
+            fetch_rider_statistics,
+            fetch_rider_trip_activity,
+            fetch_riders,
+        )
+
+        data = fetch_dashboard_data()
+
+        try:
+            riders_list = fetch_riders()
+            rider_stats = fetch_rider_statistics()
+            rider_reviews = fetch_rider_reviews()
+            driver_to_rider_reviews = fetch_driver_to_rider_reviews()
+            rider_trip_activity = fetch_rider_trip_activity()
+            data["all_riders"] = riders_list
+            data["rider_reviews"] = rider_reviews
+            data["driver_to_rider_reviews"] = driver_to_rider_reviews
+            data["rider_trip_activity"] = rider_trip_activity
+            data["total_rider_count"] = rider_stats.get("total_rider_count", 0)
+            data["total_rides"] = rider_stats.get("total_rides", 0)
+        except Exception:
+            data["all_riders"] = []
+            data["rider_reviews"] = []
+            data["driver_to_rider_reviews"] = []
+            data["rider_trip_activity"] = []
+            data["total_rider_count"] = 0
+            data["total_rides"] = 0
+
+        return data
+
+    def fetch_driver_detail(self, driver_id: int) -> dict[str, Any] | None:
+        from AdminDatabase.admin_queries import driver_detail as fetch_driver
+
+        return fetch_driver(driver_id)
+
+    def update_driver_status(self, driver_id: int, action: str) -> bool:
+        from AdminDatabase.admin_queries import update_driver_status
+
+        return update_driver_status(driver_id, action)
+
+    def set_budget_settings(self, admin_fare_share_pct: int, payout_schedule: str) -> tuple[bool, str | None]:
+        return _set_budget_settings(admin_fare_share_pct, payout_schedule)
+
+    def set_admin_password(self, new_password: str) -> tuple[bool, str | None]:
+        return _set_admin_password(new_password)
+
+
+_DEFAULT_ADMIN_REPOSITORY = DatabaseAdminRepository()
+
+
+def _get_admin_repository() -> Any:
+    return app.config.get("ADMIN_REPOSITORY") or _DEFAULT_ADMIN_REPOSITORY
+
+
 @app.before_request
 def _persist_logged_in_session() -> None:
     if session.get("logged_in"):
@@ -722,37 +781,7 @@ def _dashboard_data() -> dict:
     }
 
     try:
-        from AdminDatabase.admin_queries import (
-            fetch_dashboard_data,
-            fetch_driver_to_rider_reviews,
-            fetch_rider_reviews,
-            fetch_rider_statistics,
-            fetch_rider_trip_activity,
-            fetch_riders,
-        )
-        data = fetch_dashboard_data()
-        
-        # Add rider data
-        try:
-            riders_list = fetch_riders()
-            rider_stats = fetch_rider_statistics()
-            rider_reviews = fetch_rider_reviews()
-            driver_to_rider_reviews = fetch_driver_to_rider_reviews()
-            rider_trip_activity = fetch_rider_trip_activity()
-            data["all_riders"] = riders_list
-            data["rider_reviews"] = rider_reviews
-            data["driver_to_rider_reviews"] = driver_to_rider_reviews
-            data["rider_trip_activity"] = rider_trip_activity
-            data["total_rider_count"] = rider_stats.get("total_rider_count", 0)
-            data["total_rides"] = rider_stats.get("total_rides", 0)
-        except Exception:
-            data["all_riders"] = []
-            data["rider_reviews"] = []
-            data["driver_to_rider_reviews"] = []
-            data["rider_trip_activity"] = []
-            data["total_rider_count"] = 0
-            data["total_rides"] = 0
-        
+        data = _get_admin_repository().fetch_dashboard_data()
         pending_count = len(data.get("unapproved_drivers", []))
         review_count = len(data.get("driver_reviews", []))
         total_drivers = int(data.get("total_driver_count") or len(data.get("all_drivers", [])) or 0)
@@ -948,9 +977,7 @@ def drivers():
     selected_driver = None
     if selected_driver_id:
         try:
-            from Database.admin_queries import driver_detail
-
-            selected_driver = driver_detail(selected_driver_id)
+            selected_driver = _get_admin_repository().fetch_driver_detail(selected_driver_id)
         except Exception as exc:
             app.logger.warning("Driver detail load failed: %s", exc)
 
@@ -988,9 +1015,7 @@ def verify_driver(driver_id: int):
 
     notice = "update_failed"
     try:
-        from AdminDatabase.admin_queries import update_driver_status
-
-        updated = update_driver_status(driver_id, action)
+        updated = _get_admin_repository().update_driver_status(driver_id, action)
         if updated:
             notice = "approved" if action == "approve" else "denied"
     except Exception as exc:
@@ -1005,17 +1030,15 @@ def driver_detail(driver_id):
     if not _is_logged_in():
         return redirect(url_for("login"))
 
-    # If DB function exists, use it; otherwise use fallback data
+    driver = None
     try:
-        from Database.admin_queries import driver_detail as fetch_driver
-        driver = fetch_driver(driver_id)
+        driver = _get_admin_repository().fetch_driver_detail(driver_id)
     except Exception:
-        # Fallback to finding driver from dashboard data
+        driver = None
+
+    if not driver:
         all_drivers = _dashboard_data().get("all_drivers", [])
-        driver = next(
-            (d for d in all_drivers if d.get("account_id") == driver_id),
-            None
-        )
+        driver = next((d for d in all_drivers if d.get("account_id") == driver_id), None)
 
     if not driver:
         return "Driver not found", 404
@@ -1035,9 +1058,7 @@ def driver_photo(driver_id: int):
         return redirect(url_for("login"))
 
     try:
-        from Database.admin_queries import driver_detail as fetch_driver
-
-        driver = fetch_driver(driver_id)
+        driver = _get_admin_repository().fetch_driver_detail(driver_id)
     except Exception as exc:
         app.logger.warning("Could not load driver photo details: %s", exc)
         driver = None
@@ -1185,6 +1206,7 @@ def settings():
     budget_success = None
 
     if request.method == "POST":
+        repository = _get_admin_repository()
         form_name = (request.form.get("form_name") or "password").strip().lower()
 
         if form_name == "budget":
@@ -1198,7 +1220,7 @@ def settings():
             elif payout_schedule not in PAYOUT_SCHEDULE_LABELS:
                 budget_error = "Select a valid driver payout schedule."
             else:
-                _, warning = _set_budget_settings(admin_fare_share_pct, payout_schedule)
+                _, warning = repository.set_budget_settings(admin_fare_share_pct, payout_schedule)
                 budget_success = "Budget settings updated successfully."
                 if warning:
                     budget_success = f"{budget_success} {warning}"
@@ -1218,7 +1240,7 @@ def settings():
             elif new_password == current_password:
                 settings_error = "New password must be different from current password."
             else:
-                _, warning = _set_admin_password(new_password)
+                _, warning = repository.set_admin_password(new_password)
                 settings_success = "Password updated successfully."
                 if warning:
                     settings_success = f"{settings_success} {warning}"
