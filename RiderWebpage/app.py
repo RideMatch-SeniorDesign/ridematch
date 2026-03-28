@@ -365,6 +365,13 @@ def api_rider_trip_review(trip_id: int):
     rider_id = int(payload.get("rider_id") or 0)
     rating_raw = payload.get("rating")
     comment = str(payload.get("comment") or "").strip()
+    tip_raw = payload.get("tip_amount")
+    tip_amount = None
+    if tip_raw is not None and str(tip_raw).strip() != "":
+        try:
+            tip_amount = float(tip_raw)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "tip_amount must be a number."}), 400
     if not rider_id:
         return jsonify({"success": False, "error": "rider_id is required."}), 400
     try:
@@ -375,11 +382,33 @@ def api_rider_trip_review(trip_id: int):
         from Database.admin_queries import submit_rider_rating_for_driver
 
         ok, message = submit_rider_rating_for_driver(
-            rider_id, trip_id, rating, comment or None
+            rider_id, trip_id, rating, comment or None, tip_amount
         )
     except Exception as exc:
         app.logger.warning("Rider trip review submit failed: %s", exc)
         return jsonify({"success": False, "error": "Could not submit review right now."}), 500
+    if not ok:
+        return jsonify({"success": False, "error": message}), 400
+    return jsonify({"success": True, "message": message}), 200
+
+
+@app.route("/api/rider/trip/<int:trip_id>/tip", methods=["POST"])
+def api_rider_trip_tip(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    rider_id = int(payload.get("rider_id") or 0)
+    if not rider_id:
+        return jsonify({"success": False, "error": "rider_id is required."}), 400
+    try:
+        tip_amount = float(payload.get("tip_amount"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "tip_amount is required."}), 400
+    try:
+        from Database.admin_queries import submit_rider_tip_for_trip
+
+        ok, message = submit_rider_tip_for_trip(rider_id, trip_id, tip_amount)
+    except Exception as exc:
+        app.logger.warning("Rider trip tip submit failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not save tip right now."}), 500
     if not ok:
         return jsonify({"success": False, "error": message}), 400
     return jsonify({"success": True, "message": message}), 200

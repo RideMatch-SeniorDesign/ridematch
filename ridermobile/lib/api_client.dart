@@ -121,8 +121,27 @@ class ApiClient {
   Future<Map<String, dynamic>> fetchActiveTrip({
     required int riderId,
   }) async {
-    final response = await _dio.get("/api/rider/active-trip/$riderId");
-    return Map<String, dynamic>.from(response.data as Map);
+    try {
+      final response = await _dio.get("/api/rider/active-trip/$riderId");
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      if (exc.response == null) {
+        return <String, dynamic>{
+          "success": false,
+          "error": "Could not reach the server. Check your connection.",
+        };
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not load your ride status. Try again.",
+      };
+    }
   }
 
   Future<Map<String, dynamic>> requestRide({
@@ -132,17 +151,36 @@ class ApiClient {
     required String rideType,
     required String notes,
   }) async {
-    final response = await _dio.post(
-      "/api/rider/request",
-      data: {
-        "rider_id": riderId,
-        "start_loc": startLoc,
-        "end_loc": endLoc,
-        "ride_type": rideType,
-        "notes": notes,
-      },
-    );
-    return Map<String, dynamic>.from(response.data as Map);
+    try {
+      final response = await _dio.post(
+        "/api/rider/request",
+        data: {
+          "rider_id": riderId,
+          "start_loc": startLoc,
+          "end_loc": endLoc,
+          "ride_type": rideType,
+          "notes": notes,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      if (exc.response == null) {
+        return <String, dynamic>{
+          "success": false,
+          "error": "Could not reach the server. Check your connection.",
+        };
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not request a ride. Try again.",
+      };
+    }
   }
 
   Future<Map<String, dynamic>> cancelRide({
@@ -197,6 +235,7 @@ class ApiClient {
     required int riderId,
     required int rating,
     String? comment,
+    double tipAmount = 0,
   }) async {
     try {
       final response = await _dio.post(
@@ -205,6 +244,7 @@ class ApiClient {
           "rider_id": riderId,
           "rating": rating,
           if (comment != null && comment.isNotEmpty) "comment": comment,
+          "tip_amount": tipAmount,
         },
       );
       return Map<String, dynamic>.from(response.data as Map);
@@ -218,6 +258,34 @@ class ApiClient {
       return <String, dynamic>{
         "success": false,
         "error": "Could not submit review. Try again.",
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> submitTripTip({
+    required int tripId,
+    required int riderId,
+    required double tipAmount,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/rider/trip/$tripId/tip",
+        data: <String, dynamic>{
+          "rider_id": riderId,
+          "tip_amount": tipAmount,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not save tip. Try again.",
       };
     }
   }

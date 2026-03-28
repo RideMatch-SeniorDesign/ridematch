@@ -1,8 +1,126 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime, timedelta
 from typing import Any
 
 from Database.db_con import get_connection
+
+
+_PAYOUT_SCHEDULE_LABELS = {
+    "per_trip": "After each ride",
+    "weekly": "Weekly",
+    "biweekly": "Biweekly",
+    "monthly": "Monthly",
+}
+
+
+def _normalize_payout_schedule(value: str | None) -> str:
+    key = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if key in _PAYOUT_SCHEDULE_LABELS:
+        return key
+    return "weekly"
+
+
+def _load_payout_schedule() -> str:
+    return _normalize_payout_schedule(os.environ.get("DRIVER_PAYOUT_SCHEDULE", "weekly"))
+
+
+def _load_driver_fare_share() -> float:
+    raw = str(os.environ.get("DRIVER_FARE_SHARE", "")).strip()
+    if raw:
+        try:
+            v = float(raw)
+            return min(max(v, 0.0), 1.0)
+        except ValueError:
+            pass
+    pct = str(os.environ.get("ADMIN_FARE_SHARE_PCT", "")).strip()
+    if pct:
+        try:
+            admin = min(max(float(pct) / 100.0, 0.0), 1.0)
+            return 1.0 - admin
+        except ValueError:
+            pass
+    return 0.75
+
+
+def _pay_period_window(schedule: str) -> tuple[datetime, datetime, str]:
+    """Inclusive start, exclusive end, human-readable range label."""
+    now = datetime.now()
+    schedule = _normalize_payout_schedule(schedule)
+    if schedule == "monthly":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1)
+        else:
+            end = start.replace(month=start.month + 1)
+        label = f"{start.strftime('%b %d, %Y')} – {(end - timedelta(seconds=1)).strftime('%b %d, %Y')}"
+        return start, end, label
+    if schedule == "weekly":
+        # Week starts Monday
+        weekday = now.weekday()
+        start = (now - timedelta(days=weekday)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=7)
+        label = f"{start.strftime('%b %d')} – {(end - timedelta(days=1)).strftime('%b %d, %Y')}"
+        return start, end, label
+    if schedule == "biweekly":
+        year_start = datetime(now.year, 1, 1)
+        delta_days = max(0, (now - year_start).days)
+        period_idx = delta_days // 14
+        start = year_start + timedelta(days=period_idx * 14)
+        end = start + timedelta(days=14)
+        label = f"{start.strftime('%b %d, %Y')} – {(end - timedelta(seconds=1)).strftime('%b %d, %Y')}"
+        return start, end, label
+    # per_trip: show current week as reporting window (payouts are per ride)
+    weekday = now.weekday()
+    start = (now - timedelta(days=weekday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=7)
+    label = f"{start.strftime('%b %d')} – {(end - timedelta(days=1)).strftime('%b %d, %Y')} · {_PAYOUT_SCHEDULE_LABELS['per_trip']}"
+    return start, end, label
+
+
+def _aggregate_driver_trips_for_income(
+    driver_id: int,
+    driver_share: float,
+    *,
+    period_start: datetime | None = None,
+    period_end_exclusive: datetime | None = None,
+) -> dict[str, Any]:
+    if not _table_exists("trip"):
+        return {
+            "trip_count": 0,
+            "fare_earnings": 0.0,
+            "total_tips": 0.0,
+            "estimated_payout": 0.0,
+        }
+    where = "DriverID = %s AND Status = 'completed'"
+    params: list[Any] = [driver_id]
+    if period_start is not None and period_end_exclusive is not None:
+        where += " AND CompletedAt IS NOT NULL AND CompletedAt >= %s AND CompletedAt < %s"
+        params.extend([period_start, period_end_exclusive])
+    rows = _fetch_all(
+        f"""
+        SELECT
+            COUNT(*) AS trip_count,
+            COALESCE(SUM(FinalCost), 0) AS gross_fare,
+            COALESCE(SUM(TipAmount), 0) AS total_tips
+        FROM trip
+        WHERE {where}
+        """,
+        tuple(params),
+    )
+    row = rows[0] if rows else {}
+    trip_count = int(row.get("trip_count") or 0)
+    gross = float(row.get("gross_fare") or 0)
+    tips = float(row.get("total_tips") or 0)
+    fare_earnings = round(gross * driver_share, 2)
+    estimated_payout = round(fare_earnings + tips, 2)
+    return {
+        "trip_count": trip_count,
+        "fare_earnings": fare_earnings,
+        "total_tips": round(tips, 2),
+        "estimated_payout": estimated_payout,
+    }
 
 
 def _fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
@@ -97,6 +215,48 @@ def _ensure_driver_live_location_table() -> None:
         )
         """
     )
+
+
+def _ensure_dispatch_query_tables() -> None:
+    """Tables joined by _dispatch_trip_select() must exist before any dispatch query."""
+    _ensure_driver_live_location_table()
+
+
+def _ensure_trip_location_columns() -> None:
+    """Widen address fields so geocoded / autocomplete strings do not fail inserts."""
+    if not _table_exists("trip"):
+        return
+    rows = _fetch_all(
+        """
+        SELECT CHARACTER_MAXIMUM_LENGTH AS len
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'trip'
+          AND column_name = 'StartLoc'
+        LIMIT 1
+        """,
+    )
+    if not rows:
+        return
+    try:
+        max_len = int(rows[0].get("len") or 0)
+    except (TypeError, ValueError):
+        max_len = 0
+    if max_len > 0 and max_len < 255:
+        _execute("ALTER TABLE trip MODIFY StartLoc VARCHAR(255) NOT NULL")
+        _execute("ALTER TABLE trip MODIFY EndLoc VARCHAR(255) NOT NULL")
+
+
+def _ensure_trip_completed_at_column() -> None:
+    if not _table_exists("trip") or _column_exists("trip", "CompletedAt"):
+        return
+    _execute("ALTER TABLE trip ADD COLUMN CompletedAt TIMESTAMP(6) NULL DEFAULT NULL")
+
+
+def _ensure_tip_amount_column() -> None:
+    if not _table_exists("trip") or _column_exists("trip", "TipAmount"):
+        return
+    _execute("ALTER TABLE trip ADD COLUMN TipAmount DECIMAL(10, 2) NOT NULL DEFAULT 0.00")
 
 
 def _driver_info_mode() -> str | None:
@@ -951,6 +1111,7 @@ def fetch_portal_trip_history(role: str, account_id: int) -> list[dict[str, Any]
         counterpart_name = "CONCAT(dacc.FirstName, ' ', dacc.LastName)"
         counterpart_label = "driver_name"
 
+    _ensure_tip_amount_column()
     return _fetch_all(
         f"""
         SELECT
@@ -961,6 +1122,7 @@ def fetch_portal_trip_history(role: str, account_id: int) -> list[dict[str, Any]
             t.FinalCost AS final_cost,
             t.DriverRate AS driver_rate,
             t.RiderRate AS rider_rate,
+            COALESCE(t.TipAmount, 0) AS tip_amount,
             {counterpart_name} AS {counterpart_label}
         FROM trip t
         {counterpart_join}
@@ -999,6 +1161,7 @@ def _dispatch_trip_select() -> str:
 def fetch_active_rider_trip(account_id: int) -> dict[str, Any] | None:
     if not _table_exists("trip"):
         return None
+    _ensure_dispatch_query_tables()
     rows = _fetch_all(
         f"""
         {_dispatch_trip_select()}
@@ -1015,6 +1178,7 @@ def fetch_active_rider_trip(account_id: int) -> dict[str, Any] | None:
 def fetch_active_driver_trip(account_id: int) -> dict[str, Any] | None:
     if not _table_exists("trip"):
         return None
+    _ensure_dispatch_query_tables()
     rows = _fetch_all(
         f"""
         {_dispatch_trip_select()}
@@ -1067,6 +1231,8 @@ def create_matched_trip(
     ride_type: str = "standard",
     notes: str | None = None,
 ) -> dict[str, Any]:
+    _ensure_trip_location_columns()
+    _ensure_dispatch_query_tables()
     existing_trip = fetch_active_rider_trip(rider_id)
     if existing_trip:
         return existing_trip
@@ -1121,8 +1287,10 @@ def update_trip_status_for_driver(
     assignments = ["Status = %s"]
     params: list[Any] = [next_status]
     if next_status == "completed":
+        _ensure_trip_completed_at_column()
         assignments.append("FinalCost = %s")
         params.append(final_cost if final_cost is not None else 0.00)
+        assignments.append("CompletedAt = CURRENT_TIMESTAMP(6)")
 
     status_placeholders = ", ".join(["%s"] * len(allowed_prior))
     params.extend([trip_id, driver_id, *allowed_prior])
@@ -1158,6 +1326,7 @@ def cancel_trip_for_rider(*, trip_id: int, rider_id: int) -> bool:
 def fetch_trip_by_id(trip_id: int) -> dict[str, Any] | None:
     if not _table_exists("trip"):
         return None
+    _ensure_dispatch_query_tables()
     rows = _fetch_all(
         f"""
         {_dispatch_trip_select()}
@@ -1389,9 +1558,32 @@ def update_rider_password(account_id: int, current_password: str, new_password: 
     return True, "Password updated."
 
 
+def update_driver_password(account_id: int, current_password: str, new_password: str) -> tuple[bool, str]:
+    rows = _fetch_all(
+        "SELECT UserName FROM account WHERE AccountID = %s LIMIT 1",
+        (account_id,),
+    )
+    if not rows:
+        return False, "Account not found."
+    username = str(rows[0].get("UserName") or "").strip()
+    if not username:
+        return False, "Account not found."
+    verified = authenticate_portal_user("driver", username, current_password)
+    if not verified:
+        return False, "Current password is incorrect."
+    if len(new_password) < 6:
+        return False, "Password must be at least 6 characters."
+    _execute(
+        "UPDATE account SET Password = %s WHERE AccountID = %s",
+        (new_password, account_id),
+    )
+    return True, "Password updated."
+
+
 def fetch_trips_pending_rider_rating(rider_id: int) -> list[dict[str, Any]]:
     if not _table_exists("trip"):
         return []
+    _ensure_tip_amount_column()
     return _fetch_all(
         """
         SELECT
@@ -1400,6 +1592,7 @@ def fetch_trips_pending_rider_rating(rider_id: int) -> list[dict[str, Any]]:
             t.StartLoc AS start_loc,
             t.EndLoc AS end_loc,
             t.FinalCost AS final_cost,
+            COALESCE(t.TipAmount, 0) AS tip_amount,
             CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name
         FROM trip t
         JOIN account dacc ON dacc.AccountID = t.DriverID
@@ -1413,14 +1606,184 @@ def fetch_trips_pending_rider_rating(rider_id: int) -> list[dict[str, Any]]:
     )
 
 
-def submit_rider_rating_for_driver(
-    rider_id: int,
+def fetch_trips_pending_driver_rating(driver_id: int) -> list[dict[str, Any]]:
+    if not _table_exists("trip"):
+        return []
+    return _fetch_all(
+        """
+        SELECT
+            t.TripID AS trip_id,
+            t.Status AS status,
+            t.StartLoc AS start_loc,
+            t.EndLoc AS end_loc,
+            t.FinalCost AS final_cost,
+            CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name
+        FROM trip t
+        JOIN account racc ON racc.AccountID = t.RiderID
+        WHERE t.DriverID = %s
+          AND t.Status = 'completed'
+          AND t.DriverRate IS NULL
+        ORDER BY t.TripID DESC
+        LIMIT 25
+        """,
+        (driver_id,),
+    )
+
+
+def submit_driver_rating_for_rider(
+    driver_id: int,
     trip_id: int,
     rating: int,
     comment: str | None = None,
 ) -> tuple[bool, str]:
     if not _table_exists("trip"):
         return False, "Trips are not available."
+    rating = max(1, min(5, int(rating)))
+    rows = _fetch_all(
+        """
+        SELECT t.TripID, t.RiderID, t.DriverID, t.Status, t.DriverRate
+        FROM trip t
+        WHERE t.TripID = %s AND t.DriverID = %s
+        """,
+        (trip_id, driver_id),
+    )
+    if not rows:
+        return False, "Trip not found."
+    row = rows[0]
+    if (row.get("Status") or "").strip().lower() != "completed":
+        return False, "You can only review completed trips."
+    if row.get("DriverRate") is not None:
+        return False, "You already submitted a rating for this trip."
+    rider_id = int(row.get("RiderID") or 0)
+    if not rider_id:
+        return False, "Trip has no rider."
+
+    _execute(
+        """
+        UPDATE trip
+        SET DriverRate = %s
+        WHERE TripID = %s AND DriverID = %s
+        """,
+        (rating, trip_id, driver_id),
+    )
+
+    if _table_exists("rider_review"):
+        existing = _fetch_all(
+            """
+            SELECT ReviewID FROM rider_review
+            WHERE TripID = %s AND DriverID = %s
+            LIMIT 1
+            """,
+            (trip_id, driver_id),
+        )
+        comment_val = (comment or "").strip() or None
+        if existing:
+            _execute(
+                """
+                UPDATE rider_review
+                SET Rating = %s, Comment = %s
+                WHERE TripID = %s AND DriverID = %s
+                """,
+                (rating, comment_val, trip_id, driver_id),
+            )
+        else:
+            _execute(
+                """
+                INSERT INTO rider_review (RiderID, DriverID, TripID, Rating, Comment)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (rider_id, driver_id, trip_id, rating, comment_val),
+            )
+
+    return True, "Thanks for your feedback."
+
+
+def fetch_driver_income_stats(driver_id: int) -> dict[str, Any]:
+    """Driver-facing income: fare share from ADMIN_* env settings + tips. Pay period window matches DRIVER_PAYOUT_SCHEDULE."""
+    _ensure_trip_completed_at_column()
+    _ensure_tip_amount_column()
+    driver_share = _load_driver_fare_share()
+    schedule = _load_payout_schedule()
+    pct_display = int(round(driver_share * 100))
+    period_start, period_end, range_label = _pay_period_window(schedule)
+
+    if not _table_exists("trip"):
+        empty = {
+            "trip_count": 0,
+            "fare_earnings": 0.0,
+            "total_tips": 0.0,
+            "estimated_payout": 0.0,
+        }
+        return {
+            "all_time": dict(empty),
+            "pay_period": dict(empty),
+            "recent_tips": [],
+            "payout": {
+                "schedule_key": schedule,
+                "schedule_label": _PAYOUT_SCHEDULE_LABELS.get(schedule, schedule),
+                "period_range_label": range_label,
+                "driver_fare_share_pct": pct_display,
+            },
+        }
+
+    all_time = _aggregate_driver_trips_for_income(driver_id, driver_share)
+    pay_period = _aggregate_driver_trips_for_income(
+        driver_id,
+        driver_share,
+        period_start=period_start,
+        period_end_exclusive=period_end,
+    )
+
+    recent_tips_rows = _fetch_all(
+        """
+        SELECT
+            t.TripID AS trip_id,
+            t.StartLoc AS start_loc,
+            t.EndLoc AS end_loc,
+            COALESCE(t.TipAmount, 0) AS tip_amount
+        FROM trip t
+        WHERE t.DriverID = %s
+          AND t.Status = 'completed'
+          AND COALESCE(t.TipAmount, 0) > 0
+        ORDER BY t.TripID DESC
+        LIMIT 20
+        """,
+        (driver_id,),
+    )
+    recent_tips = []
+    for row in recent_tips_rows:
+        recent_tips.append(
+            {
+                "trip_id": int(row.get("trip_id") or 0),
+                "start_loc": row.get("start_loc"),
+                "end_loc": row.get("end_loc"),
+                "tip_amount": float(row.get("tip_amount") or 0),
+            }
+        )
+
+    return {
+        "all_time": all_time,
+        "pay_period": pay_period,
+        "recent_tips": recent_tips,
+        "payout": {
+            "schedule_key": schedule,
+            "schedule_label": _PAYOUT_SCHEDULE_LABELS.get(schedule, schedule),
+            "period_range_label": range_label,
+            "driver_fare_share_pct": pct_display,
+        },
+    }
+
+
+def submit_rider_rating_for_driver(
+    rider_id: int,
+    trip_id: int,
+    rating: int,
+    comment: str | None = None,
+    tip_amount: float | None = None,
+) -> tuple[bool, str]:
+    if not _table_exists("trip"):
+        return False, "Trips are not available."
+    _ensure_tip_amount_column()
     rating = max(1, min(5, int(rating)))
     rows = _fetch_all(
         """
@@ -1478,4 +1841,62 @@ def submit_rider_rating_for_driver(
                 (driver_id, rider_id, trip_id, rating, comment_val),
             )
 
+    if tip_amount is not None:
+        try:
+            tip_val = float(tip_amount)
+        except (TypeError, ValueError):
+            return False, "Tip amount is invalid."
+        tip_val = max(0.0, min(round(tip_val, 2), 999.99))
+        _execute(
+            """
+            UPDATE trip
+            SET TipAmount = %s
+            WHERE TripID = %s AND RiderID = %s
+            """,
+            (tip_val, trip_id, rider_id),
+        )
+
     return True, "Thanks for your feedback."
+
+
+def submit_rider_tip_for_trip(
+    rider_id: int,
+    trip_id: int,
+    tip_amount: float,
+) -> tuple[bool, str]:
+    """Set tip after the rider already submitted a rating (e.g. add a tip later)."""
+    if not _table_exists("trip"):
+        return False, "Trips are not available."
+    _ensure_tip_amount_column()
+    try:
+        tip_val = float(tip_amount)
+    except (TypeError, ValueError):
+        return False, "Tip amount is invalid."
+    tip_val = max(0.0, min(round(tip_val, 2), 999.99))
+    rows = _fetch_all(
+        """
+        SELECT t.TripID, t.RiderID, t.Status, t.RiderRate, COALESCE(t.TipAmount, 0) AS tip_amt
+        FROM trip t
+        WHERE t.TripID = %s AND t.RiderID = %s
+        """,
+        (trip_id, rider_id),
+    )
+    if not rows:
+        return False, "Trip not found."
+    row = rows[0]
+    if (row.get("Status") or "").strip().lower() != "completed":
+        return False, "You can only tip on completed trips."
+    if row.get("RiderRate") is None:
+        return False, "Rate your driver before adding a tip."
+    existing_tip = float(row.get("tip_amt") or 0)
+    if existing_tip > 0:
+        return False, "A tip was already added for this trip."
+    _execute(
+        """
+        UPDATE trip
+        SET TipAmount = %s
+        WHERE TripID = %s AND RiderID = %s
+        """,
+        (tip_val, trip_id, rider_id),
+    )
+    return True, "Tip saved."

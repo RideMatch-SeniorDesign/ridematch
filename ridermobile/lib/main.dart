@@ -867,6 +867,20 @@ class _DashboardTabState extends State<DashboardTab> {
     }
   }
 
+  List<Widget> _tripDetailTipWidgets(Map<String, dynamic> trip) {
+    final tip = double.tryParse((trip["tip_amount"] ?? "").toString());
+    if (tip == null || tip <= 0) {
+      return [];
+    }
+    return [
+      const SizedBox(height: 8),
+      Text(
+        "Tip: \$${tip.toStringAsFixed(2)}",
+        style: const TextStyle(color: Color(0xFF7EB3FF), fontWeight: FontWeight.w600),
+      ),
+    ];
+  }
+
   void _showTripInfo(Map<String, dynamic> trip) {
     final cost = trip["final_cost"];
     final costLabel = cost == null ? "Not finalized yet" : "\$$cost";
@@ -886,9 +900,10 @@ class _DashboardTabState extends State<DashboardTab> {
               ),
               const SizedBox(height: 12),
               Text("Fare: $costLabel", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              ..._tripDetailTipWidgets(trip),
               const SizedBox(height: 8),
               Text(
-                "Tips are optional. When your driver enables tipping after the trip, you can add one from your trip receipt or payment flow.",
+                "Tips are optional and go to your driver in full. Add one when you rate a completed trip.",
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13, height: 1.35),
               ),
             ],
@@ -926,6 +941,8 @@ class _DashboardTabState extends State<DashboardTab> {
 
   @override
   Widget build(BuildContext context) {
+    final welcomeFirst = (widget.user["first_name"] ?? "").toString().trim();
+    final rideHeroTitle = welcomeFirst.isEmpty ? "Request a ride" : "Welcome, $welcomeFirst";
     final currentPrefs = _prefsListFromUser(widget.user);
     return _PageShell(
       child: RefreshIndicator(
@@ -968,9 +985,9 @@ class _DashboardTabState extends State<DashboardTab> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              "Request a ride",
-                              style: TextStyle(
+                            Text(
+                              rideHeroTitle,
+                              style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w700,
                                 color: Colors.white,
@@ -1005,11 +1022,8 @@ class _DashboardTabState extends State<DashboardTab> {
                 spacing: 10,
                 runSpacing: 10,
                 children: [
-                  _Stat("Total", "${_summary["trip_count"] ?? 0}"),
-                  _Stat("Completed", "${_summary["completed_count"] ?? 0}"),
-                  _Stat("Active", "${_summary["active_count"] ?? 0}"),
-                  _Stat("You rated", _metric(_summary["avg_given_rating"])),
-                  _Stat("Your score", _metric(_summary["avg_received_rating"])),
+                  _Stat("Completed trips", "${_summary["completed_count"] ?? 0}"),
+                  _Stat("Your rating", _metric(_summary["avg_received_rating"])),
                 ],
               ),
               const SizedBox(height: 16),
@@ -1132,6 +1146,14 @@ class _RideTabState extends State<RideTab> {
   final _dropoff = TextEditingController();
   final _notes = TextEditingController();
   Timer? _poll;
+  Timer? _pickupSuggestTimer;
+  Timer? _dropoffSuggestTimer;
+  List<Map<String, dynamic>> _pickupSuggestions = [];
+  List<Map<String, dynamic>> _dropoffSuggestions = [];
+  bool _pickupSuggestLoading = false;
+  bool _dropoffSuggestLoading = false;
+  bool _suppressPickupSuggest = false;
+  bool _suppressDropoffSuggest = false;
   Map<String, dynamic>? _trip;
   String _message = "";
   bool _busy = false;
@@ -1139,10 +1161,13 @@ class _RideTabState extends State<RideTab> {
   LatLng? _pickupPoint;
   LatLng? _dropoffPoint;
   LatLng? _driverPoint;
+  final Set<int> _autoShownReviewTripIds = <int>{};
 
   @override
   void initState() {
     super.initState();
+    _pickup.addListener(_onPickupTextChanged);
+    _dropoff.addListener(_onDropoffTextChanged);
     _load();
     _poll = Timer.periodic(const Duration(seconds: 7), (_) => _load());
   }
@@ -1150,10 +1175,206 @@ class _RideTabState extends State<RideTab> {
   @override
   void dispose() {
     _poll?.cancel();
+    _pickupSuggestTimer?.cancel();
+    _dropoffSuggestTimer?.cancel();
+    _pickup.removeListener(_onPickupTextChanged);
+    _dropoff.removeListener(_onDropoffTextChanged);
     _pickup.dispose();
     _dropoff.dispose();
     _notes.dispose();
     super.dispose();
+  }
+
+  void _onPickupTextChanged() {
+    if (_suppressPickupSuggest) {
+      return;
+    }
+    _pickupSuggestTimer?.cancel();
+    _pickupSuggestTimer = Timer(const Duration(milliseconds: 380), () {
+      if (mounted) {
+        _runAddressAutocomplete(isPickup: true);
+      }
+    });
+  }
+
+  void _onDropoffTextChanged() {
+    if (_suppressDropoffSuggest) {
+      return;
+    }
+    _dropoffSuggestTimer?.cancel();
+    _dropoffSuggestTimer = Timer(const Duration(milliseconds: 380), () {
+      if (mounted) {
+        _runAddressAutocomplete(isPickup: false);
+      }
+    });
+  }
+
+  String _autocompleteLabel(Map<String, dynamic> item) {
+    final formatted = item["formatted"];
+    if (formatted != null && formatted.toString().trim().isNotEmpty) {
+      return formatted.toString();
+    }
+    final line = (item["address_line1"] ?? item["name"] ?? "").toString().trim();
+    final place = (item["city"] ?? item["state"] ?? "").toString().trim();
+    if (line.isNotEmpty && place.isNotEmpty) {
+      return "$line, $place";
+    }
+    return line.isNotEmpty ? line : "Address";
+  }
+
+  Future<void> _runAddressAutocomplete({required bool isPickup}) async {
+    final controller = isPickup ? _pickup : _dropoff;
+    final query = controller.text.trim();
+    if (query.length < 3) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (isPickup) {
+          _pickupSuggestions = [];
+        } else {
+          _dropoffSuggestions = [];
+        }
+      });
+      return;
+    }
+    setState(() {
+      if (isPickup) {
+        _pickupSuggestLoading = true;
+      } else {
+        _dropoffSuggestLoading = true;
+      }
+    });
+    try {
+      final maps = await _api.fetchMapsConfig();
+      final key = (maps["geoapify_api_key"] ?? "").toString().trim();
+      if (key.isEmpty) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          if (isPickup) {
+            _pickupSuggestions = [];
+            _pickupSuggestLoading = false;
+          } else {
+            _dropoffSuggestions = [];
+            _dropoffSuggestLoading = false;
+          }
+        });
+        return;
+      }
+      final res = await _api.geocodeAddress(
+        apiKey: key,
+        address: query,
+        proximityLatitude: _pickupPoint?.latitude,
+        proximityLongitude: _pickupPoint?.longitude,
+      );
+      final raw = (res["results"] as List?) ?? [];
+      final list = <Map<String, dynamic>>[];
+      for (final item in raw) {
+        if (item is Map) {
+          list.add(Map<String, dynamic>.from(item));
+        }
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (isPickup) {
+          _pickupSuggestions = list.take(5).toList();
+          _pickupSuggestLoading = false;
+        } else {
+          _dropoffSuggestions = list.take(5).toList();
+          _dropoffSuggestLoading = false;
+        }
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (isPickup) {
+          _pickupSuggestions = [];
+          _pickupSuggestLoading = false;
+        } else {
+          _dropoffSuggestions = [];
+          _dropoffSuggestLoading = false;
+        }
+      });
+    }
+  }
+
+  void _applyAutocomplete(Map<String, dynamic> item, {required bool isPickup}) {
+    final label = _autocompleteLabel(item);
+    final lat = item["lat"];
+    final lon = item["lon"];
+    final pt = _point(lat, lon);
+    _pickupSuggestTimer?.cancel();
+    _dropoffSuggestTimer?.cancel();
+    if (isPickup) {
+      _suppressPickupSuggest = true;
+      _pickup.text = label;
+    } else {
+      _suppressDropoffSuggest = true;
+      _dropoff.text = label;
+    }
+    setState(() {
+      if (isPickup) {
+        _pickupPoint = pt;
+        _pickupSuggestions = [];
+        _pickupSuggestLoading = false;
+      } else {
+        _dropoffPoint = pt;
+        _dropoffSuggestions = [];
+        _dropoffSuggestLoading = false;
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (isPickup) {
+        _suppressPickupSuggest = false;
+      } else {
+        _suppressDropoffSuggest = false;
+      }
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  Widget _addressSuggestions({
+    required List<Map<String, dynamic>> items,
+    required bool isPickup,
+  }) {
+    if (items.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 200),
+          child: ListView.separated(
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            itemCount: items.length,
+            separatorBuilder: (_, _) => Divider(height: 1, color: Colors.white.withValues(alpha: 0.08)),
+            itemBuilder: (context, i) {
+              final item = items[i];
+              final title = _autocompleteLabel(item);
+              return ListTile(
+                dense: true,
+                leading: Icon(Icons.place_outlined, size: 20, color: Colors.white.withValues(alpha: 0.75)),
+                title: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+                onTap: () => _applyAutocomplete(item, isPickup: isPickup),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -1163,10 +1384,50 @@ class _RideTabState extends State<RideTab> {
         return;
       }
       final trip = res["trip"];
+      final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
+      final hadTrip = _trip != null;
       setState(() {
-        _trip = trip is Map ? Map<String, dynamic>.from(trip) : null;
+        _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
       });
+      if (hadTrip && nextTrip == null) {
+        await _promptPostRideReviewIfPending();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _promptPostRideReviewIfPending() async {
+    try {
+      final res = await _api.fetchPendingReviews(riderId: _id(widget.user));
+      if (!mounted || res["success"] != true) {
+        return;
+      }
+      final list = (res["pending"] as List?) ?? [];
+      for (final raw in list) {
+        if (raw is! Map) {
+          continue;
+        }
+        final trip = Map<String, dynamic>.from(raw);
+        final tid = _int(trip["trip_id"]);
+        if (tid == null) {
+          continue;
+        }
+        if (_autoShownReviewTripIds.contains(tid)) {
+          continue;
+        }
+        _autoShownReviewTripIds.add(tid);
+        if (!mounted) {
+          return;
+        }
+        await showRiderTripReviewSheet(
+          context,
+          api: _api,
+          riderId: _id(widget.user),
+          trip: trip,
+          onSubmitted: _load,
+        );
+        break;
+      }
     } catch (_) {}
   }
 
@@ -1206,11 +1467,26 @@ class _RideTabState extends State<RideTab> {
       final maps = await _api.fetchMapsConfig();
       final key = (maps["geoapify_api_key"] ?? "").toString().trim();
       if (key.isNotEmpty) {
-        final end = await _api.geocodeAddress(apiKey: key, address: _dropoff.text.trim(), proximityLatitude: _pickupPoint?.latitude, proximityLongitude: _pickupPoint?.longitude);
-        final results = (end["results"] as List?) ?? [];
-        if (results.isNotEmpty && results.first is Map) {
-          final first = Map<String, dynamic>.from(results.first as Map);
-          _dropoffPoint = _point(first["lat"], first["lon"]);
+        if (_pickupPoint == null && _pickup.text.trim().isNotEmpty) {
+          final start = await _api.geocodeAddress(apiKey: key, address: _pickup.text.trim());
+          final startResults = (start["results"] as List?) ?? [];
+          if (startResults.isNotEmpty && startResults.first is Map) {
+            final first = Map<String, dynamic>.from(startResults.first as Map);
+            _pickupPoint = _point(first["lat"], first["lon"]);
+          }
+        }
+        if (_dropoffPoint == null && _dropoff.text.trim().isNotEmpty) {
+          final end = await _api.geocodeAddress(
+            apiKey: key,
+            address: _dropoff.text.trim(),
+            proximityLatitude: _pickupPoint?.latitude,
+            proximityLongitude: _pickupPoint?.longitude,
+          );
+          final results = (end["results"] as List?) ?? [];
+          if (results.isNotEmpty && results.first is Map) {
+            final first = Map<String, dynamic>.from(results.first as Map);
+            _dropoffPoint = _point(first["lat"], first["lon"]);
+          }
         }
       }
       final res = await _api.requestRide(riderId: _id(widget.user), startLoc: _pickup.text.trim(), endLoc: _dropoff.text.trim(), rideType: _rideType, notes: _notes.text.trim());
@@ -1276,6 +1552,8 @@ class _RideTabState extends State<RideTab> {
           child: const Icon(Icons.directions_car, color: Colors.white, size: 30),
         ),
     ];
+    final welcomeFirst = (widget.user["first_name"] ?? "").toString().trim();
+    final rideHeroTitle = welcomeFirst.isEmpty ? "Request a ride" : "Welcome, $welcomeFirst";
     return _PageShell(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -1290,9 +1568,9 @@ class _RideTabState extends State<RideTab> {
                   children: [
                     Icon(Icons.map_outlined, color: Colors.white.withValues(alpha: 0.9), size: 22),
                     const SizedBox(width: 8),
-                    const Text(
-                      "Request a ride",
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+                    Text(
+                      rideHeroTitle,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
                     ),
                   ],
                 ),
@@ -1334,19 +1612,42 @@ class _RideTabState extends State<RideTab> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  Text(
+                    "Start typing — matching addresses appear below. Pick one to lock the location.",
+                    style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.55), height: 1.3),
+                  ),
+                  const SizedBox(height: 10),
                   TextField(
                     controller: _pickup,
                     style: const TextStyle(color: Colors.white),
                     cursorColor: Colors.white,
-                    decoration: _riderShellInputDecoration(label: "Pickup"),
+                    textInputAction: TextInputAction.next,
+                    decoration: _riderShellInputDecoration(label: "Pickup").copyWith(
+                      suffixIcon: _pickupSuggestLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                            )
+                          : Icon(Icons.search, color: Colors.white.withValues(alpha: 0.45)),
+                    ),
                   ),
+                  _addressSuggestions(items: _pickupSuggestions, isPickup: true),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _dropoff,
                     style: const TextStyle(color: Colors.white),
                     cursorColor: Colors.white,
-                    decoration: _riderShellInputDecoration(label: "Dropoff"),
+                    textInputAction: TextInputAction.next,
+                    decoration: _riderShellInputDecoration(label: "Dropoff").copyWith(
+                      suffixIcon: _dropoffSuggestLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                            )
+                          : Icon(Icons.search, color: Colors.white.withValues(alpha: 0.45)),
+                    ),
                   ),
+                  _addressSuggestions(items: _dropoffSuggestions, isPickup: false),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     value: _rideType, // ignore: deprecated_member_use — controlled selection
@@ -2141,17 +2442,22 @@ Future<void> showRiderTripReviewSheet(
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    isDismissible: true,
+    enableDrag: true,
     backgroundColor: const Color(0xFF152A42),
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
     builder: (ctx) {
-      return _TripReviewSheetBody(
-        api: api,
-        riderId: riderId,
-        trip: trip,
-        onSubmitted: () {
-          Navigator.pop(ctx);
-          onSubmitted();
-        },
+      return Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+        child: _TripReviewSheetBody(
+          api: api,
+          riderId: riderId,
+          trip: trip,
+          onSubmitted: () {
+            Navigator.pop(ctx);
+            onSubmitted();
+          },
+        ),
       );
     },
   );
@@ -2176,12 +2482,33 @@ class _TripReviewSheetBody extends StatefulWidget {
 class _TripReviewSheetBodyState extends State<_TripReviewSheetBody> {
   int _stars = 5;
   final _comment = TextEditingController();
+  final _tipCustom = TextEditingController();
+  double _tipPreset = 0;
   bool _busy = false;
 
   @override
   void dispose() {
     _comment.dispose();
+    _tipCustom.dispose();
     super.dispose();
+  }
+
+  void _selectTipPreset(double dollars) {
+    setState(() {
+      _tipPreset = dollars;
+      _tipCustom.clear();
+    });
+  }
+
+  double _effectiveTipDollars() {
+    final custom = _tipCustom.text.trim();
+    if (custom.isNotEmpty) {
+      final v = double.tryParse(custom);
+      if (v != null) {
+        return v < 0 ? 0 : v;
+      }
+    }
+    return _tipPreset < 0 ? 0 : _tipPreset;
   }
 
   Future<void> _submit() async {
@@ -2191,11 +2518,13 @@ class _TripReviewSheetBodyState extends State<_TripReviewSheetBody> {
       if (tid == null) {
         return;
       }
+      final tip = _effectiveTipDollars();
       final res = await widget.api.submitTripReview(
         tripId: tid,
         riderId: widget.riderId,
         rating: _stars,
         comment: _comment.text.trim(),
+        tipAmount: tip,
       );
       if (!mounted) {
         return;
@@ -2220,65 +2549,119 @@ class _TripReviewSheetBodyState extends State<_TripReviewSheetBody> {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
-    return Padding(
-      padding: EdgeInsets.only(left: 20, right: 20, top: 16, bottom: 16 + bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text("Rate your driver", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
-          const SizedBox(height: 6),
-          Text(
-            "${widget.trip["start_loc"] ?? "—"} → ${widget.trip["end_loc"] ?? "—"}",
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: List.generate(5, (i) {
-              final n = i + 1;
-              return IconButton(
-                onPressed: _busy ? null : () => setState(() => _stars = n),
-                icon: Icon(
-                  n <= _stars ? Icons.star_rounded : Icons.star_outline_rounded,
-                  color: const Color(0xFFFFD54F),
-                  size: 36,
+    final presets = <double>[0, 2, 5, 10];
+    return SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.only(left: 20, right: 20, top: 16, bottom: 16 + bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(4),
                 ),
-              );
-            }),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _comment,
-            maxLines: 3,
-            style: const TextStyle(color: Colors.white),
-            cursorColor: Colors.white,
-            decoration: _riderShellInputDecoration(label: "Comment (optional)"),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _busy ? null : _submit,
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: _kAuthDeepBlue,
-                padding: const EdgeInsets.symmetric(vertical: 14),
               ),
-              child: Text(_busy ? "Submitting..." : "Submit review"),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const SizedBox(width: 40),
+                const Expanded(
+                  child: Text(
+                    "Rate & tip",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+                  ),
+                ),
+                IconButton(
+                  tooltip: "Close",
+                  onPressed: _busy ? null : () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "${widget.trip["start_loc"] ?? "—"} → ${widget.trip["end_loc"] ?? "—"}",
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: List.generate(5, (i) {
+                final n = i + 1;
+                return IconButton(
+                  onPressed: _busy ? null : () => setState(() => _stars = n),
+                  icon: Icon(
+                    n <= _stars ? Icons.star_rounded : Icons.star_outline_rounded,
+                    color: const Color(0xFFFFD54F),
+                    size: 36,
+                  ),
+                );
+              }),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _comment,
+              maxLines: 3,
+              style: const TextStyle(color: Colors.white),
+              cursorColor: Colors.white,
+              decoration: _riderShellInputDecoration(label: "Comment (optional)"),
+            ),
+            const SizedBox(height: 16),
+            Text("Tip (optional)", style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: presets.map((v) {
+                final selected = _tipCustom.text.isEmpty && _tipPreset == v;
+                return ChoiceChip(
+                  showCheckmark: false,
+                  selected: selected,
+                  label: Text(v == 0 ? r"$0" : "\$$v"),
+                  selectedColor: Colors.white,
+                  labelStyle: TextStyle(
+                    color: selected ? _kAuthDeepBlue : Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  onSelected: _busy ? null : (_) => _selectTipPreset(v),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _tipCustom,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              cursorColor: Colors.white,
+              onChanged: (_) => setState(() {}),
+              decoration: _riderShellInputDecoration(label: "Custom tip (\$)"),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "You can close and finish later from Reviews or your trip list. Tips go to your driver in full.",
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12, height: 1.35),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _busy ? null : _submit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: _kAuthDeepBlue,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text(_busy ? "Submitting..." : "Submit"),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -576,6 +576,74 @@ def api_driver_profile(driver_id: int):
     return jsonify({"success": True, "user": user}), 200
 
 
+@app.route("/api/driver/profile/<int:driver_id>", methods=["POST"])
+def api_driver_profile_update(driver_id: int):
+    payload = request.get_json(silent=True) or {}
+    first_name = str(payload.get("first_name") or "").strip()
+    last_name = str(payload.get("last_name") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    phone = str(payload.get("phone") or "").strip()
+    preferences = payload.get("preferences") or []
+
+    if not all([first_name, last_name, email, phone]):
+        return jsonify({"success": False, "error": "First name, last name, email, and phone are required."}), 400
+
+    if isinstance(preferences, list):
+        normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
+    else:
+        normalized_preferences = _split_preferences(str(preferences))
+
+    try:
+        from Database.admin_queries import fetch_portal_profile, update_portal_profile
+
+        update_portal_profile(
+            "driver",
+            driver_id,
+            {
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "phone": phone,
+                "preferences": _join_preferences(normalized_preferences),
+            },
+        )
+        user = fetch_portal_profile("driver", driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver profile API update failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not save settings right now."}), 500
+
+    if not user:
+        return jsonify({"success": False, "error": "Driver profile not found after update."}), 404
+    photo_url = _driver_photo_url_if_exists(driver_id)
+    if photo_url:
+        user["photo_url"] = photo_url
+    else:
+        user.pop("photo_url", None)
+    return jsonify({"success": True, "message": "Driver settings updated.", "user": user}), 200
+
+
+@app.route("/api/driver/change-password", methods=["POST"])
+def api_driver_change_password():
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    current_password = str(payload.get("current_password") or "")
+    new_password = str(payload.get("new_password") or "")
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+    if not current_password or not new_password:
+        return jsonify({"success": False, "error": "Current and new passwords are required."}), 400
+    try:
+        from Database.admin_queries import update_driver_password
+
+        ok, message = update_driver_password(driver_id, current_password, new_password)
+    except Exception as exc:
+        app.logger.warning("Driver change password failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not update password right now."}), 500
+    if not ok:
+        return jsonify({"success": False, "error": message}), 400
+    return jsonify({"success": True, "message": message}), 200
+
+
 @app.route("/api/driver/dispatch/<int:driver_id>", methods=["GET"])
 def api_driver_dispatch(driver_id: int):
     try:
@@ -651,6 +719,97 @@ def api_maps_config():
             "geoapify_api_key": os.environ.get("GEOAPIFY_API_KEY", "").strip(),
         }
     ), 200
+
+
+@app.route("/api/driver/dashboard/<int:driver_id>", methods=["GET"])
+def api_driver_dashboard(driver_id: int):
+    summary = {
+        "trip_count": 0,
+        "completed_count": 0,
+        "active_count": 0,
+        "avg_given_rating": None,
+        "avg_received_rating": None,
+    }
+    trips = []
+    user = None
+    try:
+        from Database.admin_queries import fetch_portal_dashboard_summary, fetch_portal_profile, fetch_portal_trip_history
+
+        user = fetch_portal_profile("driver", driver_id)
+        summary = fetch_portal_dashboard_summary("driver", driver_id)
+        trips = fetch_portal_trip_history("driver", driver_id)[:10]
+    except Exception as exc:
+        app.logger.warning("Driver dashboard API load failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load dashboard right now."}), 500
+
+    if not user:
+        return jsonify({"success": False, "error": "Driver profile not found."}), 404
+    return jsonify({"success": True, "user": user, "summary": summary, "trips": trips}), 200
+
+
+@app.route("/api/driver/reviews/<int:driver_id>", methods=["GET"])
+def api_driver_reviews(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_portal_reviews
+
+        review_data = fetch_portal_reviews("driver", driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver reviews API load failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load review history right now."}), 500
+    return jsonify({"success": True, "review_data": review_data}), 200
+
+
+@app.route("/api/driver/pending-reviews/<int:driver_id>", methods=["GET"])
+def api_driver_pending_reviews(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_trips_pending_driver_rating
+
+        pending = fetch_trips_pending_driver_rating(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver pending reviews API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load pending reviews."}), 500
+    return jsonify({"success": True, "pending": pending}), 200
+
+
+@app.route("/api/driver/trip/<int:trip_id>/review", methods=["POST"])
+def api_driver_trip_review(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    rating_raw = payload.get("rating")
+    comment = str(payload.get("comment") or "").strip()
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+    try:
+        rating = int(rating_raw)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "rating must be a number between 1 and 5."}), 400
+    try:
+        from Database.admin_queries import submit_driver_rating_for_rider
+
+        ok, message = submit_driver_rating_for_rider(
+            driver_id,
+            trip_id,
+            rating,
+            comment or None,
+        )
+    except Exception as exc:
+        app.logger.warning("Driver trip review submit failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not submit review right now."}), 500
+    if not ok:
+        return jsonify({"success": False, "error": message}), 400
+    return jsonify({"success": True, "message": message}), 200
+
+
+@app.route("/api/driver/income/<int:driver_id>", methods=["GET"])
+def api_driver_income(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_driver_income_stats
+
+        stats = fetch_driver_income_stats(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver income API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load income right now."}), 500
+    return jsonify({"success": True, "stats": stats}), 200
 
 
 @app.route("/api/driver/trip/<int:trip_id>/accept", methods=["POST"])
