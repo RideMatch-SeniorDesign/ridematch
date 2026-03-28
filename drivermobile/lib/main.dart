@@ -2096,7 +2096,7 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
     final displayName = "$firstName $lastName".trim().isEmpty ? "Driver" : "$firstName $lastName".trim();
     final statusTitle = status.replaceAll("_", " ");
     final accountId = _extractAccountId(_user) ?? _extractAccountId(widget.user);
-    final photoUrl = accountId == null ? null : "http://10.0.2.2:8002/api/driver/photo/$accountId?v=$_photoVersion";
+    final photoUrl = accountId == null ? null : "${_api.realtimeBaseUrl}/api/driver/photo/$accountId?v=$_photoVersion";
 
     return Container(
       decoration: const BoxDecoration(
