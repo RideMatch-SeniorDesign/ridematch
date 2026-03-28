@@ -22,18 +22,71 @@ class ApiClient {
     required String username,
     required String password,
   }) async {
-    final response = await _dio.post(
-      "/api/rider/login",
-      data: {"username": username, "password": password},
-    );
-    return Map<String, dynamic>.from(response.data as Map);
+    try {
+      final response = await _dio.post(
+        "/api/rider/login",
+        data: {"username": username, "password": password},
+      );
+      final data = response.data;
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
+      return <String, dynamic>{"success": false, "error": "Unexpected response from server."};
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        if (result["success"] == false) {
+          final err = (result["error"] ?? "").toString().toLowerCase();
+          if (err.contains("invalid")) {
+            result["error"] = "Invalid username or password.";
+          }
+        }
+        return result;
+      }
+      final code = exc.response?.statusCode;
+      if (code == 401 || code == 400) {
+        return <String, dynamic>{
+          "success": false,
+          "error": "Invalid username or password.",
+        };
+      }
+      if (exc.response == null) {
+        return <String, dynamic>{
+          "success": false,
+          "error": "Could not reach the server. Check your connection.",
+        };
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not sign in. Try again.",
+      };
+    }
   }
 
   Future<Map<String, dynamic>> signup({
     required Map<String, dynamic> payload,
   }) async {
-    final response = await _dio.post("/api/rider/signup", data: payload);
-    return Map<String, dynamic>.from(response.data as Map);
+    try {
+      final response = await _dio.post("/api/rider/signup", data: payload);
+      final data = response.data;
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
+      return <String, dynamic>{"success": false, "error": "Unexpected response from server."};
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not create account. Check your connection and try again.",
+      };
+    }
   }
 
   Future<Map<String, dynamic>> fetchProfile({
@@ -101,6 +154,72 @@ class ApiClient {
       data: {"rider_id": riderId},
     );
     return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> changePassword({
+    required int riderId,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/rider/change-password",
+        data: {
+          "rider_id": riderId,
+          "current_password": currentPassword,
+          "new_password": newPassword,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not update password. Try again.",
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> fetchPendingReviews({
+    required int riderId,
+  }) async {
+    final response = await _dio.get("/api/rider/pending-reviews/$riderId");
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> submitTripReview({
+    required int tripId,
+    required int riderId,
+    required int rating,
+    String? comment,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/rider/trip/$tripId/review",
+        data: {
+          "rider_id": riderId,
+          "rating": rating,
+          if (comment != null && comment.isNotEmpty) "comment": comment,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not submit review. Try again.",
+      };
+    }
   }
 
   Future<Map<String, dynamic>> fetchMapsConfig() async {

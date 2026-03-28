@@ -377,6 +377,102 @@ def api_driver_login():
     return jsonify({"success": True, "user": user}), 200
 
 
+@app.route("/api/driver/signup", methods=["POST"])
+def api_driver_signup():
+    """Multipart signup for mobile (same profile photo rules as the web form: JPG/PNG/WebP, max 5 MB)."""
+    content_type = str(request.content_type or "").lower()
+    if "multipart/form-data" not in content_type:
+        return jsonify(
+            {
+                "success": False,
+                "error": "Send multipart/form-data with a profile_photo file (JPG, PNG, or WebP, max 5 MB).",
+            }
+        ), 400
+
+    first_name = str(request.form.get("first_name") or "").strip()
+    last_name = str(request.form.get("last_name") or "").strip()
+    username = str(request.form.get("username") or "").strip()
+    email = str(request.form.get("email") or "").strip()
+    phone = str(request.form.get("phone") or "").strip()
+    license_state = str(request.form.get("license_state") or "").strip().upper()
+    license_number = str(request.form.get("license_number") or "").strip()
+    license_expires = str(request.form.get("license_expires") or "").strip()
+    insurance_provider = str(request.form.get("insurance_provider") or "").strip()
+    insurance_policy = str(request.form.get("insurance_policy") or "").strip()
+    date_of_birth = str(request.form.get("date_of_birth") or "").strip()
+    password = str(request.form.get("password") or "")
+    confirm_password = str(request.form.get("confirm_password") or "")
+    preferences = request.form.getlist("preferences")
+
+    required = [
+        first_name,
+        last_name,
+        username,
+        email,
+        phone,
+        license_state,
+        license_number,
+        insurance_provider,
+        insurance_policy,
+    ]
+    if not all(required):
+        return jsonify({"success": False, "error": "Please fill in all required fields."}), 400
+    if license_state not in US_STATE_OPTIONS:
+        return jsonify({"success": False, "error": "Select a valid license state."}), 400
+    if len(password) < 6:
+        return jsonify({"success": False, "error": "Password must be at least 6 characters."}), 400
+    if password != confirm_password:
+        return jsonify({"success": False, "error": "Passwords do not match."}), 400
+
+    normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
+
+    photo_payload, photo_error = _validate_and_store_driver_profile_photo(required=True)
+    if photo_error or not photo_payload:
+        return jsonify({"success": False, "error": photo_error or "Driver profile photo is required."}), 400
+
+    try:
+        from Database.admin_queries import create_driver_signup
+
+        account_id = create_driver_signup(
+            username=username,
+            email=email,
+            phone=phone,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            preferences=", ".join(normalized_preferences),
+            date_of_birth=date_of_birth or None,
+            license_state=license_state,
+            license_number=license_number,
+            license_expires=license_expires or None,
+            insurance_provider=insurance_provider,
+            insurance_policy=insurance_policy,
+            profile_photo=photo_payload,
+        )
+    except Exception as exc:
+        app.logger.warning("Driver API signup failed: %s", exc)
+        try:
+            if photo_payload and photo_payload.get("storage_path"):
+                (APP_PATH / str(photo_payload["storage_path"])).unlink(missing_ok=True)
+        except Exception:
+            pass
+        return jsonify(
+            {
+                "success": False,
+                "error": "Could not create driver account. Username/email may already exist or the database is unavailable.",
+            }
+        ), 500
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Driver account created. An administrator must approve your account before you can sign in.",
+            "account_id": account_id,
+            "pending_review": True,
+        }
+    ), 201
+
+
 @app.route("/api/driver/photo/<int:driver_id>")
 def api_driver_photo(driver_id: int):
     try:

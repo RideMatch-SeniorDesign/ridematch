@@ -900,7 +900,7 @@ def fetch_portal_reviews(role: str, account_id: int) -> dict[str, list[dict[str,
                     NULL AS review_date,
                     t.DriverRate AS rating,
                     NULL AS comment,
-                    CONCAT(dacc.FirstName, ' ', dacc.LastName) AS counterpart_name,
+                    'Anonymous' AS counterpart_name,
                     t.Status AS trip_status,
                     'driver_to_rider' AS source
                 FROM trip t
@@ -1365,3 +1365,117 @@ def fetch_driver_profile_photo_path(account_id: int) -> str | None:
     if not rows:
         return None
     return rows[0].get("storage_path")
+
+
+def update_rider_password(account_id: int, current_password: str, new_password: str) -> tuple[bool, str]:
+    rows = _fetch_all(
+        "SELECT UserName FROM account WHERE AccountID = %s LIMIT 1",
+        (account_id,),
+    )
+    if not rows:
+        return False, "Account not found."
+    username = str(rows[0].get("UserName") or "").strip()
+    if not username:
+        return False, "Account not found."
+    verified = authenticate_portal_user("rider", username, current_password)
+    if not verified:
+        return False, "Current password is incorrect."
+    if len(new_password) < 6:
+        return False, "Password must be at least 6 characters."
+    _execute(
+        "UPDATE account SET Password = %s WHERE AccountID = %s",
+        (new_password, account_id),
+    )
+    return True, "Password updated."
+
+
+def fetch_trips_pending_rider_rating(rider_id: int) -> list[dict[str, Any]]:
+    if not _table_exists("trip"):
+        return []
+    return _fetch_all(
+        """
+        SELECT
+            t.TripID AS trip_id,
+            t.Status AS status,
+            t.StartLoc AS start_loc,
+            t.EndLoc AS end_loc,
+            t.FinalCost AS final_cost,
+            CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name
+        FROM trip t
+        JOIN account dacc ON dacc.AccountID = t.DriverID
+        WHERE t.RiderID = %s
+          AND t.Status = 'completed'
+          AND t.RiderRate IS NULL
+        ORDER BY t.TripID DESC
+        LIMIT 25
+        """,
+        (rider_id,),
+    )
+
+
+def submit_rider_rating_for_driver(
+    rider_id: int,
+    trip_id: int,
+    rating: int,
+    comment: str | None = None,
+) -> tuple[bool, str]:
+    if not _table_exists("trip"):
+        return False, "Trips are not available."
+    rating = max(1, min(5, int(rating)))
+    rows = _fetch_all(
+        """
+        SELECT t.TripID, t.RiderID, t.Status, t.DriverID, t.RiderRate
+        FROM trip t
+        WHERE t.TripID = %s AND t.RiderID = %s
+        """,
+        (trip_id, rider_id),
+    )
+    if not rows:
+        return False, "Trip not found."
+    row = rows[0]
+    if (row.get("Status") or "").strip().lower() != "completed":
+        return False, "You can only review completed trips."
+    if row.get("RiderRate") is not None:
+        return False, "You already submitted a rating for this trip."
+    driver_id = int(row.get("DriverID") or 0)
+    if not driver_id:
+        return False, "Trip has no driver."
+
+    _execute(
+        """
+        UPDATE trip
+        SET RiderRate = %s
+        WHERE TripID = %s AND RiderID = %s
+        """,
+        (rating, trip_id, rider_id),
+    )
+
+    if _table_exists("driver_review"):
+        existing = _fetch_all(
+            """
+            SELECT ReviewID FROM driver_review
+            WHERE TripID = %s AND RiderID = %s
+            LIMIT 1
+            """,
+            (trip_id, rider_id),
+        )
+        comment_val = (comment or "").strip() or None
+        if existing:
+            _execute(
+                """
+                UPDATE driver_review
+                SET Rating = %s, Comment = %s
+                WHERE TripID = %s AND RiderID = %s
+                """,
+                (rating, comment_val, trip_id, rider_id),
+            )
+        else:
+            _execute(
+                """
+                INSERT INTO driver_review (DriverID, RiderID, TripID, Rating, Comment)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (driver_id, rider_id, trip_id, rating, comment_val),
+            )
+
+    return True, "Thanks for your feedback."
