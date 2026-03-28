@@ -1,10 +1,15 @@
 import "package:dio/dio.dart";
 
+const _apiHost = String.fromEnvironment(
+  "API_HOST",
+  defaultValue: "10.0.2.2",
+);
+
 class ApiClient {
   ApiClient()
       : _dio = Dio(
           BaseOptions(
-            baseUrl: "http://10.0.2.2:8002",
+            baseUrl: "http://$_apiHost:8002",
             connectTimeout: const Duration(seconds: 10),
             receiveTimeout: const Duration(seconds: 10),
             headers: {"Content-Type": "application/json"},
