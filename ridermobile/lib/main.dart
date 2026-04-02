@@ -20,8 +20,37 @@ class RiderMobileApp extends StatelessWidget {
       title: "RideMatch Rider",
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E)),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF7EB3FF),
+          brightness: Brightness.dark,
+        ).copyWith(
+          surface: _kAuthDeepBlue,
+          primary: const Color(0xFF7EB3FF),
+        ),
         useMaterial3: true,
+        scaffoldBackgroundColor: _kAuthDeepBlue,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: _kAuthDeepBlue,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          centerTitle: true,
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: const Color(0xFF0D2137),
+          indicatorColor: Colors.white.withValues(alpha: 0.12),
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (states) => TextStyle(
+              fontSize: 12,
+              fontWeight: states.contains(WidgetState.selected) ? FontWeight.w600 : FontWeight.w500,
+              color: states.contains(WidgetState.selected) ? Colors.white : Colors.white54,
+            ),
+          ),
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => IconThemeData(
+              color: states.contains(WidgetState.selected) ? Colors.white : Colors.white54,
+            ),
+          ),
+        ),
       ),
       home: const AppBootstrapGate(),
     );
@@ -70,8 +99,219 @@ class _AppBootstrapGateState extends State<AppBootstrapGate> {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         final user = snapshot.data;
-        return user == null ? const LoginPage() : RiderShellPage(user: user);
+        return user == null ? const RideMatchWelcomePage() : RiderShellPage(user: user);
       },
+    );
+  }
+}
+
+/// Matches driver app: solid deep blue auth shell.
+const Color _kAuthDeepBlue = Color(0xFF0A1929);
+
+IconData _preferenceIcon(String label) {
+  switch (label) {
+    case "quiet ride":
+      return Icons.volume_off_rounded;
+    case "music okay":
+      return Icons.music_note_rounded;
+    case "music low":
+      return Icons.graphic_eq_rounded;
+    case "conversation okay":
+      return Icons.forum_rounded;
+    case "no conversation":
+      return Icons.do_not_disturb_on_outlined;
+    case "pet friendly":
+      return Icons.pets_rounded;
+    case "temperature cool":
+      return Icons.ac_unit_rounded;
+    case "temperature warm":
+      return Icons.wb_sunny_rounded;
+    case "no highway":
+      return Icons.alt_route_rounded;
+    default:
+      return Icons.tune_rounded;
+  }
+}
+
+Widget _signupPreferenceChip({
+  required String item,
+  required bool selected,
+  required bool disabled,
+  required ValueChanged<bool> onSelected,
+}) {
+  final iconColor = selected ? _kAuthDeepBlue : Colors.white.withValues(alpha: 0.95);
+  final textColor = selected ? _kAuthDeepBlue : Colors.white;
+  return Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: disabled
+          ? null
+          : () {
+              onSelected(!selected);
+            },
+      borderRadius: BorderRadius.circular(22),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white : const Color(0x33FFFFFF),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: selected ? Colors.white : Colors.white.withValues(alpha: 0.35),
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_preferenceIcon(item), size: 20, color: iconColor),
+            const SizedBox(width: 8),
+            Text(
+              item,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                color: textColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Shown on the dashboard: one pill per saved preference (read-only).
+Widget _readOnlyPreferencePill(String item) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(_preferenceIcon(item), size: 20, color: const Color(0xFF7EB3FF)),
+        const SizedBox(width: 8),
+        Text(
+          item,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+InputDecoration _authFieldDecoration(String label) {
+  const inputFill = Color(0x22FFFFFF);
+  const accent = Color(0xFF7EB3FF);
+  return InputDecoration(
+    labelText: label,
+    labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
+    floatingLabelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.85)),
+    filled: true,
+    fillColor: inputFill,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(color: accent.withValues(alpha: 0.65)),
+    ),
+  );
+}
+
+class RideMatchWelcomePage extends StatelessWidget {
+  const RideMatchWelcomePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kAuthDeepBlue,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Ride Match",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.8,
+                        color: Colors.white,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      "RIDER",
+                      style: TextStyle(
+                        fontSize: 12,
+                        letterSpacing: 3.2,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 0, 28, 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+                      );
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: _kAuthDeepBlue,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    child: const Text("Log in", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(builder: (_) => const RiderSignupPage()),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.45)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text("Sign up", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -88,12 +328,170 @@ class _LoginPageState extends State<LoginPage> {
   final _session = _SessionStore();
   final _username = TextEditingController();
   final _password = TextEditingController();
+  bool _busy = false;
+  String _message = "";
+
+  @override
+  void dispose() {
+    _username.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _busy = true;
+      _message = "";
+    });
+    try {
+      final result = await _api.login(username: _username.text.trim(), password: _password.text);
+      if (!mounted) {
+        return;
+      }
+      if (result["success"] == true) {
+        final user = Map<String, dynamic>.from((result["user"] as Map?) ?? {});
+        await _session.save(user);
+        if (!mounted) {
+          return;
+        }
+        Navigator.of(context).pushAndRemoveUntil<void>(
+          MaterialPageRoute<void>(builder: (_) => RiderShellPage(user: user)),
+          (route) => false,
+        );
+      } else {
+        setState(() {
+          _message = result["error"]?.toString() ?? "Request failed.";
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _message = "Could not sign in. Try again.";
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kAuthDeepBlue,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                icon: Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white.withValues(alpha: 0.85)),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Ride Match",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.8,
+                        color: Colors.white,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      "RIDER",
+                      style: TextStyle(
+                        fontSize: 12,
+                        letterSpacing: 3.2,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 0, 28, 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_message.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        _message,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.red.shade200, fontSize: 14),
+                      ),
+                    ),
+                  TextField(
+                    controller: _username,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _authFieldDecoration("Username"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _password,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _authFieldDecoration("Password"),
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: _busy ? null : _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: _kAuthDeepBlue,
+                      disabledBackgroundColor: Colors.white38,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      _busy ? "Working..." : "Log in",
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RiderSignupPage extends StatefulWidget {
+  const RiderSignupPage({super.key});
+
+  @override
+  State<RiderSignupPage> createState() => _RiderSignupPageState();
+}
+
+class _RiderSignupPageState extends State<RiderSignupPage> {
+  final _api = ApiClient();
+  final _session = _SessionStore();
+  final _username = TextEditingController();
+  final _password = TextEditingController();
   final _first = TextEditingController();
   final _last = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
   final _confirm = TextEditingController();
-  bool _signupMode = false;
   bool _busy = false;
   String _message = "";
   final Set<String> _prefs = <String>{};
@@ -128,20 +526,18 @@ class _LoginPageState extends State<LoginPage> {
       _message = "";
     });
     try {
-      final result = _signupMode
-          ? await _api.signup(
-              payload: {
-                "first_name": _first.text.trim(),
-                "last_name": _last.text.trim(),
-                "username": _username.text.trim(),
-                "email": _email.text.trim(),
-                "phone": _phone.text.trim(),
-                "password": _password.text,
-                "confirm_password": _confirm.text,
-                "preferences": _prefs.toList(),
-              },
-            )
-          : await _api.login(username: _username.text.trim(), password: _password.text);
+      final result = await _api.signup(
+        payload: {
+          "first_name": _first.text.trim(),
+          "last_name": _last.text.trim(),
+          "username": _username.text.trim(),
+          "email": _email.text.trim(),
+          "phone": _phone.text.trim(),
+          "password": _password.text,
+          "confirm_password": _confirm.text,
+          "preferences": _prefs.toList(),
+        },
+      );
       if (!mounted) {
         return;
       }
@@ -151,15 +547,18 @@ class _LoginPageState extends State<LoginPage> {
         if (!mounted) {
           return;
         }
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => RiderShellPage(user: user)));
+        Navigator.of(context).pushAndRemoveUntil<void>(
+          MaterialPageRoute<void>(builder: (_) => RiderShellPage(user: user)),
+          (route) => false,
+        );
       } else {
         setState(() {
           _message = result["error"]?.toString() ?? "Request failed.";
         });
       }
-    } catch (exc) {
+    } catch (_) {
       setState(() {
-        _message = "$exc";
+        _message = "Could not create account. Try again.";
       });
     } finally {
       if (mounted) {
@@ -172,66 +571,177 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final subtle = TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 13, height: 1.35);
+
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(colors: [Color(0xFFEAF8F6), Color(0xFFF7FCFB)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
+      backgroundColor: _kAuthDeepBlue,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white.withValues(alpha: 0.85)),
+                  onPressed: _busy ? null : () => Navigator.of(context).pop(),
+                ),
+                const Expanded(
+                  child: Text(
+                    "Sign up",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 48),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+              child: Text(
+                "RIDER",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  letterSpacing: 3.2,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+            Expanded(
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
                 children: [
-                  _Hero(title: _signupMode ? "Create your rider profile" : "RideMatch Rider", subtitle: _signupMode ? "Start the mobile rider app with the same account fields as RiderWebpage." : "Sign in to request rides, track a driver, and manage rider preferences."),
+                  Text(
+                    "Create your rider profile. You can start using the app as soon as you sign up.",
+                    style: subtle,
+                  ),
+                  if (_message.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      _message,
+                      style: TextStyle(color: Colors.red.shade200, fontSize: 14),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _first,
+                          style: const TextStyle(color: Colors.white),
+                          cursorColor: Colors.white,
+                          decoration: _authFieldDecoration("First name"),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _last,
+                          style: const TextStyle(color: Colors.white),
+                          cursorColor: Colors.white,
+                          decoration: _authFieldDecoration("Last name"),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _email,
+                    keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _authFieldDecoration("Email"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _phone,
+                    keyboardType: TextInputType.phone,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _authFieldDecoration("Phone"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _username,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _authFieldDecoration("Username"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _password,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _authFieldDecoration("Password"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _confirm,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _authFieldDecoration("Confirm password"),
+                  ),
                   const SizedBox(height: 14),
-                  _Card(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(_signupMode ? "Rider Sign-Up" : "Rider Login", style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
-                      if (_message.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        _Notice(_message, true),
-                      ],
-                      if (_signupMode) ...[
-                        const SizedBox(height: 12),
-                        Row(children: [Expanded(child: _field("First Name", _first)), const SizedBox(width: 12), Expanded(child: _field("Last Name", _last))]),
-                        const SizedBox(height: 12),
-                        _field("Email", _email, type: TextInputType.emailAddress),
-                        const SizedBox(height: 12),
-                        _field("Phone", _phone, type: TextInputType.phone),
-                      ],
-                      const SizedBox(height: 12),
-                      _field("Username", _username),
-                      const SizedBox(height: 12),
-                      _field("Password", _password, obscure: true),
-                      if (_signupMode) ...[
-                        const SizedBox(height: 12),
-                        _field("Confirm Password", _confirm, obscure: true),
-                        const SizedBox(height: 12),
-                        Wrap(spacing: 8, runSpacing: 8, children: _prefOptions.map((item) => FilterChip(label: Text(item), selected: _prefs.contains(item), onSelected: (selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)))).toList()),
-                      ],
-                      const SizedBox(height: 16),
-                      SizedBox(width: double.infinity, child: FilledButton(onPressed: _busy ? null : _submit, child: Text(_busy ? "Working..." : _signupMode ? "Create Account" : "Login"))),
-                      const SizedBox(height: 8),
-                      SizedBox(width: double.infinity, child: OutlinedButton(onPressed: _busy ? null : () => setState(() => _signupMode = !_signupMode), child: Text(_signupMode ? "Back to Login" : "Create Rider Account"))),
-                    ]),
+                  Text(
+                    "Preferences",
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 14),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _prefOptions
+                        .map(
+                          (item) {
+                            final selected = _prefs.contains(item);
+                            return _signupPreferenceChip(
+                              item: item,
+                              selected: selected,
+                              disabled: _busy,
+                              onSelected: (value) {
+                                setState(() {
+                                  if (value) {
+                                    _prefs.add(item);
+                                  } else {
+                                    _prefs.remove(item);
+                                  }
+                                });
+                              },
+                            );
+                          },
+                        )
+                        .toList(),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton(
+                    onPressed: _busy ? null : _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: _kAuthDeepBlue,
+                      disabledBackgroundColor: Colors.white38,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      _busy ? "Working..." : "Create account",
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                    ),
                   ),
                 ],
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
-  }
-
-  Widget _field(String label, TextEditingController controller, {bool obscure = false, TextInputType? type}) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF365956))),
-      const SizedBox(height: 6),
-      TextField(controller: controller, obscureText: obscure, keyboardType: type, decoration: _inputDecoration()),
-    ]);
   }
 }
 
@@ -248,40 +758,50 @@ class _RiderShellPageState extends State<RiderShellPage> {
   late Map<String, dynamic> _user = Map<String, dynamic>.from(widget.user);
   final _session = _SessionStore();
 
+  Future<void> _persistUser(Map<String, dynamic> updated) async {
+    _user = updated;
+    setState(() {});
+    await _session.save(updated);
+  }
+
   @override
   Widget build(BuildContext context) {
     final tabs = [
-      DashboardTab(user: _user),
+      DashboardTab(
+        user: _user,
+        onUserUpdated: _persistUser,
+        onRequestRide: () => setState(() => _index = 1),
+      ),
       RideTab(user: _user),
-      ReviewsTab(user: _user),
+      RatingTab(user: _user),
       ProfileTab(
         user: _user,
-        onSaved: (updated) async {
-          _user = updated;
-          setState(() {});
-          await _session.save(updated);
-        },
+        onSaved: _persistUser,
         onLogout: () async {
           await _session.clear();
           if (!context.mounted) {
             return;
           }
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+          Navigator.of(context).pushAndRemoveUntil<void>(
+            MaterialPageRoute<void>(builder: (_) => const RideMatchWelcomePage()),
+            (route) => false,
+          );
         },
       ),
     ];
-    const titles = ["Dashboard", "Start Ride", "Reviews", "Profile"];
+    const titles = ["Dashboard", "Ride", "Rating", "Profile"];
     return Scaffold(
+      backgroundColor: _kAuthDeepBlue,
       appBar: AppBar(title: Text(titles[_index])),
       body: tabs[_index],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.dashboard_outlined), label: "Dashboard"),
-          NavigationDestination(icon: Icon(Icons.route_outlined), label: "Ride"),
-          NavigationDestination(icon: Icon(Icons.star_outline), label: "Reviews"),
-          NavigationDestination(icon: Icon(Icons.person_outline), label: "Profile"),
+          NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: "Dashboard"),
+          NavigationDestination(icon: Icon(Icons.route_outlined), selectedIcon: Icon(Icons.route), label: "Ride"),
+          NavigationDestination(icon: Icon(Icons.star_outline), selectedIcon: Icon(Icons.star), label: "Rating"),
+          NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: "Profile"),
         ],
       ),
     );
@@ -289,8 +809,15 @@ class _RiderShellPageState extends State<RiderShellPage> {
 }
 
 class DashboardTab extends StatefulWidget {
-  const DashboardTab({super.key, required this.user});
+  const DashboardTab({
+    super.key,
+    required this.user,
+    required this.onUserUpdated,
+    required this.onRequestRide,
+  });
   final Map<String, dynamic> user;
+  final Future<void> Function(Map<String, dynamic>) onUserUpdated;
+  final VoidCallback onRequestRide;
 
   @override
   State<DashboardTab> createState() => _DashboardTabState();
@@ -302,6 +829,12 @@ class _DashboardTabState extends State<DashboardTab> {
   String _error = "";
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _trips = [];
+
+  static List<String> _prefsListFromUser(Map<String, dynamic> user) {
+    final raw = (user["preferences"] ?? "").toString().split(",").map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    raw.sort();
+    return raw;
+  }
 
   @override
   void initState() {
@@ -315,12 +848,17 @@ class _DashboardTabState extends State<DashboardTab> {
       if (!mounted) {
         return;
       }
+      final ok = res["success"] == true;
+      final refreshed = res["user"] is Map ? Map<String, dynamic>.from(res["user"] as Map) : null;
       setState(() {
         _summary = Map<String, dynamic>.from((res["summary"] as Map?) ?? {});
         _trips = ((res["trips"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         _loading = false;
-        _error = res["success"] == true ? "" : (res["error"]?.toString() ?? "Could not load dashboard.");
+        _error = ok ? "" : (res["error"]?.toString() ?? "Could not load dashboard.");
       });
+      if (ok && refreshed != null) {
+        await widget.onUserUpdated(refreshed);
+      }
     } catch (exc) {
       setState(() {
         _loading = false;
@@ -329,32 +867,266 @@ class _DashboardTabState extends State<DashboardTab> {
     }
   }
 
+  List<Widget> _tripDetailTipWidgets(Map<String, dynamic> trip) {
+    final tip = double.tryParse((trip["tip_amount"] ?? "").toString());
+    if (tip == null || tip <= 0) {
+      return [];
+    }
+    return [
+      const SizedBox(height: 8),
+      Text(
+        "Tip: \$${tip.toStringAsFixed(2)}",
+        style: const TextStyle(color: Color(0xFF7EB3FF), fontWeight: FontWeight.w600),
+      ),
+    ];
+  }
+
+  void _showTripInfo(Map<String, dynamic> trip) {
+    final cost = trip["final_cost"];
+    final costLabel = cost == null ? "Not finalized yet" : "\$$cost";
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF152A42),
+        title: const Text("Trip details", style: TextStyle(color: Colors.white)),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                "${trip["start_loc"] ?? "—"} → ${trip["end_loc"] ?? "—"}",
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              Text("Fare: $costLabel", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              ..._tripDetailTipWidgets(trip),
+              const SizedBox(height: 8),
+              Text(
+                "Tips are optional and go to your driver in full. Add one when you rate a completed trip.",
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13, height: 1.35),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openReviewForTrip(Map<String, dynamic> trip) async {
+    final status = (trip["status"] ?? "").toString().toLowerCase();
+    if (status != "completed") {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("You can review a trip after it is completed.")),
+      );
+      return;
+    }
+    if (trip["rider_rate"] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("You already left a rating for this trip.")),
+      );
+      return;
+    }
+    await showRiderTripReviewSheet(
+      context,
+      api: _api,
+      riderId: _id(widget.user),
+      trip: trip,
+      onSubmitted: _load,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final prefs = (widget.user["preferences"] ?? "").toString().trim();
+    final welcomeFirst = (widget.user["first_name"] ?? "").toString().trim();
+    final rideHeroTitle = welcomeFirst.isEmpty ? "Request a ride" : "Welcome, $welcomeFirst";
+    final currentPrefs = _prefsListFromUser(widget.user);
     return _PageShell(
       child: RefreshIndicator(
+        color: const Color(0xFF7EB3FF),
         onRefresh: _load,
-        child: ListView(padding: const EdgeInsets.all(16), children: [
-          _Hero(title: "Rider overview", subtitle: "Recent rides, trip totals, ratings, and saved ride preferences."),
-          const SizedBox(height: 12),
-          if (_error.isNotEmpty) _Notice(_error, true),
-          if (_loading)
-            const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()))
-          else ...[
-            Wrap(spacing: 10, runSpacing: 10, children: [
-              _Stat("Total Rides", "${_summary["trip_count"] ?? 0}"),
-              _Stat("Completed", "${_summary["completed_count"] ?? 0}"),
-              _Stat("Active", "${_summary["active_count"] ?? 0}"),
-              _Stat("Ratings Given", _metric(_summary["avg_given_rating"])),
-              _Stat("Ratings Received", _metric(_summary["avg_received_rating"])),
-            ]),
-            const SizedBox(height: 12),
-            _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Preferences", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)), const SizedBox(height: 10), Text(prefs.isEmpty ? "No preferences selected yet." : prefs)])),
-            const SizedBox(height: 12),
-            _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Recent Rides", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)), const SizedBox(height: 10), if (_trips.isEmpty) const Text("No rides yet.") else ..._trips.take(5).map((trip) => _Row("${trip["start_loc"] ?? "N/A"} -> ${trip["end_loc"] ?? "N/A"}", "Driver: ${trip["driver_name"] ?? "Unassigned"} | ${_title(trip["status"])}"))])),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: widget.onRequestRide,
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.white.withValues(alpha: 0.14),
+                        const Color(0xFF7EB3FF).withValues(alpha: 0.12),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Icon(Icons.near_me_rounded, color: Color(0xFF7EB3FF), size: 28),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              rideHeroTitle,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "Set pickup, dropoff, and track your trip on the map.",
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.35,
+                                color: Colors.white.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded, color: Colors.white.withValues(alpha: 0.65), size: 28),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            if (_error.isNotEmpty) _Notice(_error, true),
+            if (_error.isNotEmpty) const SizedBox(height: 12),
+            if (_loading)
+              const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(color: Color(0xFF7EB3FF))))
+            else ...[
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _Stat("Completed trips", "${_summary["completed_count"] ?? 0}"),
+                  _Stat("Your rating", _metric(_summary["avg_received_rating"])),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _RiderCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Ride preferences", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    const SizedBox(height: 4),
+                    Text(
+                      "What drivers see for your rides. Edit these on your profile.",
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
+                    ),
+                    const SizedBox(height: 12),
+                    if (currentPrefs.isEmpty)
+                      Text(
+                        "No preferences selected yet.",
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 14),
+                      )
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: currentPrefs.map(_readOnlyPreferencePill).toList(),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              _RiderCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Recent rides", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    const SizedBox(height: 10),
+                    if (_trips.isEmpty)
+                      Text("No rides yet.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65)))
+                    else
+                      ..._trips.take(8).map((trip) => _DashboardTripRow(
+                            trip: trip,
+                            onInfo: () => _showTripInfo(trip),
+                            onReview: () => _openReviewForTrip(trip),
+                          )),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardTripRow extends StatelessWidget {
+  const _DashboardTripRow({required this.trip, required this.onInfo, required this.onReview});
+  final Map<String, dynamic> trip;
+  final VoidCallback onInfo;
+  final VoidCallback onReview;
+
+  @override
+  Widget build(BuildContext context) {
+    final route = "${trip["start_loc"] ?? "—"} → ${trip["end_loc"] ?? "—"}";
+    final driver = (trip["driver_name"] ?? "Unassigned").toString();
+    final status = _title(trip["status"]);
+    final completed = (trip["status"] ?? "").toString().toLowerCase() == "completed";
+    final needsReview = completed && trip["rider_rate"] == null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.white.withValues(alpha: 0.06),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(route, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white, fontSize: 13)),
+            const SizedBox(height: 4),
+            Text("$driver · $status", style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.65))),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  onPressed: onInfo,
+                  icon: const Icon(Icons.info_outline, size: 20),
+                  style: IconButton.styleFrom(foregroundColor: Colors.white, backgroundColor: Colors.white.withValues(alpha: 0.12)),
+                  tooltip: "Fare & tip info",
+                ),
+                const SizedBox(width: 4),
+                if (completed)
+                  TextButton.icon(
+                    onPressed: onReview,
+                    icon: Icon(needsReview ? Icons.rate_review_outlined : Icons.check_circle_outline, size: 18),
+                    label: Text(needsReview ? "Review trip" : "Reviewed"),
+                    style: TextButton.styleFrom(foregroundColor: needsReview ? const Color(0xFF7EB3FF) : Colors.white54),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -374,6 +1146,14 @@ class _RideTabState extends State<RideTab> {
   final _dropoff = TextEditingController();
   final _notes = TextEditingController();
   Timer? _poll;
+  Timer? _pickupSuggestTimer;
+  Timer? _dropoffSuggestTimer;
+  List<Map<String, dynamic>> _pickupSuggestions = [];
+  List<Map<String, dynamic>> _dropoffSuggestions = [];
+  bool _pickupSuggestLoading = false;
+  bool _dropoffSuggestLoading = false;
+  bool _suppressPickupSuggest = false;
+  bool _suppressDropoffSuggest = false;
   Map<String, dynamic>? _trip;
   String _message = "";
   bool _busy = false;
@@ -381,10 +1161,13 @@ class _RideTabState extends State<RideTab> {
   LatLng? _pickupPoint;
   LatLng? _dropoffPoint;
   LatLng? _driverPoint;
+  final Set<int> _autoShownReviewTripIds = <int>{};
 
   @override
   void initState() {
     super.initState();
+    _pickup.addListener(_onPickupTextChanged);
+    _dropoff.addListener(_onDropoffTextChanged);
     _load();
     _poll = Timer.periodic(const Duration(seconds: 7), (_) => _load());
   }
@@ -392,10 +1175,206 @@ class _RideTabState extends State<RideTab> {
   @override
   void dispose() {
     _poll?.cancel();
+    _pickupSuggestTimer?.cancel();
+    _dropoffSuggestTimer?.cancel();
+    _pickup.removeListener(_onPickupTextChanged);
+    _dropoff.removeListener(_onDropoffTextChanged);
     _pickup.dispose();
     _dropoff.dispose();
     _notes.dispose();
     super.dispose();
+  }
+
+  void _onPickupTextChanged() {
+    if (_suppressPickupSuggest) {
+      return;
+    }
+    _pickupSuggestTimer?.cancel();
+    _pickupSuggestTimer = Timer(const Duration(milliseconds: 380), () {
+      if (mounted) {
+        _runAddressAutocomplete(isPickup: true);
+      }
+    });
+  }
+
+  void _onDropoffTextChanged() {
+    if (_suppressDropoffSuggest) {
+      return;
+    }
+    _dropoffSuggestTimer?.cancel();
+    _dropoffSuggestTimer = Timer(const Duration(milliseconds: 380), () {
+      if (mounted) {
+        _runAddressAutocomplete(isPickup: false);
+      }
+    });
+  }
+
+  String _autocompleteLabel(Map<String, dynamic> item) {
+    final formatted = item["formatted"];
+    if (formatted != null && formatted.toString().trim().isNotEmpty) {
+      return formatted.toString();
+    }
+    final line = (item["address_line1"] ?? item["name"] ?? "").toString().trim();
+    final place = (item["city"] ?? item["state"] ?? "").toString().trim();
+    if (line.isNotEmpty && place.isNotEmpty) {
+      return "$line, $place";
+    }
+    return line.isNotEmpty ? line : "Address";
+  }
+
+  Future<void> _runAddressAutocomplete({required bool isPickup}) async {
+    final controller = isPickup ? _pickup : _dropoff;
+    final query = controller.text.trim();
+    if (query.length < 3) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (isPickup) {
+          _pickupSuggestions = [];
+        } else {
+          _dropoffSuggestions = [];
+        }
+      });
+      return;
+    }
+    setState(() {
+      if (isPickup) {
+        _pickupSuggestLoading = true;
+      } else {
+        _dropoffSuggestLoading = true;
+      }
+    });
+    try {
+      final maps = await _api.fetchMapsConfig();
+      final key = (maps["geoapify_api_key"] ?? "").toString().trim();
+      if (key.isEmpty) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          if (isPickup) {
+            _pickupSuggestions = [];
+            _pickupSuggestLoading = false;
+          } else {
+            _dropoffSuggestions = [];
+            _dropoffSuggestLoading = false;
+          }
+        });
+        return;
+      }
+      final res = await _api.geocodeAddress(
+        apiKey: key,
+        address: query,
+        proximityLatitude: _pickupPoint?.latitude,
+        proximityLongitude: _pickupPoint?.longitude,
+      );
+      final raw = (res["results"] as List?) ?? [];
+      final list = <Map<String, dynamic>>[];
+      for (final item in raw) {
+        if (item is Map) {
+          list.add(Map<String, dynamic>.from(item));
+        }
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (isPickup) {
+          _pickupSuggestions = list.take(5).toList();
+          _pickupSuggestLoading = false;
+        } else {
+          _dropoffSuggestions = list.take(5).toList();
+          _dropoffSuggestLoading = false;
+        }
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (isPickup) {
+          _pickupSuggestions = [];
+          _pickupSuggestLoading = false;
+        } else {
+          _dropoffSuggestions = [];
+          _dropoffSuggestLoading = false;
+        }
+      });
+    }
+  }
+
+  void _applyAutocomplete(Map<String, dynamic> item, {required bool isPickup}) {
+    final label = _autocompleteLabel(item);
+    final lat = item["lat"];
+    final lon = item["lon"];
+    final pt = _point(lat, lon);
+    _pickupSuggestTimer?.cancel();
+    _dropoffSuggestTimer?.cancel();
+    if (isPickup) {
+      _suppressPickupSuggest = true;
+      _pickup.text = label;
+    } else {
+      _suppressDropoffSuggest = true;
+      _dropoff.text = label;
+    }
+    setState(() {
+      if (isPickup) {
+        _pickupPoint = pt;
+        _pickupSuggestions = [];
+        _pickupSuggestLoading = false;
+      } else {
+        _dropoffPoint = pt;
+        _dropoffSuggestions = [];
+        _dropoffSuggestLoading = false;
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (isPickup) {
+        _suppressPickupSuggest = false;
+      } else {
+        _suppressDropoffSuggest = false;
+      }
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  Widget _addressSuggestions({
+    required List<Map<String, dynamic>> items,
+    required bool isPickup,
+  }) {
+    if (items.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 200),
+          child: ListView.separated(
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            itemCount: items.length,
+            separatorBuilder: (_, _) => Divider(height: 1, color: Colors.white.withValues(alpha: 0.08)),
+            itemBuilder: (context, i) {
+              final item = items[i];
+              final title = _autocompleteLabel(item);
+              return ListTile(
+                dense: true,
+                leading: Icon(Icons.place_outlined, size: 20, color: Colors.white.withValues(alpha: 0.75)),
+                title: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+                onTap: () => _applyAutocomplete(item, isPickup: isPickup),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -405,10 +1384,50 @@ class _RideTabState extends State<RideTab> {
         return;
       }
       final trip = res["trip"];
+      final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
+      final hadTrip = _trip != null;
       setState(() {
-        _trip = trip is Map ? Map<String, dynamic>.from(trip) : null;
+        _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
       });
+      if (hadTrip && nextTrip == null) {
+        await _promptPostRideReviewIfPending();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _promptPostRideReviewIfPending() async {
+    try {
+      final res = await _api.fetchPendingReviews(riderId: _id(widget.user));
+      if (!mounted || res["success"] != true) {
+        return;
+      }
+      final list = (res["pending"] as List?) ?? [];
+      for (final raw in list) {
+        if (raw is! Map) {
+          continue;
+        }
+        final trip = Map<String, dynamic>.from(raw);
+        final tid = _int(trip["trip_id"]);
+        if (tid == null) {
+          continue;
+        }
+        if (_autoShownReviewTripIds.contains(tid)) {
+          continue;
+        }
+        _autoShownReviewTripIds.add(tid);
+        if (!mounted) {
+          return;
+        }
+        await showRiderTripReviewSheet(
+          context,
+          api: _api,
+          riderId: _id(widget.user),
+          trip: trip,
+          onSubmitted: _load,
+        );
+        break;
+      }
     } catch (_) {}
   }
 
@@ -448,11 +1467,26 @@ class _RideTabState extends State<RideTab> {
       final maps = await _api.fetchMapsConfig();
       final key = (maps["geoapify_api_key"] ?? "").toString().trim();
       if (key.isNotEmpty) {
-        final end = await _api.geocodeAddress(apiKey: key, address: _dropoff.text.trim(), proximityLatitude: _pickupPoint?.latitude, proximityLongitude: _pickupPoint?.longitude);
-        final results = (end["results"] as List?) ?? [];
-        if (results.isNotEmpty && results.first is Map) {
-          final first = Map<String, dynamic>.from(results.first as Map);
-          _dropoffPoint = _point(first["lat"], first["lon"]);
+        if (_pickupPoint == null && _pickup.text.trim().isNotEmpty) {
+          final start = await _api.geocodeAddress(apiKey: key, address: _pickup.text.trim());
+          final startResults = (start["results"] as List?) ?? [];
+          if (startResults.isNotEmpty && startResults.first is Map) {
+            final first = Map<String, dynamic>.from(startResults.first as Map);
+            _pickupPoint = _point(first["lat"], first["lon"]);
+          }
+        }
+        if (_dropoffPoint == null && _dropoff.text.trim().isNotEmpty) {
+          final end = await _api.geocodeAddress(
+            apiKey: key,
+            address: _dropoff.text.trim(),
+            proximityLatitude: _pickupPoint?.latitude,
+            proximityLongitude: _pickupPoint?.longitude,
+          );
+          final results = (end["results"] as List?) ?? [];
+          if (results.isNotEmpty && results.first is Map) {
+            final first = Map<String, dynamic>.from(results.first as Map);
+            _dropoffPoint = _point(first["lat"], first["lon"]);
+          }
         }
       }
       final res = await _api.requestRide(riderId: _id(widget.user), startLoc: _pickup.text.trim(), endLoc: _dropoff.text.trim(), rideType: _rideType, notes: _notes.text.trim());
@@ -496,73 +1530,206 @@ class _RideTabState extends State<RideTab> {
   @override
   Widget build(BuildContext context) {
     final markers = [
-      if (_pickupPoint != null) Marker(point: _pickupPoint!, width: 40, height: 40, child: const Icon(Icons.my_location, color: Color(0xFF0F766E), size: 30)),
-      if (_dropoffPoint != null) Marker(point: _dropoffPoint!, width: 40, height: 40, child: const Icon(Icons.location_on, color: Color(0xFF115E59), size: 32)),
-      if (_driverPoint != null) Marker(point: _driverPoint!, width: 40, height: 40, child: const Icon(Icons.directions_car, color: Color(0xFF1D4ED8), size: 30)),
+      if (_pickupPoint != null)
+        Marker(
+          point: _pickupPoint!,
+          width: 40,
+          height: 40,
+          child: const Icon(Icons.my_location, color: Color(0xFF7EB3FF), size: 30),
+        ),
+      if (_dropoffPoint != null)
+        Marker(
+          point: _dropoffPoint!,
+          width: 40,
+          height: 40,
+          child: const Icon(Icons.location_on, color: Color(0xFF5EEAD4), size: 32),
+        ),
+      if (_driverPoint != null)
+        Marker(
+          point: _driverPoint!,
+          width: 40,
+          height: 40,
+          child: const Icon(Icons.directions_car, color: Colors.white, size: 30),
+        ),
     ];
+    final welcomeFirst = (widget.user["first_name"] ?? "").toString().trim();
+    final rideHeroTitle = welcomeFirst.isEmpty ? "Request a ride" : "Welcome, $welcomeFirst";
     return _PageShell(
-      child: ListView(padding: const EdgeInsets.all(16), children: [
-        _Hero(title: "Start ride", subtitle: "Use your current location for pickup, request a driver, and keep an eye on live ride status."),
-        const SizedBox(height: 12),
-        if (_message.isNotEmpty) _Notice(_message, _message != "Ride request sent." && _message != "Ride canceled."),
-        const SizedBox(height: 12),
-        _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text("Ride Map", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 220,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: FlutterMap(
-                options: const MapOptions(initialCenter: LatLng(41.6611, -91.5302), initialZoom: 12),
-                children: [
-                  TileLayer(urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", userAgentPackageName: "com.example.ridermobile"),
-                  MarkerLayer(markers: markers),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        children: [
+          if (_message.isNotEmpty) _Notice(_message, _message != "Ride request sent." && _message != "Ride canceled."),
+          if (_message.isNotEmpty) const SizedBox(height: 8),
+          _RiderCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.map_outlined, color: Colors.white.withValues(alpha: 0.9), size: 22),
+                    const SizedBox(width: 8),
+                    Text(
+                      rideHeroTitle,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "Set pickup and destination, then request. Track your driver on the map.",
+                  style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.65), height: 1.35),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 240,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: FlutterMap(
+                      options: const MapOptions(initialCenter: LatLng(41.6611, -91.5302), initialZoom: 12),
+                      children: [
+                        TileLayer(
+                          urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                          userAgentPackageName: "com.example.ridermobile",
+                        ),
+                        MarkerLayer(markers: markers),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                if (_trip == null) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _busy ? null : _useLocation,
+                      icon: const Icon(Icons.gps_fixed, size: 20),
+                      label: const Text("Use my current location"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    "Start typing — matching addresses appear below. Pick one to lock the location.",
+                    style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.55), height: 1.3),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _pickup,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    textInputAction: TextInputAction.next,
+                    decoration: _riderShellInputDecoration(label: "Pickup").copyWith(
+                      suffixIcon: _pickupSuggestLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                            )
+                          : Icon(Icons.search, color: Colors.white.withValues(alpha: 0.45)),
+                    ),
+                  ),
+                  _addressSuggestions(items: _pickupSuggestions, isPickup: true),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _dropoff,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    textInputAction: TextInputAction.next,
+                    decoration: _riderShellInputDecoration(label: "Dropoff").copyWith(
+                      suffixIcon: _dropoffSuggestLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                            )
+                          : Icon(Icons.search, color: Colors.white.withValues(alpha: 0.45)),
+                    ),
+                  ),
+                  _addressSuggestions(items: _dropoffSuggestions, isPickup: false),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: _rideType, // ignore: deprecated_member_use — controlled selection
+                    dropdownColor: const Color(0xFF152A42),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _riderShellInputDecoration(label: "Ride type"),
+                    items: const [
+                      DropdownMenuItem(value: "standard", child: Text("Standard")),
+                      DropdownMenuItem(value: "shared", child: Text("Shared")),
+                      DropdownMenuItem(value: "priority", child: Text("Priority")),
+                    ],
+                    onChanged: (value) => setState(() => _rideType = value ?? "standard"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _notes,
+                    maxLines: 3,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: Colors.white,
+                    decoration: _riderShellInputDecoration(label: "Notes for driver"),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _busy ? null : _requestRide,
+                      icon: const Icon(Icons.send_outlined),
+                      label: Text(_busy ? "Requesting..." : "Request ride"),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: _kAuthDeepBlue,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                  ),
+                ] else ...[
+                  _RiderRow("Status", _title(_trip?["status"])),
+                  _RiderRow("Driver", (_trip?["driver_name"] ?? "Pending assignment").toString()),
+                  _RiderRow("Pickup", (_trip?["start_loc"] ?? "N/A").toString()),
+                  _RiderRow("Dropoff", (_trip?["end_loc"] ?? "N/A").toString()),
+                  _RiderRow("Driver location", (_trip?["driver_location_updated_at"] ?? "Waiting for driver location").toString()),
+                  if (["requested", "accepted"].contains((_trip?["status"] ?? "").toString())) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _busy ? null : _cancelRide,
+                        icon: const Icon(Icons.close),
+                        label: Text(_busy ? "Canceling..." : "Cancel ride"),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          if (_trip == null) ...[
-            SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: _busy ? null : _useLocation, icon: const Icon(Icons.gps_fixed), label: const Text("Use My Current Location"))),
-            const SizedBox(height: 12),
-            TextField(controller: _pickup, decoration: _inputDecoration(label: "Pickup Location")),
-            const SizedBox(height: 12),
-            TextField(controller: _dropoff, decoration: _inputDecoration(label: "Dropoff Location")),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(initialValue: _rideType, decoration: _inputDecoration(label: "Ride Type"), items: const [DropdownMenuItem(value: "standard", child: Text("Standard")), DropdownMenuItem(value: "shared", child: Text("Shared")), DropdownMenuItem(value: "priority", child: Text("Priority"))], onChanged: (value) => setState(() => _rideType = value ?? "standard")),
-            const SizedBox(height: 12),
-            TextField(controller: _notes, maxLines: 3, decoration: _inputDecoration(label: "Ride Notes")),
-            const SizedBox(height: 12),
-            SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _requestRide, icon: const Icon(Icons.send_outlined), label: Text(_busy ? "Requesting..." : "Request Ride"))),
-          ] else ...[
-            _Row("Status", _title(_trip?["status"])),
-            _Row("Driver", (_trip?["driver_name"] ?? "Pending assignment").toString()),
-            _Row("Pickup", (_trip?["start_loc"] ?? "N/A").toString()),
-            _Row("Dropoff", (_trip?["end_loc"] ?? "N/A").toString()),
-            _Row("Driver Location Updated", (_trip?["driver_location_updated_at"] ?? "Waiting for driver location").toString()),
-            if (["requested", "accepted"].contains((_trip?["status"] ?? "").toString())) SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: _busy ? null : _cancelRide, icon: const Icon(Icons.close), label: Text(_busy ? "Canceling..." : "Cancel Ride"))),
-          ],
-        ])),
-      ]),
+        ],
+      ),
     );
   }
 }
 
-class ReviewsTab extends StatefulWidget {
-  const ReviewsTab({super.key, required this.user});
+class RatingTab extends StatefulWidget {
+  const RatingTab({super.key, required this.user});
   final Map<String, dynamic> user;
 
   @override
-  State<ReviewsTab> createState() => _ReviewsTabState();
+  State<RatingTab> createState() => _RatingTabState();
 }
 
-class _ReviewsTabState extends State<ReviewsTab> {
+class _RatingTabState extends State<RatingTab> {
   final _api = ApiClient();
   bool _loading = true;
   String _error = "";
   List<Map<String, dynamic>> _received = [];
   List<Map<String, dynamic>> _given = [];
+  List<Map<String, dynamic>> _pending = [];
+  Map<String, dynamic> _summary = {};
 
   @override
   void initState() {
@@ -572,13 +1739,20 @@ class _ReviewsTabState extends State<ReviewsTab> {
 
   Future<void> _load() async {
     try {
-      final res = await _api.fetchReviews(riderId: _id(widget.user));
-      final data = Map<String, dynamic>.from((res["review_data"] as Map?) ?? {});
+      final dash = await _api.fetchDashboard(riderId: _id(widget.user));
+      final rev = await _api.fetchReviews(riderId: _id(widget.user));
+      final pend = await _api.fetchPendingReviews(riderId: _id(widget.user));
+      if (!mounted) {
+        return;
+      }
+      final data = Map<String, dynamic>.from((rev["review_data"] as Map?) ?? {});
       setState(() {
+        _summary = Map<String, dynamic>.from((dash["summary"] as Map?) ?? {});
         _received = ((data["received"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         _given = ((data["given"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _pending = ((pend["pending"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         _loading = false;
-        _error = res["success"] == true ? "" : (res["error"]?.toString() ?? "Could not load reviews.");
+        _error = rev["success"] == true && pend["success"] == true ? "" : (rev["error"]?.toString() ?? pend["error"]?.toString() ?? "Could not load.");
       });
     } catch (exc) {
       setState(() {
@@ -588,21 +1762,228 @@ class _ReviewsTabState extends State<ReviewsTab> {
     }
   }
 
+  double? get _avgReceived {
+    final v = _summary["avg_received_rating"];
+    if (v == null) {
+      return null;
+    }
+    return double.tryParse(v.toString());
+  }
+
   @override
   Widget build(BuildContext context) {
     return _PageShell(
       child: RefreshIndicator(
+        color: const Color(0xFF7EB3FF),
         onRefresh: _load,
-        child: ListView(padding: const EdgeInsets.all(16), children: [
-          if (_error.isNotEmpty) _Notice(_error, true),
-          if (_loading)
-            const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()))
-          else ...[
-            _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Reviews You Received", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)), const SizedBox(height: 10), if (_received.isEmpty) const Text("No received ratings yet.") else ..._received.map((row) => _Row("${row["rating"] ?? "?"}/5 from ${row["counterpart_name"] ?? "Driver"}", (row["trip_status"] ?? row["comment"] ?? "").toString()))])),
-            const SizedBox(height: 12),
-            _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Reviews You Gave", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)), const SizedBox(height: 10), if (_given.isEmpty) const Text("No ratings given yet.") else ..._given.map((row) => _Row("${row["rating"] ?? "?"}/5 to ${row["counterpart_name"] ?? "Driver"}", (row["comment"] ?? row["trip_status"] ?? "").toString()))])),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
+            if (_error.isNotEmpty) _Notice(_error, true),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CircularProgressIndicator(color: Color(0xFF7EB3FF))),
+              )
+            else ...[
+              _RiderCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Your rider rating", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Average from drivers after completed trips.",
+                      style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.6)),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _StarRow(rating: _avgReceived, starSize: 32),
+                        const SizedBox(width: 12),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            _avgReceived == null ? "Not enough data" : "${_avgReceived!.toStringAsFixed(1)} / 5",
+                            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (_pending.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                _RiderCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.pending_actions, color: Colors.amber.shade200, size: 22),
+                          const SizedBox(width: 8),
+                          const Text("Finish your reviews", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        "Rate your recent drivers to help the community.",
+                        style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.65)),
+                      ),
+                      const SizedBox(height: 12),
+                      ..._pending.map(
+                        (trip) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Material(
+                            color: Colors.white.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () => showRiderTripReviewSheet(
+                                context,
+                                api: _api,
+                                riderId: _id(widget.user),
+                                trip: trip,
+                                onSubmitted: _load,
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            "${trip["start_loc"] ?? "—"} → ${trip["end_loc"] ?? "—"}",
+                                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            "Driver: ${trip["driver_name"] ?? "—"}",
+                                            style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 12),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const Icon(Icons.chevron_right, color: Colors.white54),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              _RiderCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Anonymous feedback you received", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Drivers rate you after trips; names stay private.",
+                      style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.6)),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_received.isEmpty)
+                      Text("No ratings yet.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65)))
+                    else
+                      ..._received.take(12).map(
+                            (row) => Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: Colors.white.withValues(alpha: 0.06),
+                                  border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _StarRow(
+                                      rating: double.tryParse((row["rating"] ?? "").toString()),
+                                      starSize: 18,
+                                    ),
+                                    if ((row["comment"] ?? "").toString().trim().isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        (row["comment"] ?? "").toString(),
+                                        style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13, height: 1.35),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              _RiderCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Reviews you gave drivers", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    const SizedBox(height: 10),
+                    if (_given.isEmpty)
+                      Text("You have not submitted reviews yet.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65)))
+                    else
+                      ..._given.map(
+                        (row) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              color: Colors.white.withValues(alpha: 0.06),
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    _StarRow(
+                                      rating: double.tryParse((row["rating"] ?? "").toString()),
+                                      starSize: 18,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        "To ${row["counterpart_name"] ?? "driver"}",
+                                        style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 12),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if ((row["comment"] ?? "").toString().trim().isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    (row["comment"] ?? "").toString(),
+                                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ]),
+        ),
       ),
     );
   }
@@ -624,9 +2005,13 @@ class _ProfileTabState extends State<ProfileTab> {
   late final TextEditingController _last = TextEditingController(text: (widget.user["last_name"] ?? "").toString());
   late final TextEditingController _email = TextEditingController(text: (widget.user["email"] ?? "").toString());
   late final TextEditingController _phone = TextEditingController(text: (widget.user["phone"] ?? "").toString());
+  final _currentPassword = TextEditingController();
+  final _newPassword = TextEditingController();
+  final _confirmPassword = TextEditingController();
   late final Set<String> _prefs = ((widget.user["preferences"] ?? "").toString().split(",").map((e) => e.trim()).where((e) => e.isNotEmpty)).toSet();
   String _message = "";
   bool _busy = false;
+  bool _pwBusy = false;
 
   static const _options = [
     "quiet ride",
@@ -666,33 +2051,235 @@ class _ProfileTabState extends State<ProfileTab> {
     }
   }
 
+  Future<void> _changePassword() async {
+    final cur = _currentPassword.text;
+    final nw = _newPassword.text;
+    final cf = _confirmPassword.text;
+    if (cur.isEmpty || nw.isEmpty) {
+      setState(() => _message = "Enter current and new password.");
+      return;
+    }
+    if (nw.length < 6) {
+      setState(() => _message = "New password must be at least 6 characters.");
+      return;
+    }
+    if (nw != cf) {
+      setState(() => _message = "New passwords do not match.");
+      return;
+    }
+    setState(() {
+      _pwBusy = true;
+      _message = "";
+    });
+    try {
+      final res = await _api.changePassword(
+        riderId: _id(widget.user),
+        currentPassword: cur,
+        newPassword: nw,
+      );
+      if (res["success"] == true) {
+        _currentPassword.clear();
+        _newPassword.clear();
+        _confirmPassword.clear();
+        setState(() => _message = res["message"]?.toString() ?? "Password updated.");
+      } else {
+        setState(() => _message = res["error"]?.toString() ?? "Could not change password.");
+      }
+    } catch (exc) {
+      setState(() => _message = "$exc");
+    } finally {
+      if (mounted) {
+        setState(() => _pwBusy = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _first.dispose();
+    _last.dispose();
+    _email.dispose();
+    _phone.dispose();
+    _currentPassword.dispose();
+    _newPassword.dispose();
+    _confirmPassword.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final displayName = "${widget.user["first_name"] ?? ""} ${widget.user["last_name"] ?? ""}".trim();
     return _PageShell(
-      child: ListView(padding: const EdgeInsets.all(16), children: [
-        _Card(child: Row(children: [Container(width: 56, height: 56, decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), gradient: const LinearGradient(colors: [Color(0xFF0F766E), Color(0xFF115E59)])), child: const Icon(Icons.person, color: Colors.white)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(displayName.isEmpty ? "Rider" : displayName, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)), Text("@${widget.user["username"] ?? "rider"}")]))])),
-        const SizedBox(height: 12),
-        if (_message.isNotEmpty) _Notice(_message, _message != "Rider settings updated."),
-        const SizedBox(height: 12),
-        _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text("Account Details", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          _RiderCard(
+            child: Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: LinearGradient(
+                      colors: [const Color(0xFF1E3A5F), Colors.white.withValues(alpha: 0.25)],
+                    ),
+                  ),
+                  child: const Icon(Icons.person, color: Colors.white),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displayName.isEmpty ? "Rider" : displayName,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white),
+                      ),
+                      Text(
+                        "@${widget.user["username"] ?? "rider"}",
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 12),
-          TextField(controller: _first, decoration: _inputDecoration(label: "First Name")),
-          const SizedBox(height: 12),
-          TextField(controller: _last, decoration: _inputDecoration(label: "Last Name")),
-          const SizedBox(height: 12),
-          TextField(controller: _email, decoration: _inputDecoration(label: "Email")),
-          const SizedBox(height: 12),
-          TextField(controller: _phone, decoration: _inputDecoration(label: "Phone")),
-          const SizedBox(height: 12),
-          Wrap(spacing: 8, runSpacing: 8, children: _options.map((item) => FilterChip(label: Text(item), selected: _prefs.contains(item), onSelected: (selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)))).toList()),
-          const SizedBox(height: 12),
-          SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _save, icon: const Icon(Icons.save_outlined), label: Text(_busy ? "Saving..." : "Save Settings"))),
-          const SizedBox(height: 8),
-          SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () async => widget.onLogout(), icon: const Icon(Icons.logout), label: const Text("Log out"))),
-        ])),
-      ]),
+          if (_message.isNotEmpty) _Notice(_message, _message != "Rider settings updated." && _message != "Password updated."),
+          if (_message.isNotEmpty) const SizedBox(height: 12),
+          _RiderCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Account", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _first,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "First name"),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _last,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "Last name"),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _email,
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "Email"),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _phone,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "Phone"),
+                ),
+                const SizedBox(height: 12),
+                Text("Preferences", style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _options
+                      .map(
+                        (item) => _signupPreferenceChip(
+                          item: item,
+                          selected: _prefs.contains(item),
+                          disabled: _busy,
+                          onSelected: (selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _busy ? null : _save,
+                    icon: const Icon(Icons.save_outlined),
+                    label: Text(_busy ? "Saving..." : "Save profile"),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: _kAuthDeepBlue,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _RiderCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Change password", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _currentPassword,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "Current password"),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _newPassword,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "New password"),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _confirmPassword,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "Confirm new password"),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: _pwBusy ? null : _changePassword,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text(_pwBusy ? "Updating..." : "Update password"),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () async => widget.onLogout(),
+              icon: const Icon(Icons.logout),
+              label: const Text("Log out"),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white70,
+                side: BorderSide(color: Colors.white.withValues(alpha: 0.25)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -703,28 +2290,26 @@ class _PageShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xFFEEF8F7), Color(0xFFF8FCFC)], begin: Alignment.topCenter, end: Alignment.bottomCenter)), child: child);
+    return ColoredBox(color: _kAuthDeepBlue, child: child);
   }
 }
 
-class _Hero extends StatelessWidget {
-  const _Hero({required this.title, required this.subtitle});
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("RIDEMATCH RIDER", style: TextStyle(fontSize: 12, letterSpacing: 1.4, fontWeight: FontWeight.w700, color: Color(0xFF2E6A64))), const SizedBox(height: 8), Text(title, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)), const SizedBox(height: 6), Text(subtitle, style: const TextStyle(color: Color(0xFF57716E)))]));
-  }
-}
-
-class _Card extends StatelessWidget {
-  const _Card({required this.child});
+class _RiderCard extends StatelessWidget {
+  const _RiderCard({required this.child});
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFFD7ECE8)), boxShadow: const [BoxShadow(color: Color(0x11255B58), blurRadius: 16, offset: Offset(0, 8))]), child: child);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D2137),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 20, offset: const Offset(0, 10))],
+      ),
+      child: child,
+    );
   }
 }
 
@@ -735,7 +2320,18 @@ class _Notice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), color: error ? const Color(0xFFFFF1F2) : const Color(0xFFF0FDF4), border: Border.all(color: error ? const Color(0xFFFECACA) : const Color(0xFFBBF7D0))), child: Text(message, style: TextStyle(color: error ? const Color(0xFF9F1239) : const Color(0xFF166534))));
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: error ? const Color(0x33FF6B6B) : const Color(0x3322C55E),
+        border: Border.all(color: error ? const Color(0x55FF6B6B) : const Color(0x5522C55E)),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(color: error ? Colors.red.shade100 : const Color(0xFFD1FAE5)),
+      ),
+    );
   }
 }
 
@@ -746,22 +2342,330 @@ class _Stat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(width: 152, padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFD7ECE8))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFF57716E))), const SizedBox(height: 4), Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700))]));
+    return Container(
+      width: 152,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D2137),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.55))),
+          const SizedBox(height: 4),
+          Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white)),
+        ],
+      ),
+    );
   }
 }
 
-class _Row extends StatelessWidget {
-  const _Row(this.title, this.subtitle);
+class _RiderRow extends StatelessWidget {
+  const _RiderRow(this.title, this.subtitle);
   final String title;
   final String subtitle;
 
   @override
   Widget build(BuildContext context) {
-    return Container(margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.all(12), decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), color: const Color(0xFFFAFDFC), border: Border.all(color: const Color(0xFFD7ECE8))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 12, color: Color(0xFF57716E))), const SizedBox(height: 4), Text(subtitle, style: const TextStyle(fontWeight: FontWeight.w600))]));
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(title, style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.55))),
+          ),
+          Expanded(child: Text(subtitle, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white))),
+        ],
+      ),
+    );
   }
 }
 
-InputDecoration _inputDecoration({String? label}) => InputDecoration(labelText: label, filled: true, fillColor: Colors.white, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFD0E7E3))), focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF0F766E), width: 1.4)));
+class _StarRow extends StatelessWidget {
+  const _StarRow({required this.rating, this.starSize = 24});
+  final double? rating;
+  final double starSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = rating == null ? 0.0 : rating!.clamp(0.0, 5.0);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (i) {
+        final idx = i + 1;
+        final IconData icon;
+        if (r >= idx) {
+          icon = Icons.star_rounded;
+        } else if (r >= idx - 0.5) {
+          icon = Icons.star_half_rounded;
+        } else {
+          icon = Icons.star_outline_rounded;
+        }
+        return Icon(icon, color: const Color(0xFFFFD54F), size: starSize);
+      }),
+    );
+  }
+}
+
+InputDecoration _riderShellInputDecoration({String? label}) {
+  const accent = Color(0xFF7EB3FF);
+  return InputDecoration(
+    labelText: label,
+    labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
+    floatingLabelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.85)),
+    filled: true,
+    fillColor: Colors.white.withValues(alpha: 0.08),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(color: accent.withValues(alpha: 0.75), width: 1.2),
+    ),
+  );
+}
+
+Future<void> showRiderTripReviewSheet(
+  BuildContext context, {
+  required ApiClient api,
+  required int riderId,
+  required Map<String, dynamic> trip,
+  required VoidCallback onSubmitted,
+}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: true,
+    enableDrag: true,
+    backgroundColor: const Color(0xFF152A42),
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+    builder: (ctx) {
+      return Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+        child: _TripReviewSheetBody(
+          api: api,
+          riderId: riderId,
+          trip: trip,
+          onSubmitted: () {
+            Navigator.pop(ctx);
+            onSubmitted();
+          },
+        ),
+      );
+    },
+  );
+}
+
+class _TripReviewSheetBody extends StatefulWidget {
+  const _TripReviewSheetBody({
+    required this.api,
+    required this.riderId,
+    required this.trip,
+    required this.onSubmitted,
+  });
+  final ApiClient api;
+  final int riderId;
+  final Map<String, dynamic> trip;
+  final VoidCallback onSubmitted;
+
+  @override
+  State<_TripReviewSheetBody> createState() => _TripReviewSheetBodyState();
+}
+
+class _TripReviewSheetBodyState extends State<_TripReviewSheetBody> {
+  int _stars = 5;
+  final _comment = TextEditingController();
+  final _tipCustom = TextEditingController();
+  double _tipPreset = 0;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _comment.dispose();
+    _tipCustom.dispose();
+    super.dispose();
+  }
+
+  void _selectTipPreset(double dollars) {
+    setState(() {
+      _tipPreset = dollars;
+      _tipCustom.clear();
+    });
+  }
+
+  double _effectiveTipDollars() {
+    final custom = _tipCustom.text.trim();
+    if (custom.isNotEmpty) {
+      final v = double.tryParse(custom);
+      if (v != null) {
+        return v < 0 ? 0 : v;
+      }
+    }
+    return _tipPreset < 0 ? 0 : _tipPreset;
+  }
+
+  Future<void> _submit() async {
+    setState(() => _busy = true);
+    try {
+      final tid = _int(widget.trip["trip_id"]);
+      if (tid == null) {
+        return;
+      }
+      final tip = _effectiveTipDollars();
+      final res = await widget.api.submitTripReview(
+        tripId: tid,
+        riderId: widget.riderId,
+        rating: _stars,
+        comment: _comment.text.trim(),
+        tipAmount: tip,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (res["success"] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res["message"]?.toString() ?? "Thanks for your feedback.")),
+        );
+        widget.onSubmitted();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res["error"]?.toString() ?? "Could not submit.")),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    final presets = <double>[0, 2, 5, 10];
+    return SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.only(left: 20, right: 20, top: 16, bottom: 16 + bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const SizedBox(width: 40),
+                const Expanded(
+                  child: Text(
+                    "Rate & tip",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+                  ),
+                ),
+                IconButton(
+                  tooltip: "Close",
+                  onPressed: _busy ? null : () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "${widget.trip["start_loc"] ?? "—"} → ${widget.trip["end_loc"] ?? "—"}",
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: List.generate(5, (i) {
+                final n = i + 1;
+                return IconButton(
+                  onPressed: _busy ? null : () => setState(() => _stars = n),
+                  icon: Icon(
+                    n <= _stars ? Icons.star_rounded : Icons.star_outline_rounded,
+                    color: const Color(0xFFFFD54F),
+                    size: 36,
+                  ),
+                );
+              }),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _comment,
+              maxLines: 3,
+              style: const TextStyle(color: Colors.white),
+              cursorColor: Colors.white,
+              decoration: _riderShellInputDecoration(label: "Comment (optional)"),
+            ),
+            const SizedBox(height: 16),
+            Text("Tip (optional)", style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: presets.map((v) {
+                final selected = _tipCustom.text.isEmpty && _tipPreset == v;
+                return ChoiceChip(
+                  showCheckmark: false,
+                  selected: selected,
+                  label: Text(v == 0 ? r"$0" : "\$$v"),
+                  selectedColor: Colors.white,
+                  labelStyle: TextStyle(
+                    color: selected ? _kAuthDeepBlue : Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  onSelected: _busy ? null : (_) => _selectTipPreset(v),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _tipCustom,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              cursorColor: Colors.white,
+              onChanged: (_) => setState(() {}),
+              decoration: _riderShellInputDecoration(label: "Custom tip (\$)"),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "You can close and finish later from Reviews or your trip list. Tips go to your driver in full.",
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12, height: 1.35),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _busy ? null : _submit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: _kAuthDeepBlue,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text(_busy ? "Submitting..." : "Submit"),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 int _id(Map<String, dynamic> user) => _int(user["account_id"]) ?? 0;
 int? _int(dynamic value) => value is int ? value : int.tryParse((value ?? "").toString().split(".").first.trim());

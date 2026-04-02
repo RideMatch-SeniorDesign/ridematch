@@ -1,17 +1,63 @@
-# drivermobile
+# RideMatch Rider Mobile
 
-A new Flutter project.
+Flutter app for the rider side of RideMatch.
 
-## Getting Started
+## Run On An Android Emulator
 
-This project is a starting point for a Flutter application.
+The app defaults to the Android emulator host, so this usually works with:
 
-A few resources to get you started if this is your first Flutter project:
+```powershell
+flutter run
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Run On A Samsung Or Other Physical Android Device
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+When you run on a real phone, `10.0.2.2` will not work because that address only points back to your computer from the Android emulator. For a Samsung device, set the app to use your computer's Wi-Fi IP address instead.
+
+### 1. Find your computer's IP address
+
+In PowerShell, run:
+
+```powershell
+ipconfig
+```
+
+Look for the `Wireless LAN adapter Wi-Fi` section and copy the `IPv4 Address`.
+
+Example:
+
+```text
+IPv4 Address. . . . . . . . . . . : 192.168.4.38
+```
+
+### 2. Update `device.env`
+
+Open `device.env` and set `API_HOST` to that IP address:
+
+```env
+API_HOST=192.168.4.38
+```
+
+### 3. Start the rider backend
+
+Make sure the rider backend is running on port `8003`.
+
+### 4. Connect your Samsung
+
+- Connect the phone and your computer to the same Wi-Fi network.
+- Enable Developer Options and USB debugging on the Samsung device.
+- Confirm any USB debugging prompt on the phone.
+
+### 5. Run the app
+
+From the `ridermobile` folder, run:
+
+```powershell
+flutter run --dart-define-from-file=device.env
+```
+
+## Notes
+
+- If your Wi-Fi IP changes, update `device.env` again.
+- If requests still fail on the phone, check that Windows Firewall allows inbound connections to port `8003`.
+- `device.env` is meant for local machine setup and usually should not be committed with your personal IP address.

@@ -7,7 +7,7 @@
     <div>
       <p class="page-kicker">Rider Ops</p>
       <h2 class="page-title">Rider Management Hub</h2>
-      <p class="page-note">Monitor rider growth, activity, and feedback quality in real time.</p>
+      <p class="page-note">Track rider accounts and trip activity.</p>
     </div>
     <span class="page-pill">
       <i class="bi bi-people-fill"></i>
@@ -18,58 +18,71 @@
   <div class="driver-metrics">
     <div class="metric-card metric-blue">
       <small>Total Riders</small>
-      <strong>{{ total_rider_count | default(0) }}</strong>
+      <strong>{{ all_rider_count_raw if all_rider_count_raw is defined else (total_rider_count | default(0)) }}</strong>
     </div>
     <div class="metric-card metric-green">
-      <small>Active Riders</small>
-      <strong>{{ (all_riders | length) if all_riders else 0 }}</strong>
+      <small>Trips Monitored</small>
+      <strong>{{ rider_activity_count_raw if rider_activity_count_raw is defined else (rider_trip_activity | length) }}</strong>
     </div>
     <div class="metric-card metric-purple">
-      <small>Total Rides Taken</small>
-      <strong>{{ total_rides | default(0) }}</strong>
+      <small>Reviews</small>
+      <strong>{{ rider_review_count_raw if rider_review_count_raw is defined else (rider_reviews | length) }}</strong>
     </div>
   </div>
 
   <article class="panel">
     <div class="section-head">
       <div>
-        <h2>Rider Directory</h2>
-        <p>Search rider accounts and narrow by tenure or rating.</p>
+        <h2>Rider Workflow</h2>
+        <p>Switch between all riders and trip activity. Review data now lives in Analytics.</p>
       </div>
-      <span class="status-tag status-info">{{ (all_riders | length) if all_riders else 0 }} records</span>
     </div>
 
+    <ul class="nav nav-pills driver-nav mb-3">
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_rider_tab == 'all' else '' }}" href="{{ url_for('riders', tab='all') }}">All Riders</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if active_rider_tab == 'activity' else '' }}" href="{{ url_for('riders', tab='activity') }}">Recent Activity</a>
+      </li>
+    </ul>
+
+    {% if active_rider_tab == 'all' %}
     <form method="get" action="{{ url_for('riders') }}" class="filter-toolbar row g-2 align-items-end">
+      <input type="hidden" name="tab" value="all" />
       <div class="col-lg-4 col-md-6">
         <label class="form-label mb-1">Search</label>
         <input
           type="text"
           class="form-control"
           name="rider_query"
-          value="{{ rider_filters.query }}"
+          value="{{ all_rider_filters.query }}"
           placeholder="Name, phone, or email"
         />
       </div>
       <div class="col-lg-3 col-md-6">
         <label class="form-label mb-1">Riding Since (On or Before)</label>
-        <input type="date" class="form-control" name="riding_since_before" value="{{ rider_filters.riding_since_before }}" />
+        <input type="date" class="form-control" name="riding_since_before" value="{{ all_rider_filters.riding_since_before }}" />
       </div>
       <div class="col-lg-2 col-md-3">
         <label class="form-label mb-1">Rating Min</label>
-        <input type="number" class="form-control" name="rider_rating_min" step="0.1" min="0" max="5" value="{{ rider_filters.rating_min }}" />
+        <input type="number" class="form-control" name="rider_rating_min" step="0.1" min="0" max="5" value="{{ all_rider_filters.rating_min }}" />
       </div>
       <div class="col-lg-2 col-md-3">
         <label class="form-label mb-1">Rating Max</label>
-        <input type="number" class="form-control" name="rider_rating_max" step="0.1" min="0" max="5" value="{{ rider_filters.rating_max }}" />
+        <input type="number" class="form-control" name="rider_rating_max" step="0.1" min="0" max="5" value="{{ all_rider_filters.rating_max }}" />
       </div>
       <div class="col-12 filter-actions">
         <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
-        <a href="{{ url_for('riders') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+        <a href="{{ url_for('riders', tab='all') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
       </div>
     </form>
 
-    {% if all_riders %}
     <div class="data-card">
+      <div class="data-card-header">
+        <h3>All Riders</h3>
+        <span class="status-tag status-info">{{ all_riders|length }} records</span>
+      </div>
       <div class="data-card-body table-responsive">
         <table class="table table-hover align-middle">
           <thead>
@@ -85,16 +98,12 @@
           <tbody>
             {% for rider in all_riders %}
             <tr>
-              <td>
-                <strong>{{ rider.name }}</strong>
-              </td>
+              <td><strong>{{ rider.name }}</strong></td>
               <td>
                 <div>{{ rider.email or 'N/A' }}</div>
                 <small class="text-muted">{{ rider.phone or 'N/A' }}</small>
               </td>
-              <td>
-                <span class="badge bg-light text-dark">{{ rider.preferences or 'None' }}</span>
-              </td>
+              <td><span class="badge bg-light text-dark">{{ rider.preferences or 'None' }}</span></td>
               <td>
                 {% set riding_since = rider.riding_since %}
                 {% if riding_since %}
@@ -111,43 +120,97 @@
                 </span>
               </td>
             </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted">No riders match the current filters.</td>
+            </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     </div>
-    {% else %}
-    <div class="empty-message empty-centered">
-      <i class="bi bi-people"></i>
-      <p>No riders found.</p>
-    </div>
     {% endif %}
-  </article>
 
-  <article class="panel">
-    <div class="section-head">
-      <div>
-        <h2>Rider Activity</h2>
-        <p>Latest trips and usage trends from rider accounts.</p>
+    {% if active_rider_tab == 'activity' %}
+    <form method="get" action="{{ url_for('riders') }}" class="filter-toolbar row g-2 align-items-end">
+      <input type="hidden" name="tab" value="activity" />
+      <div class="col-md-4">
+        <label class="form-label mb-1">Search</label>
+        <input
+          type="text"
+          class="form-control"
+          name="activity_query"
+          value="{{ activity_filters.query }}"
+          placeholder="Rider, driver, route, or status"
+        />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label mb-1">Trip Scope</label>
+        <select class="form-select" name="activity_scope">
+          <option value="" {{ 'selected' if not activity_filters.scope }}>All trips</option>
+          <option value="ongoing" {{ 'selected' if activity_filters.scope == 'ongoing' }}>Ongoing only</option>
+          <option value="recent" {{ 'selected' if activity_filters.scope == 'recent' }}>Recent only</option>
+        </select>
+      </div>
+      <div class="col-md-5 filter-actions">
+        <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+        <a href="{{ url_for('riders', tab='activity') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </form>
+
+    <div class="data-card">
+      <div class="data-card-header">
+        <h3>Ongoing and Recent Trips</h3>
+        <span class="status-tag status-info">{{ rider_trip_activity|length }} records</span>
+      </div>
+      <div class="data-card-body table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Trip #</th>
+              <th>Status</th>
+              <th>Rider</th>
+              <th>Driver</th>
+              <th>Route</th>
+              <th>Fare</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rider_trip_activity %}
+            {% set trip_status = (row.status or 'unknown')|lower %}
+            <tr>
+              <td>#{{ row.trip_id }}</td>
+              <td>
+                <span
+                  class="status-tag {% if trip_status in ['requested', 'accepted', 'in_progress'] %}status-pending{% elif trip_status == 'completed' %}status-approved{% elif trip_status == 'canceled' %}status-rejected{% else %}status-info{% endif %} text-capitalize"
+                >
+                  {{ row.status|replace('_', ' ') }}
+                </span>
+              </td>
+              <td>{{ row.rider_name or 'N/A' }}</td>
+              <td>{{ row.driver_name or 'N/A' }}</td>
+              <td>{{ row.start_loc or 'N/A' }} to {{ row.end_loc or 'N/A' }}</td>
+              <td>
+                {% if trip_status in ['requested', 'accepted', 'in_progress'] %}
+                In progress
+                {% elif row.final_cost is not none %}
+                ${{ '%.2f'|format(row.final_cost|float) }}
+                {% else %}
+                N/A
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted">No trip activity found for the current filters.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
-
-    {% if recent_rides %}
-    <div class="activity-block">
-      <h3>Recent Rides</h3>
-      <ul class="list-box">
-        {% for ride in recent_rides[:10] %}
-        <li>{{ ride }}</li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% else %}
-    <div class="empty-message empty-centered">
-      <i class="bi bi-calendar2-check"></i>
-      <p>No recent rides.</p>
-    </div>
     {% endif %}
+
   </article>
 </section>
 {% endblock %}
-

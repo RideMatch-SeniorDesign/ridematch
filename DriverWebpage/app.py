@@ -377,6 +377,102 @@ def api_driver_login():
     return jsonify({"success": True, "user": user}), 200
 
 
+@app.route("/api/driver/signup", methods=["POST"])
+def api_driver_signup():
+    """Multipart signup for mobile (same profile photo rules as the web form: JPG/PNG/WebP, max 5 MB)."""
+    content_type = str(request.content_type or "").lower()
+    if "multipart/form-data" not in content_type:
+        return jsonify(
+            {
+                "success": False,
+                "error": "Send multipart/form-data with a profile_photo file (JPG, PNG, or WebP, max 5 MB).",
+            }
+        ), 400
+
+    first_name = str(request.form.get("first_name") or "").strip()
+    last_name = str(request.form.get("last_name") or "").strip()
+    username = str(request.form.get("username") or "").strip()
+    email = str(request.form.get("email") or "").strip()
+    phone = str(request.form.get("phone") or "").strip()
+    license_state = str(request.form.get("license_state") or "").strip().upper()
+    license_number = str(request.form.get("license_number") or "").strip()
+    license_expires = str(request.form.get("license_expires") or "").strip()
+    insurance_provider = str(request.form.get("insurance_provider") or "").strip()
+    insurance_policy = str(request.form.get("insurance_policy") or "").strip()
+    date_of_birth = str(request.form.get("date_of_birth") or "").strip()
+    password = str(request.form.get("password") or "")
+    confirm_password = str(request.form.get("confirm_password") or "")
+    preferences = request.form.getlist("preferences")
+
+    required = [
+        first_name,
+        last_name,
+        username,
+        email,
+        phone,
+        license_state,
+        license_number,
+        insurance_provider,
+        insurance_policy,
+    ]
+    if not all(required):
+        return jsonify({"success": False, "error": "Please fill in all required fields."}), 400
+    if license_state not in US_STATE_OPTIONS:
+        return jsonify({"success": False, "error": "Select a valid license state."}), 400
+    if len(password) < 6:
+        return jsonify({"success": False, "error": "Password must be at least 6 characters."}), 400
+    if password != confirm_password:
+        return jsonify({"success": False, "error": "Passwords do not match."}), 400
+
+    normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
+
+    photo_payload, photo_error = _validate_and_store_driver_profile_photo(required=True)
+    if photo_error or not photo_payload:
+        return jsonify({"success": False, "error": photo_error or "Driver profile photo is required."}), 400
+
+    try:
+        from Database.admin_queries import create_driver_signup
+
+        account_id = create_driver_signup(
+            username=username,
+            email=email,
+            phone=phone,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            preferences=", ".join(normalized_preferences),
+            date_of_birth=date_of_birth or None,
+            license_state=license_state,
+            license_number=license_number,
+            license_expires=license_expires or None,
+            insurance_provider=insurance_provider,
+            insurance_policy=insurance_policy,
+            profile_photo=photo_payload,
+        )
+    except Exception as exc:
+        app.logger.warning("Driver API signup failed: %s", exc)
+        try:
+            if photo_payload and photo_payload.get("storage_path"):
+                (APP_PATH / str(photo_payload["storage_path"])).unlink(missing_ok=True)
+        except Exception:
+            pass
+        return jsonify(
+            {
+                "success": False,
+                "error": "Could not create driver account. Username/email may already exist or the database is unavailable.",
+            }
+        ), 500
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Driver account created. An administrator must approve your account before you can sign in.",
+            "account_id": account_id,
+            "pending_review": True,
+        }
+    ), 201
+
+
 @app.route("/api/driver/photo/<int:driver_id>")
 def api_driver_photo(driver_id: int):
     try:
@@ -480,6 +576,74 @@ def api_driver_profile(driver_id: int):
     return jsonify({"success": True, "user": user}), 200
 
 
+@app.route("/api/driver/profile/<int:driver_id>", methods=["POST"])
+def api_driver_profile_update(driver_id: int):
+    payload = request.get_json(silent=True) or {}
+    first_name = str(payload.get("first_name") or "").strip()
+    last_name = str(payload.get("last_name") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    phone = str(payload.get("phone") or "").strip()
+    preferences = payload.get("preferences") or []
+
+    if not all([first_name, last_name, email, phone]):
+        return jsonify({"success": False, "error": "First name, last name, email, and phone are required."}), 400
+
+    if isinstance(preferences, list):
+        normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
+    else:
+        normalized_preferences = _split_preferences(str(preferences))
+
+    try:
+        from Database.admin_queries import fetch_portal_profile, update_portal_profile
+
+        update_portal_profile(
+            "driver",
+            driver_id,
+            {
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "phone": phone,
+                "preferences": _join_preferences(normalized_preferences),
+            },
+        )
+        user = fetch_portal_profile("driver", driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver profile API update failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not save settings right now."}), 500
+
+    if not user:
+        return jsonify({"success": False, "error": "Driver profile not found after update."}), 404
+    photo_url = _driver_photo_url_if_exists(driver_id)
+    if photo_url:
+        user["photo_url"] = photo_url
+    else:
+        user.pop("photo_url", None)
+    return jsonify({"success": True, "message": "Driver settings updated.", "user": user}), 200
+
+
+@app.route("/api/driver/change-password", methods=["POST"])
+def api_driver_change_password():
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    current_password = str(payload.get("current_password") or "")
+    new_password = str(payload.get("new_password") or "")
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+    if not current_password or not new_password:
+        return jsonify({"success": False, "error": "Current and new passwords are required."}), 400
+    try:
+        from Database.admin_queries import update_driver_password
+
+        ok, message = update_driver_password(driver_id, current_password, new_password)
+    except Exception as exc:
+        app.logger.warning("Driver change password failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not update password right now."}), 500
+    if not ok:
+        return jsonify({"success": False, "error": message}), 400
+    return jsonify({"success": True, "message": message}), 200
+
+
 @app.route("/api/driver/dispatch/<int:driver_id>", methods=["GET"])
 def api_driver_dispatch(driver_id: int):
     try:
@@ -555,6 +719,97 @@ def api_maps_config():
             "geoapify_api_key": os.environ.get("GEOAPIFY_API_KEY", "").strip(),
         }
     ), 200
+
+
+@app.route("/api/driver/dashboard/<int:driver_id>", methods=["GET"])
+def api_driver_dashboard(driver_id: int):
+    summary = {
+        "trip_count": 0,
+        "completed_count": 0,
+        "active_count": 0,
+        "avg_given_rating": None,
+        "avg_received_rating": None,
+    }
+    trips = []
+    user = None
+    try:
+        from Database.admin_queries import fetch_portal_dashboard_summary, fetch_portal_profile, fetch_portal_trip_history
+
+        user = fetch_portal_profile("driver", driver_id)
+        summary = fetch_portal_dashboard_summary("driver", driver_id)
+        trips = fetch_portal_trip_history("driver", driver_id)[:10]
+    except Exception as exc:
+        app.logger.warning("Driver dashboard API load failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load dashboard right now."}), 500
+
+    if not user:
+        return jsonify({"success": False, "error": "Driver profile not found."}), 404
+    return jsonify({"success": True, "user": user, "summary": summary, "trips": trips}), 200
+
+
+@app.route("/api/driver/reviews/<int:driver_id>", methods=["GET"])
+def api_driver_reviews(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_portal_reviews
+
+        review_data = fetch_portal_reviews("driver", driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver reviews API load failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load review history right now."}), 500
+    return jsonify({"success": True, "review_data": review_data}), 200
+
+
+@app.route("/api/driver/pending-reviews/<int:driver_id>", methods=["GET"])
+def api_driver_pending_reviews(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_trips_pending_driver_rating
+
+        pending = fetch_trips_pending_driver_rating(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver pending reviews API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load pending reviews."}), 500
+    return jsonify({"success": True, "pending": pending}), 200
+
+
+@app.route("/api/driver/trip/<int:trip_id>/review", methods=["POST"])
+def api_driver_trip_review(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    rating_raw = payload.get("rating")
+    comment = str(payload.get("comment") or "").strip()
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+    try:
+        rating = int(rating_raw)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "rating must be a number between 1 and 5."}), 400
+    try:
+        from Database.admin_queries import submit_driver_rating_for_rider
+
+        ok, message = submit_driver_rating_for_rider(
+            driver_id,
+            trip_id,
+            rating,
+            comment or None,
+        )
+    except Exception as exc:
+        app.logger.warning("Driver trip review submit failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not submit review right now."}), 500
+    if not ok:
+        return jsonify({"success": False, "error": message}), 400
+    return jsonify({"success": True, "message": message}), 200
+
+
+@app.route("/api/driver/income/<int:driver_id>", methods=["GET"])
+def api_driver_income(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_driver_income_stats
+
+        stats = fetch_driver_income_stats(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver income API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load income right now."}), 500
+    return jsonify({"success": True, "stats": stats}), 200
 
 
 @app.route("/api/driver/trip/<int:trip_id>/accept", methods=["POST"])

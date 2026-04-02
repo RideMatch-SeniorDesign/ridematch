@@ -7,7 +7,7 @@
     <div>
       <p class="page-kicker">Driver Ops</p>
       <h2 class="page-title">Driver Management Hub</h2>
-      <p class="page-note">Manage onboarding, monitor quality, and review account performance.</p>
+      <p class="page-note">Manage drivers and review new applications.</p>
     </div>
     <span class="page-pill">
       <i class="bi bi-shield-check"></i>
@@ -34,7 +34,7 @@
     <div class="section-head">
       <div>
         <h2>Driver Workflow</h2>
-        <p>Use tabs to switch between all drivers, pending verification, and reviews.</p>
+        <p>Use tabs to switch between all drivers and pending verification. Review data now lives in Analytics.</p>
       </div>
     </div>
 
@@ -43,10 +43,7 @@
         <a class="nav-link {{ 'active' if active_driver_tab == 'all' else '' }}" href="{{ url_for('drivers', tab='all') }}">All Drivers</a>
       </li>
       <li class="nav-item">
-        <a class="nav-link {{ 'active' if active_driver_tab == 'verification' else '' }}" href="{{ url_for('drivers', tab='verification') }}">Driver Verification</a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {{ 'active' if active_driver_tab == 'reviews' else '' }}" href="{{ url_for('drivers', tab='reviews') }}">Driver Reviews</a>
+        <a class="nav-link {{ 'active' if active_driver_tab == 'verification' else '' }}" href="{{ url_for('drivers', tab='verification') }}">Verifications</a>
       </li>
     </ul>
 
@@ -348,32 +345,6 @@
     </div>
     {% endif %}
 
-    {% if active_driver_tab == 'reviews' %}
-    <div class="review-grid">
-      {% for row in driver_reviews %}
-      {% set rating = row.rating|float %}
-      <article class="review-card {% if rating >= 4 %}review-positive{% elif rating >= 3 %}review-warning{% else %}review-critical{% endif %}">
-        <div class="review-top">
-          <div>
-            <h3>{{ row.driver_name }}</h3>
-            <small>Reviewed by {{ row.rider_name }}</small>
-          </div>
-          <span class="review-score">{{ row.rating }}/5</span>
-        </div>
-        <p>{{ row.comment or 'No comment provided.' }}</p>
-        <div class="review-meta">
-          <i class="bi bi-calendar3"></i>
-          <span>{{ row.review_date.strftime('%Y-%m-%d') if row.review_date else 'N/A' }}</span>
-        </div>
-      </article>
-      {% else %}
-      <div class="empty-message">
-        <i class="bi bi-chat-left-heart"></i>
-        <span>No driver reviews submitted yet.</span>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
   </article>
 </section>
 {% endblock %}

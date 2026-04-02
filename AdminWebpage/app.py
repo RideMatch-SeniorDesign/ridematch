@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
+# import requests
+
+# REALTIME_HUB_URL = os.getenv("REALTIME_HUB_URL", "http://127.0.0.1:5001/publish-event")
+# INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "my-internal-notify-key")
 
 # Allow running from either project root or AdminWebpage directory.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +34,16 @@ SESSION_DAYS = int(os.environ.get("ADMIN_SESSION_DAYS", "365"))
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
+ONGOING_TRIP_STATUSES = {"requested", "accepted", "in_progress"}
+DEFAULT_ADMIN_FARE_SHARE = 0.25
+DEFAULT_DRIVER_PAYOUT_SCHEDULE = "weekly"
+PAYOUT_SCHEDULE_LABELS = {
+    "per_trip": "After Each Ride",
+    "weekly": "Weekly",
+    "biweekly": "Biweekly",
+    "monthly": "Monthly",
+}
+
 
 def _is_logged_in() -> bool:
     return bool(session.get("logged_in"))
@@ -38,18 +52,145 @@ def _is_logged_in() -> bool:
 def _set_admin_password(new_password: str) -> tuple[bool, str | None]:
     global ADMIN_PASSWORD
     ADMIN_PASSWORD = new_password
-    os.environ["ADMIN_TEST_PASSWORD"] = new_password
+    return _persist_env_settings(
+        {"ADMIN_TEST_PASSWORD": new_password},
+        "Password changed",
+    )
+
+
+def _load_admin_fare_share() -> float:
+    raw_pct = str(os.environ.get("ADMIN_FARE_SHARE_PCT", "")).strip()
+    if raw_pct:
+        try:
+            return min(max(float(raw_pct) / 100.0, 0.0), 1.0)
+        except ValueError:
+            pass
+
+    raw_share = str(os.environ.get("ADMIN_FARE_SHARE", "")).strip()
+    if raw_share:
+        try:
+            share_value = float(raw_share)
+            if share_value > 1.0:
+                share_value = share_value / 100.0
+            return min(max(share_value, 0.0), 1.0)
+        except ValueError:
+            pass
+
+    return DEFAULT_ADMIN_FARE_SHARE
+
+
+def _normalize_payout_schedule(value: Any) -> str:
+    schedule_key = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if schedule_key in PAYOUT_SCHEDULE_LABELS:
+        return schedule_key
+    return DEFAULT_DRIVER_PAYOUT_SCHEDULE
+
+
+def _persist_env_settings(updates: dict[str, str], success_context: str) -> tuple[bool, str | None]:
+    for key, value in updates.items():
+        os.environ[key] = value
 
     try:
         if ENV_PATH.exists():
-            set_key(str(ENV_PATH), "ADMIN_TEST_PASSWORD", new_password)
+            for key, value in updates.items():
+                set_key(str(ENV_PATH), key, value)
         else:
             with ENV_PATH.open("a", encoding="utf-8") as env_file:
-                env_file.write(f"ADMIN_TEST_PASSWORD={new_password}\n")
+                for key, value in updates.items():
+                    env_file.write(f"{key}={value}\n")
         return True, None
     except Exception as exc:
-        app.logger.warning("Could not persist ADMIN_TEST_PASSWORD to .env: %s", exc)
-        return False, "Password changed for this session only; could not update .env."
+        app.logger.warning("Could not persist settings to .env for %s: %s", ", ".join(updates), exc)
+        return False, f"{success_context} for this session only; could not update .env."
+
+
+def _set_budget_settings(admin_fare_share_pct: int, payout_schedule: str) -> tuple[bool, str | None]:
+    global ADMIN_FARE_SHARE, DRIVER_FARE_SHARE, DRIVER_PAYOUT_SCHEDULE
+
+    normalized_pct = max(0, min(100, int(admin_fare_share_pct)))
+    normalized_schedule = _normalize_payout_schedule(payout_schedule)
+    admin_share = normalized_pct / 100.0
+    driver_share = 1.0 - admin_share
+
+    ADMIN_FARE_SHARE = admin_share
+    DRIVER_FARE_SHARE = driver_share
+    DRIVER_PAYOUT_SCHEDULE = normalized_schedule
+
+    return _persist_env_settings(
+        {
+            "ADMIN_FARE_SHARE_PCT": str(normalized_pct),
+            "ADMIN_FARE_SHARE": f"{admin_share:.4f}".rstrip("0").rstrip("."),
+            "DRIVER_FARE_SHARE": f"{driver_share:.4f}".rstrip("0").rstrip("."),
+            "DRIVER_PAYOUT_SCHEDULE": normalized_schedule,
+        },
+        "Budget settings updated",
+    )
+
+
+ADMIN_FARE_SHARE = _load_admin_fare_share()
+DRIVER_FARE_SHARE = 1.0 - ADMIN_FARE_SHARE
+DRIVER_PAYOUT_SCHEDULE = _normalize_payout_schedule(
+    os.environ.get("DRIVER_PAYOUT_SCHEDULE", DEFAULT_DRIVER_PAYOUT_SCHEDULE)
+)
+
+
+class DatabaseAdminRepository:
+    def fetch_dashboard_data(self) -> dict[str, Any]:
+        from AdminDatabase.admin_queries import (
+            fetch_dashboard_data,
+            fetch_driver_to_rider_reviews,
+            fetch_rider_reviews,
+            fetch_rider_statistics,
+            fetch_rider_trip_activity,
+            fetch_riders,
+        )
+
+        data = fetch_dashboard_data()
+
+        try:
+            riders_list = fetch_riders()
+            rider_stats = fetch_rider_statistics()
+            rider_reviews = fetch_rider_reviews()
+            driver_to_rider_reviews = fetch_driver_to_rider_reviews()
+            rider_trip_activity = fetch_rider_trip_activity()
+            data["all_riders"] = riders_list
+            data["rider_reviews"] = rider_reviews
+            data["driver_to_rider_reviews"] = driver_to_rider_reviews
+            data["rider_trip_activity"] = rider_trip_activity
+            data["total_rider_count"] = rider_stats.get("total_rider_count", 0)
+            data["total_rides"] = rider_stats.get("total_rides", 0)
+        except Exception:
+            data["all_riders"] = []
+            data["rider_reviews"] = []
+            data["driver_to_rider_reviews"] = []
+            data["rider_trip_activity"] = []
+            data["total_rider_count"] = 0
+            data["total_rides"] = 0
+
+        return data
+
+    def fetch_driver_detail(self, driver_id: int) -> dict[str, Any] | None:
+        from AdminDatabase.admin_queries import driver_detail as fetch_driver
+
+        return fetch_driver(driver_id)
+
+    def update_driver_status(self, driver_id: int, action: str) -> bool:
+        from AdminDatabase.admin_queries import update_driver_status
+
+        return update_driver_status(driver_id, action)
+
+    def set_budget_settings(self, admin_fare_share_pct: int, payout_schedule: str) -> tuple[bool, str | None]:
+        return _set_budget_settings(admin_fare_share_pct, payout_schedule)
+
+    def set_admin_password(self, new_password: str) -> tuple[bool, str | None]:
+        return _set_admin_password(new_password)
+
+
+_DEFAULT_ADMIN_REPOSITORY = DatabaseAdminRepository()
+
+
+def _get_admin_repository() -> Any:
+    return app.config.get("ADMIN_REPOSITORY") or _DEFAULT_ADMIN_REPOSITORY
 
 
 @app.before_request
@@ -71,6 +212,23 @@ def _coerce_date(value: Any) -> date | None:
             return date.fromisoformat(text[:10])
         except ValueError:
             return None
+    return None
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        for candidate in (text, text.replace(" ", "T", 1), text[:19], text[:10]):
+            try:
+                return datetime.fromisoformat(candidate)
+            except ValueError:
+                continue
     return None
 
 
@@ -183,6 +341,260 @@ def _filter_riders(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[
 
         filtered.append(row)
     return filtered
+
+
+def _filter_rider_trip_activity(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    query = (filters.get("query") or "").strip().lower()
+    scope = (filters.get("scope") or "").strip().lower()
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_status = str(row.get("status") or "").strip().lower()
+        is_ongoing = row_status in ONGOING_TRIP_STATUSES
+        if scope == "ongoing" and not is_ongoing:
+            continue
+        if scope == "recent" and is_ongoing:
+            continue
+
+        if query:
+            haystack = " ".join(
+                [
+                    str(row.get("rider_name") or ""),
+                    str(row.get("driver_name") or ""),
+                    str(row.get("start_loc") or ""),
+                    str(row.get("end_loc") or ""),
+                    row_status,
+                ]
+            ).lower()
+            if query not in haystack:
+                continue
+
+        filtered.append(row)
+    return filtered
+
+
+def _filter_rider_reviews(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    query = (filters.get("query") or "").strip().lower()
+    rating_min = _coerce_float(filters.get("rating_min"))
+    rating_max = _coerce_float(filters.get("rating_max"))
+    sort_by = (filters.get("sort_by") or "newest").strip().lower()
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        rating = _coerce_float(row.get("rating"))
+        if rating_min is not None and (rating is None or rating < rating_min):
+            continue
+        if rating_max is not None and (rating is None or rating > rating_max):
+            continue
+
+        if query:
+            haystack = " ".join(
+                [
+                    str(row.get("rider_name") or ""),
+                    str(row.get("driver_name") or ""),
+                    str(row.get("comment") or ""),
+                ]
+            ).lower()
+            if query not in haystack:
+                continue
+
+        filtered.append(row)
+
+    if sort_by == "oldest":
+        return sorted(
+            filtered,
+            key=lambda row: (
+                _coerce_datetime(row.get("review_date")) or datetime.min,
+                _coerce_int(row.get("review_id")) or 0,
+            ),
+        )
+    if sort_by == "rating_high":
+        return sorted(
+            filtered,
+            key=lambda row: (
+                _coerce_float(row.get("rating")) is None,
+                -(_coerce_float(row.get("rating")) or 0),
+                -(_coerce_int(row.get("review_id")) or 0),
+            ),
+        )
+    if sort_by == "rating_low":
+        return sorted(
+            filtered,
+            key=lambda row: (
+                _coerce_float(row.get("rating")) is None,
+                _coerce_float(row.get("rating")) or 0,
+                -(_coerce_int(row.get("review_id")) or 0),
+            ),
+        )
+    return sorted(
+        filtered,
+        key=lambda row: (
+            _coerce_datetime(row.get("review_date")) or datetime.min,
+            _coerce_int(row.get("review_id")) or 0,
+        ),
+        reverse=True,
+    )
+
+
+def _merge_reviews(
+    rider_to_driver_rows: list[dict[str, Any]],
+    driver_to_rider_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+
+    for row in rider_to_driver_rows:
+        enriched = dict(row)
+        enriched["review_scope"] = "rider"
+        enriched["review_type_label"] = "Rider -> Driver"
+        merged.append(enriched)
+
+    for row in driver_to_rider_rows:
+        enriched = dict(row)
+        enriched["review_scope"] = "driver"
+        enriched["review_type_label"] = "Driver -> Rider"
+        merged.append(enriched)
+
+    return sorted(
+        merged,
+        key=lambda row: (
+            _coerce_datetime(row.get("review_date")) or datetime.min,
+            _coerce_int(row.get("review_id")) or 0,
+        ),
+        reverse=True,
+    )
+
+
+def _filter_analytics_reviews(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    scope = (filters.get("scope") or "").strip().lower()
+    scope_filtered = rows
+    if scope in {"driver", "rider"}:
+        scope_filtered = [row for row in rows if str(row.get("review_scope") or "").lower() == scope]
+
+    base_filters = {
+        "query": filters.get("query", ""),
+        "rating_min": filters.get("rating_min", ""),
+        "rating_max": filters.get("rating_max", ""),
+        "sort_by": filters.get("sort_by", "newest"),
+    }
+    return _filter_rider_reviews(scope_filtered, base_filters)
+
+
+def _filter_analytics_trips(rows: list[dict[str, Any]], filters: dict[str, str]) -> list[dict[str, Any]]:
+    scope = (filters.get("scope") or "").strip().lower()
+    query = (filters.get("query") or "").strip().lower()
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        status = str(row.get("status") or "").strip().lower()
+        is_ongoing = status in ONGOING_TRIP_STATUSES
+
+        if scope == "ongoing" and not is_ongoing:
+            continue
+        if scope == "past" and status != "completed":
+            continue
+        if scope == "canceled" and status != "canceled":
+            continue
+
+        if query:
+            haystack = " ".join(
+                [
+                    str(row.get("trip_id") or ""),
+                    str(row.get("rider_name") or ""),
+                    str(row.get("driver_name") or ""),
+                    str(row.get("start_loc") or ""),
+                    str(row.get("end_loc") or ""),
+                    status,
+                ]
+            ).lower()
+            if query not in haystack:
+                continue
+
+        filtered.append(row)
+
+    return sorted(
+        filtered,
+        key=lambda row: (
+            0 if str(row.get("status") or "").strip().lower() in ONGOING_TRIP_STATUSES else 1,
+            -(_coerce_int(row.get("trip_id")) or 0),
+        ),
+    )
+
+
+def _build_financial_summary(trip_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    completed_rows = [row for row in trip_rows if str(row.get("status") or "").strip().lower() == "completed"]
+
+    fare_total = sum(_coerce_float(row.get("final_cost")) or 0.0 for row in completed_rows)
+    fee_total = sum(_coerce_float(row.get("platform_fee")) or 0.0 for row in completed_rows)
+    tax_total = sum(_coerce_float(row.get("tax_amount")) or 0.0 for row in completed_rows)
+    tip_total = sum(_coerce_float(row.get("tip_amount")) or 0.0 for row in completed_rows)
+
+    driver_income = fare_total * DRIVER_FARE_SHARE
+    admin_income = fare_total * ADMIN_FARE_SHARE
+    driver_payout_total = driver_income + tip_total
+    admin_gross_revenue = admin_income + fee_total
+    gross_bookings = fare_total + fee_total + tax_total + tip_total
+    net_profit = admin_gross_revenue - tax_total
+
+    income_breakdown = [
+        {"label": "Driver Income", "value": round(driver_income, 2), "color": "#22c55e"},
+        {"label": "Admin Income", "value": round(admin_income, 2), "color": "#2563eb"},
+        {"label": "Taxes & Fees", "value": round(tax_total + fee_total, 2), "color": "#f59e0b"},
+        {"label": "Tips", "value": round(tip_total, 2), "color": "#7c3aed"},
+    ]
+
+    return {
+        "analytics_income_breakdown": income_breakdown,
+        "completed_trip_count": len(completed_rows),
+        "fare_total": round(fare_total, 2),
+        "fee_total": round(fee_total, 2),
+        "tax_total": round(tax_total, 2),
+        "tip_total": round(tip_total, 2),
+        "driver_income": round(driver_income, 2),
+        "admin_income": round(admin_income, 2),
+        "driver_payout_total": round(driver_payout_total, 2),
+        "admin_gross_revenue": round(admin_gross_revenue, 2),
+        "gross_bookings": round(gross_bookings, 2),
+        "net_profit": round(net_profit, 2),
+        "driver_fare_share_pct": int(DRIVER_FARE_SHARE * 100),
+        "admin_fare_share_pct": int(ADMIN_FARE_SHARE * 100),
+    }
+
+
+def _build_driver_pay_summary(trip_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    completed_rows = [row for row in trip_rows if str(row.get("status") or "").strip().lower() == "completed"]
+    by_driver: dict[int, dict[str, Any]] = {}
+
+    for row in completed_rows:
+        driver_id = _coerce_int(row.get("driver_id")) or 0
+        driver_name = str(row.get("driver_name") or "Unknown Driver").strip() or "Unknown Driver"
+        fare_amount = _coerce_float(row.get("final_cost")) or 0.0
+        tip_amount = _coerce_float(row.get("tip_amount")) or 0.0
+        payout_amount = (fare_amount * DRIVER_FARE_SHARE) + tip_amount
+
+        if driver_id not in by_driver:
+            by_driver[driver_id] = {
+                "driver_id": driver_id,
+                "driver_name": driver_name,
+                "completed_trips": 0,
+                "fare_total": 0.0,
+                "tip_total": 0.0,
+                "estimated_payout": 0.0,
+            }
+
+        driver_row = by_driver[driver_id]
+        driver_row["completed_trips"] += 1
+        driver_row["fare_total"] += fare_amount
+        driver_row["tip_total"] += tip_amount
+        driver_row["estimated_payout"] += payout_amount
+
+    rows = list(by_driver.values())
+    rows.sort(key=lambda row: (-(_coerce_float(row.get("estimated_payout")) or 0.0), str(row.get("driver_name") or "")))
+
+    total_payout = round(sum(_coerce_float(row.get("estimated_payout")) or 0.0 for row in rows), 2)
+    return {
+        "analytics_driver_pay_rows": rows,
+        "analytics_driver_pay_total": total_payout,
+    }
 
 
 def _dashboard_data() -> dict:
@@ -299,27 +711,81 @@ def _dashboard_data() -> dict:
             {"name": "Liam Carter", "email": "liam.carter@example.com", "phone": "319-555-0105", "preferences": "music okay", "rating": "4.0", "rides": 5, "riding_since": today - timedelta(days=170)},
             {"name": "Noah Bennett", "email": "noah.bennett@example.com", "phone": "319-555-0106", "preferences": "pet friendly", "rating": "4.8", "rides": 12, "riding_since": today - timedelta(days=330)},
         ],
+        "rider_reviews": [
+            {
+                "review_id": 9001,
+                "rating": 5,
+                "rider_name": "Sofia Ramirez",
+                "driver_name": "Bob Johnson",
+                "comment": "Great pickup timing and smooth drive.",
+                "review_date": today - timedelta(days=1),
+            },
+            {
+                "review_id": 9002,
+                "rating": 3,
+                "rider_name": "Liam Carter",
+                "driver_name": "Sally Smith",
+                "comment": "Ride was okay but pickup was a little late.",
+                "review_date": today - timedelta(days=3),
+            },
+        ],
+        "driver_to_rider_reviews": [
+            {
+                "review_id": 201,
+                "driver_id": 1,
+                "driver_name": "Bob Johnson",
+                "rider_id": 22,
+                "rider_name": "Sarah Lee",
+                "rating": 5,
+                "comment": "Trip #201: Iowa City to Coralville",
+                "review_date": None,
+            },
+            {
+                "review_id": 202,
+                "driver_id": 2,
+                "driver_name": "Sally Smith",
+                "rider_id": 25,
+                "rider_name": "Kylie Ross",
+                "rating": 3,
+                "comment": "Trip #202: North Liberty to Iowa City",
+                "review_date": None,
+            },
+        ],
+        "rider_trip_activity": [
+            {
+                "trip_id": 5001,
+                "status": "in_progress",
+                "activity_type": "ongoing",
+                "rider_name": "Sofia Ramirez",
+                "driver_name": "Bob Johnson",
+                "start_loc": "Iowa City",
+                "end_loc": "Coralville",
+                "final_cost": 0.0,
+                "platform_fee": 0.0,
+                "tax_amount": 0.0,
+                "tip_amount": 0.0,
+            },
+            {
+                "trip_id": 5000,
+                "status": "completed",
+                "activity_type": "recent",
+                "rider_name": "Liam Carter",
+                "driver_name": "Sally Smith",
+                "start_loc": "North Liberty",
+                "end_loc": "Iowa City",
+                "final_cost": 14.25,
+                "platform_fee": 1.43,
+                "tax_amount": 1.00,
+                "tip_amount": 1.14,
+            },
+        ],
         "total_rider_count": 6,
         "total_rides": 20,
         "db_error": None,
     }
 
     try:
-        from AdminDatabase.admin_queries import fetch_dashboard_data, fetch_riders, fetch_rider_statistics
-        data = fetch_dashboard_data()
-        
-        # Add rider data
-        try:
-            riders_list = fetch_riders()
-            rider_stats = fetch_rider_statistics()
-            data["all_riders"] = riders_list
-            data["total_rider_count"] = rider_stats.get("total_rider_count", 0)
-            data["total_rides"] = rider_stats.get("total_rides", 0)
-        except Exception:
-            data["all_riders"] = []
-            data["total_rider_count"] = 0
-            data["total_rides"] = 0
-        
+        data = _get_admin_repository().fetch_dashboard_data()
         pending_count = len(data.get("unapproved_drivers", []))
         review_count = len(data.get("driver_reviews", []))
         total_drivers = int(data.get("total_driver_count") or len(data.get("all_drivers", [])) or 0)
@@ -432,7 +898,32 @@ def home():
     if not _is_logged_in():
         return redirect(url_for("login"))
 
-    return render_template("home.html", username=session.get("username"), current_tab="home", **_dashboard_data())
+    data = _dashboard_data()
+    trip_rows = list(data.get("rider_trip_activity", []))
+    rider_review_rows = list(data.get("rider_reviews", []))
+    driver_review_rows = list(data.get("driver_to_rider_reviews", []))
+    all_reviews = _merge_reviews(rider_review_rows, driver_review_rows)
+
+    ongoing_rows = _filter_analytics_trips(trip_rows, {"scope": "ongoing", "query": ""})
+    recent_reviews = _filter_analytics_reviews(
+        all_reviews,
+        {"scope": "all", "query": "", "rating_min": "", "rating_max": "", "sort_by": "newest"},
+    )
+    financial_summary = _build_financial_summary(trip_rows)
+
+    return render_template(
+        "home.html",
+        username=session.get("username"),
+        current_tab="home",
+        home_queue_preview=list(data.get("new_applications", []))[:3],
+        home_queue_count=len(list(data.get("new_applications", []))),
+        home_ongoing_trips=ongoing_rows[:5],
+        home_ongoing_count=len(ongoing_rows),
+        home_recent_reviews=recent_reviews[:6],
+        home_review_count=len(all_reviews),
+        **financial_summary,
+        **data,
+    )
 
 
 @app.route("/drivers")
@@ -441,15 +932,18 @@ def drivers():
         return redirect(url_for("login"))
 
     active_tab = request.args.get("tab", "all")
-    if active_tab not in {"all", "verification", "reviews"}:
+    if active_tab == "reviews":
+        return redirect(url_for("analytics", tab="reviews", review_scope="driver"))
+    if active_tab not in {"all", "verification"}:
         active_tab = "all"
 
     data = _dashboard_data()
     all_driver_rows = list(data.get("all_drivers", []))
     unapproved_rows = list(data.get("unapproved_drivers", []))
+    driver_review_rows = list(data.get("driver_to_rider_reviews", []))
     all_driver_count_raw = len(all_driver_rows)
     pending_driver_count_raw = len(unapproved_rows)
-    driver_review_count_raw = len(data.get("driver_reviews", []))
+    driver_review_count_raw = len(driver_review_rows)
 
     driver_status_options = sorted(
         {
@@ -487,9 +981,7 @@ def drivers():
     selected_driver = None
     if selected_driver_id:
         try:
-            from Database.admin_queries import driver_detail
-
-            selected_driver = driver_detail(selected_driver_id)
+            selected_driver = _get_admin_repository().fetch_driver_detail(selected_driver_id)
         except Exception as exc:
             app.logger.warning("Driver detail load failed: %s", exc)
 
@@ -527,11 +1019,13 @@ def verify_driver(driver_id: int):
 
     notice = "update_failed"
     try:
-        from AdminDatabase.admin_queries import update_driver_status
-
-        updated = update_driver_status(driver_id, action)
+        updated = _get_admin_repository().update_driver_status(driver_id, action)
         if updated:
             notice = "approved" if action == "approve" else "denied"
+            
+            # code for sending realtime notification to driver
+            # respond_to_driver_verification_update(driver_id, updated)
+
     except Exception as exc:
         app.logger.warning("Driver verification update failed: %s", exc)
 
@@ -544,17 +1038,15 @@ def driver_detail(driver_id):
     if not _is_logged_in():
         return redirect(url_for("login"))
 
-    # If DB function exists, use it; otherwise use fallback data
+    driver = None
     try:
-        from Database.admin_queries import driver_detail as fetch_driver
-        driver = fetch_driver(driver_id)
+        driver = _get_admin_repository().fetch_driver_detail(driver_id)
     except Exception:
-        # Fallback to finding driver from dashboard data
+        driver = None
+
+    if not driver:
         all_drivers = _dashboard_data().get("all_drivers", [])
-        driver = next(
-            (d for d in all_drivers if d.get("account_id") == driver_id),
-            None
-        )
+        driver = next((d for d in all_drivers if d.get("account_id") == driver_id), None)
 
     if not driver:
         return "Driver not found", 404
@@ -574,9 +1066,7 @@ def driver_photo(driver_id: int):
         return redirect(url_for("login"))
 
     try:
-        from Database.admin_queries import driver_detail as fetch_driver
-
-        driver = fetch_driver(driver_id)
+        driver = _get_admin_repository().fetch_driver_detail(driver_id)
     except Exception as exc:
         app.logger.warning("Could not load driver photo details: %s", exc)
         driver = None
@@ -604,21 +1094,45 @@ def riders():
     if not _is_logged_in():
         return redirect(url_for("login"))
 
+    active_tab = request.args.get("tab", "all")
+    if active_tab == "reviews":
+        return redirect(url_for("analytics", tab="reviews", review_scope="rider"))
+    if active_tab not in {"all", "activity"}:
+        active_tab = "all"
+
     data = _dashboard_data()
     rider_rows = list(data.get("all_riders", []))
-    rider_filters = {
+    rider_review_rows = list(data.get("rider_reviews", []))
+    rider_activity_rows = list(data.get("rider_trip_activity", []))
+
+    all_rider_count_raw = len(rider_rows)
+    rider_review_count_raw = len(rider_review_rows)
+    rider_activity_count_raw = len(rider_activity_rows)
+
+    all_rider_filters = {
         "query": request.args.get("rider_query", "").strip(),
         "riding_since_before": request.args.get("riding_since_before", "").strip(),
         "rating_min": request.args.get("rider_rating_min", "").strip(),
         "rating_max": request.args.get("rider_rating_max", "").strip(),
     }
-    data["all_riders"] = _filter_riders(rider_rows, rider_filters)
+    activity_filters = {
+        "query": request.args.get("activity_query", "").strip(),
+        "scope": request.args.get("activity_scope", "").strip().lower(),
+    }
+
+    data["all_riders"] = _filter_riders(rider_rows, all_rider_filters)
+    data["rider_trip_activity"] = _filter_rider_trip_activity(rider_activity_rows, activity_filters)
 
     return render_template(
         "riders.html",
         username=session.get("username"),
         current_tab="riders",
-        rider_filters=rider_filters,
+        active_rider_tab=active_tab,
+        all_rider_filters=all_rider_filters,
+        activity_filters=activity_filters,
+        all_rider_count_raw=all_rider_count_raw,
+        rider_activity_count_raw=rider_activity_count_raw,
+        rider_review_count_raw=rider_review_count_raw,
         **data,
     )
 
@@ -628,11 +1142,64 @@ def analytics():
     if not _is_logged_in():
         return redirect(url_for("login"))
 
+    active_tab = (request.args.get("tab") or "dashboard").strip().lower()
+    if active_tab not in {"dashboard", "budget", "reviews", "trips"}:
+        active_tab = "dashboard"
+
+    data = _dashboard_data()
+    trip_rows = list(data.get("rider_trip_activity", []))
+    rider_review_rows = list(data.get("rider_reviews", []))
+    driver_review_rows = list(data.get("driver_to_rider_reviews", []))
+    all_review_rows = _merge_reviews(rider_review_rows, driver_review_rows)
+
+    analytics_review_filters = {
+        "scope": (request.args.get("review_scope") or "all").strip().lower(),
+        "query": request.args.get("review_query", "").strip(),
+        "rating_min": request.args.get("review_rating_min", "").strip(),
+        "rating_max": request.args.get("review_rating_max", "").strip(),
+        "sort_by": (request.args.get("review_sort") or "newest").strip().lower(),
+    }
+    analytics_trip_filters = {
+        "scope": (request.args.get("trip_scope") or "all").strip().lower(),
+        "query": request.args.get("trip_query", "").strip(),
+    }
+    if analytics_review_filters["scope"] not in {"all", "driver", "rider"}:
+        analytics_review_filters["scope"] = "all"
+    if analytics_review_filters["sort_by"] not in {"newest", "oldest", "rating_high", "rating_low"}:
+        analytics_review_filters["sort_by"] = "newest"
+    if analytics_trip_filters["scope"] not in {"all", "ongoing", "past", "canceled"}:
+        analytics_trip_filters["scope"] = "all"
+
+    analytics_reviews = _filter_analytics_reviews(all_review_rows, analytics_review_filters)
+    analytics_trips = _filter_analytics_trips(trip_rows, analytics_trip_filters)
+    analytics_ongoing_rows = _filter_analytics_trips(trip_rows, {"scope": "ongoing", "query": ""})
+    analytics_ongoing_preview = analytics_ongoing_rows[:6]
+    analytics_review_preview = _filter_analytics_reviews(
+        all_review_rows,
+        {"scope": "all", "query": "", "rating_min": "", "rating_max": "", "sort_by": "newest"},
+    )[:6]
+    financial_summary = _build_financial_summary(trip_rows)
+    driver_pay_summary = _build_driver_pay_summary(trip_rows)
+
     return render_template(
         "analytics.html",
         username=session.get("username"),
         current_tab="analytics",
-        **_dashboard_data(),
+        active_analytics_tab=active_tab,
+        analytics_reviews=analytics_reviews,
+        analytics_trips=analytics_trips,
+        analytics_review_filters=analytics_review_filters,
+        analytics_trip_filters=analytics_trip_filters,
+        analytics_ongoing_preview=analytics_ongoing_preview,
+        analytics_review_preview=analytics_review_preview,
+        analytics_all_review_count=len(all_review_rows),
+        analytics_driver_review_count=len(driver_review_rows),
+        analytics_rider_review_count=len(rider_review_rows),
+        analytics_trip_count=len(trip_rows),
+        analytics_ongoing_count=len(analytics_ongoing_rows),
+        **financial_summary,
+        **driver_pay_summary,
+        **data,
     )
 
 
@@ -643,27 +1210,48 @@ def settings():
 
     settings_error = None
     settings_success = None
+    budget_error = None
+    budget_success = None
 
     if request.method == "POST":
-        current_password = request.form.get("current_password", "").strip()
-        new_password = request.form.get("new_password", "").strip()
-        confirm_password = request.form.get("confirm_password", "").strip()
+        repository = _get_admin_repository()
+        form_name = (request.form.get("form_name") or "password").strip().lower()
 
-        if not current_password or not new_password or not confirm_password:
-            settings_error = "All password fields are required."
-        elif current_password != ADMIN_PASSWORD:
-            settings_error = "Current password is incorrect."
-        elif len(new_password) < 8:
-            settings_error = "New password must be at least 8 characters."
-        elif new_password != confirm_password:
-            settings_error = "New password and confirmation do not match."
-        elif new_password == current_password:
-            settings_error = "New password must be different from current password."
+        if form_name == "budget":
+            admin_fare_share_pct = _coerce_int(request.form.get("admin_fare_share_pct"))
+            payout_schedule = (request.form.get("driver_payout_schedule") or "").strip().lower()
+
+            if admin_fare_share_pct is None:
+                budget_error = "Admin take percentage is required."
+            elif not 0 <= admin_fare_share_pct <= 100:
+                budget_error = "Admin take percentage must be between 0 and 100."
+            elif payout_schedule not in PAYOUT_SCHEDULE_LABELS:
+                budget_error = "Select a valid driver payout schedule."
+            else:
+                _, warning = repository.set_budget_settings(admin_fare_share_pct, payout_schedule)
+                budget_success = "Budget settings updated successfully."
+                if warning:
+                    budget_success = f"{budget_success} {warning}"
         else:
-            _, warning = _set_admin_password(new_password)
-            settings_success = "Password updated successfully."
-            if warning:
-                settings_success = f"{settings_success} {warning}"
+            current_password = request.form.get("current_password", "").strip()
+            new_password = request.form.get("new_password", "").strip()
+            confirm_password = request.form.get("confirm_password", "").strip()
+
+            if not current_password or not new_password or not confirm_password:
+                settings_error = "All password fields are required."
+            elif current_password != ADMIN_PASSWORD:
+                settings_error = "Current password is incorrect."
+            elif len(new_password) < 8:
+                settings_error = "New password must be at least 8 characters."
+            elif new_password != confirm_password:
+                settings_error = "New password and confirmation do not match."
+            elif new_password == current_password:
+                settings_error = "New password must be different from current password."
+            else:
+                _, warning = repository.set_admin_password(new_password)
+                settings_success = "Password updated successfully."
+                if warning:
+                    settings_success = f"{settings_success} {warning}"
 
     return render_template(
         "settings.html",
@@ -671,6 +1259,16 @@ def settings():
         current_tab="settings",
         settings_error=settings_error,
         settings_success=settings_success,
+        budget_error=budget_error,
+        budget_success=budget_success,
+        admin_fare_share_pct=int(round(ADMIN_FARE_SHARE * 100)),
+        driver_fare_share_pct=int(round(DRIVER_FARE_SHARE * 100)),
+        driver_payout_schedule=DRIVER_PAYOUT_SCHEDULE,
+        driver_payout_schedule_label=PAYOUT_SCHEDULE_LABELS.get(
+            DRIVER_PAYOUT_SCHEDULE,
+            PAYOUT_SCHEDULE_LABELS[DEFAULT_DRIVER_PAYOUT_SCHEDULE],
+        ),
+        payout_schedule_options=PAYOUT_SCHEDULE_LABELS.items(),
         **_dashboard_data(),
     )
 
@@ -679,6 +1277,27 @@ def settings():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+#helper for notifications
+# def respond_to_driver_verification_update(driver_id: int, msg_body = None):
+#     header = {"X-Internal-Secret": INTERNAL_API_KEY,
+#               "Content-type": "application/json"}
+#     try:
+#         response = requests.post(
+#             REALTIME_HUB_URL,
+#             json=msg_body or {"driver_id": driver_id, "message": "Your verification status has been updated."},
+#             headers=header,
+#             timeout=5
+#         )
+
+#         response.raise_for_status()
+#         return response.json()
+#     except requests.RequestException as exc:
+#         app.logger.warning("Failed to send realtime notification: %s", exc)
+#         return None
+
+        
+
 
 
 if __name__ == "__main__":

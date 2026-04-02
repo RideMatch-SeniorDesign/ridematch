@@ -86,6 +86,52 @@ def _driver_reviews() -> list[dict[str, Any]]:
     )
 
 
+def _driver_to_rider_reviews() -> list[dict[str, Any]]:
+    if _table_exists("rider_review"):
+        return _fetch_all(
+            """
+            SELECT
+                rr.ReviewID AS review_id,
+                rr.TripID AS trip_id,
+                rr.DriverID AS driver_id,
+                rr.RiderID AS rider_id,
+                CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name,
+                CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name,
+                rr.Rating AS rating,
+                rr.Comment AS comment,
+                rr.ReviewDate AS review_date
+            FROM rider_review rr
+            JOIN account dacc ON dacc.AccountID = rr.DriverID
+            JOIN account racc ON racc.AccountID = rr.RiderID
+            ORDER BY rr.ReviewDate DESC, rr.ReviewID DESC
+            """
+        )
+
+    # Compatibility fallback for older schemas before rider_review existed.
+    if not _table_exists("trip"):
+        return []
+
+    return _fetch_all(
+        """
+        SELECT
+            t.TripID AS review_id,
+            t.TripID AS trip_id,
+            t.DriverID AS driver_id,
+            t.RiderID AS rider_id,
+            CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name,
+            CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name,
+            t.DriverRate AS rating,
+            CONCAT('Trip #', t.TripID, ': ', t.StartLoc, ' to ', t.EndLoc) AS comment,
+            NULL AS review_date
+        FROM trip t
+        JOIN account dacc ON dacc.AccountID = t.DriverID
+        JOIN account racc ON racc.AccountID = t.RiderID
+        WHERE t.DriverRate IS NOT NULL
+        ORDER BY t.TripID DESC
+        """
+    )
+
+
 def _driver_summary_rows() -> list[dict[str, Any]]:
     info_mode = _driver_info_mode()
     has_trip = _table_exists("trip")
@@ -384,6 +430,7 @@ def update_driver_status(driver_id: int, action: str) -> bool:
 def fetch_dashboard_data() -> dict[str, Any]:
     all_driver_rows = _driver_summary_rows()
     review_rows = _driver_reviews()
+    driver_to_rider_review_rows = _driver_to_rider_reviews()
 
     if _table_exists("driver_review"):
         driver_feedback_rows = _fetch_all(
@@ -470,6 +517,7 @@ def fetch_dashboard_data() -> dict[str, Any]:
         ],
         "recent_rides": [row["ride"] for row in recent_rides_rows],
         "driver_reviews": review_rows,
+        "driver_to_rider_reviews": driver_to_rider_review_rows,
         "unapproved_drivers": pending_verification,
         "total_driver_count": len(active_driver_rows),
         "db_error": None,
@@ -508,3 +556,79 @@ def fetch_rider_statistics() -> dict[str, Any]:
         "total_rider_count": total_riders[0]["count"] if total_riders else 0,
         "total_rides": total_rides[0]["count"] if total_rides else 0,
     }
+
+
+def fetch_rider_reviews() -> list[dict[str, Any]]:
+    """Fetch rider-submitted reviews with rider and driver names."""
+    if not _table_exists("driver_review"):
+        return []
+
+    return _fetch_all(
+        """
+        SELECT
+            dr.ReviewID AS review_id,
+            dr.Rating AS rating,
+            dr.Comment AS comment,
+            dr.ReviewDate AS review_date,
+            dr.RiderID AS rider_id,
+            dr.DriverID AS driver_id,
+            CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name,
+            CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name
+        FROM driver_review dr
+        JOIN account racc ON racc.AccountID = dr.RiderID
+        JOIN account dacc ON dacc.AccountID = dr.DriverID
+        ORDER BY dr.ReviewDate DESC, dr.ReviewID DESC
+        """
+    )
+
+
+def fetch_driver_to_rider_reviews() -> list[dict[str, Any]]:
+    """Fetch driver-submitted reviews/ratings for riders."""
+    return _driver_to_rider_reviews()
+
+
+def fetch_rider_trip_activity(limit: int = 120) -> list[dict[str, Any]]:
+    """Fetch ongoing and recent trips for admin rider activity monitoring."""
+    if not _table_exists("trip"):
+        return []
+
+    has_platform_fee = _column_exists("trip", "PlatformFee")
+    has_tax_amount = _column_exists("trip", "TaxAmount")
+    has_tip_amount = _column_exists("trip", "TipAmount")
+
+    platform_fee_expr = "t.PlatformFee" if has_platform_fee else "ROUND(COALESCE(t.FinalCost, 0) * 0.10, 2)"
+    tax_amount_expr = "t.TaxAmount" if has_tax_amount else "ROUND(COALESCE(t.FinalCost, 0) * 0.07, 2)"
+    tip_amount_expr = "t.TipAmount" if has_tip_amount else "0.00"
+
+    safe_limit = max(1, min(int(limit), 500))
+    return _fetch_all(
+        f"""
+        SELECT
+            t.TripID AS trip_id,
+            t.Status AS status,
+            CASE
+                WHEN t.Status IN ('requested', 'accepted', 'in_progress') THEN 'ongoing'
+                ELSE 'recent'
+            END AS activity_type,
+            t.StartLoc AS start_loc,
+            t.EndLoc AS end_loc,
+            t.FinalCost AS final_cost,
+            {platform_fee_expr} AS platform_fee,
+            {tax_amount_expr} AS tax_amount,
+            {tip_amount_expr} AS tip_amount,
+            t.DriverRate AS driver_rate,
+            t.RiderRate AS rider_rate,
+            t.RiderID AS rider_id,
+            t.DriverID AS driver_id,
+            CONCAT(racc.FirstName, ' ', racc.LastName) AS rider_name,
+            CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name
+        FROM trip t
+        JOIN account racc ON racc.AccountID = t.RiderID
+        JOIN account dacc ON dacc.AccountID = t.DriverID
+        ORDER BY
+            CASE WHEN t.Status IN ('requested', 'accepted', 'in_progress') THEN 0 ELSE 1 END,
+            t.TripID DESC
+        LIMIT %s
+        """,
+        (safe_limit,),
+    )

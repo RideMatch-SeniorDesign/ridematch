@@ -129,17 +129,16 @@
       </div>
     </div>
 
+    {% set driver_status = (driver.status or '')|trim|lower %}
+    {% if driver_status in ['pending', 'under_review'] %}
     <div class="table-box">
       <h3>Verification Actions</h3>
-      {% set driver_status = (driver.status or '')|trim|lower %}
       <div class="detail-verify-actions">
-        {% if driver_status in ['pending', 'under_review'] %}
         <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}" class="detail-verify-form">
           <input type="hidden" name="action" value="approve" />
           <input type="hidden" name="return_to" value="{{ url_for('driver_detail', driver_id=driver.account_id) }}" />
           <button type="submit" class="detail-verify-btn detail-verify-approve">Approve Driver</button>
         </form>
-        {% endif %}
         <form method="post" action="{{ url_for('verify_driver', driver_id=driver.account_id) }}" class="detail-verify-form">
           <input type="hidden" name="action" value="deny" />
           <input type="hidden" name="return_to" value="{{ url_for('driver_detail', driver_id=driver.account_id) }}" />
@@ -147,6 +146,7 @@
         </form>
       </div>
     </div>
+    {% endif %}
 
     <div class="detail-back-link">
       <a href="{{ url_for('drivers') }}" class="btn btn-outline-secondary btn-sm">

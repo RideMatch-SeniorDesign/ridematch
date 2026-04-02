@@ -1,10 +1,15 @@
 import "package:dio/dio.dart";
 
+const _apiHost = String.fromEnvironment(
+  "API_HOST",
+  defaultValue: "10.0.2.2",
+);
+
 class ApiClient {
   ApiClient()
       : _dio = Dio(
           BaseOptions(
-            baseUrl: "http://10.0.2.2:8002",
+            baseUrl: "http://$_apiHost:8002",
             connectTimeout: const Duration(seconds: 10),
             receiveTimeout: const Duration(seconds: 10),
             headers: {"Content-Type": "application/json"},
@@ -19,14 +24,94 @@ class ApiClient {
     required String username,
     required String password,
   }) async {
-    final response = await _dio.post(
-      "/api/driver/login",
-      data: <String, String>{
-        "username": username,
-        "password": password,
-      },
-    );
-    return Map<String, dynamic>.from(response.data as Map);
+    try {
+      final response = await _dio.post(
+        "/api/driver/login",
+        data: <String, String>{
+          "username": username,
+          "password": password,
+        },
+      );
+      final data = response.data;
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
+      return <String, dynamic>{"success": false, "error": "Unexpected response from server."};
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        if (result["success"] == false) {
+          final err = (result["error"] ?? "").toString().toLowerCase();
+          if (err.contains("invalid")) {
+            result["error"] = "Invalid username or password.";
+          }
+        }
+        return result;
+      }
+      final code = exc.response?.statusCode;
+      if (code == 401 || code == 400) {
+        return <String, dynamic>{
+          "success": false,
+          "error": "Invalid username or password.",
+        };
+      }
+      if (exc.response == null) {
+        return <String, dynamic>{
+          "success": false,
+          "error": "Could not reach the server. Check your connection.",
+        };
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not sign in. Try again.",
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> signup({
+    required Map<String, String> fields,
+    required List<String> preferences,
+    required String profilePhotoPath,
+  }) async {
+    try {
+      final formData = FormData();
+      for (final entry in fields.entries) {
+        formData.fields.add(MapEntry(entry.key, entry.value));
+      }
+      for (final preference in preferences) {
+        formData.fields.add(MapEntry("preferences", preference));
+      }
+      final normalizedPath = profilePhotoPath.replaceAll("\\", "/");
+      final filename = normalizedPath.split("/").last;
+      formData.files.add(
+        MapEntry(
+          "profile_photo",
+          await MultipartFile.fromFile(
+            profilePhotoPath,
+            filename: filename.isNotEmpty ? filename : "profile.jpg",
+          ),
+        ),
+      );
+      final response = await _dio.post(
+        "/api/driver/signup",
+        data: formData,
+      );
+      final data = response.data;
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
+      return <String, dynamic>{"success": false, "error": "Unexpected response from server."};
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> uploadDriverProfilePhoto({
@@ -66,11 +151,142 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  Future<Map<String, dynamic>> updateDriverProfile({
+    required int driverId,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final response = await _dio.post("/api/driver/profile/$driverId", data: payload);
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not save settings. Try again.",
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> changeDriverPassword({
+    required int driverId,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/driver/change-password",
+        data: <String, dynamic>{
+          "driver_id": driverId,
+          "current_password": currentPassword,
+          "new_password": newPassword,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not change password. Try again.",
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> fetchDashboard({
+    required int driverId,
+  }) async {
+    final response = await _dio.get("/api/driver/dashboard/$driverId");
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> fetchReviews({
+    required int driverId,
+  }) async {
+    final response = await _dio.get("/api/driver/reviews/$driverId");
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> fetchPendingReviews({
+    required int driverId,
+  }) async {
+    final response = await _dio.get("/api/driver/pending-reviews/$driverId");
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> fetchIncome({
+    required int driverId,
+  }) async {
+    final response = await _dio.get("/api/driver/income/$driverId");
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> submitTripReview({
+    required int tripId,
+    required int driverId,
+    required int rating,
+    String? comment,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/driver/trip/$tripId/review",
+        data: <String, dynamic>{
+          "driver_id": driverId,
+          "rating": rating,
+          if (comment != null && comment.isNotEmpty) "comment": comment,
+        },
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not submit review. Try again.",
+      };
+    }
+  }
+
   Future<Map<String, dynamic>> fetchDriverDispatch({
     required int accountId,
   }) async {
-    final response = await _dio.get("/api/driver/dispatch/$accountId");
-    return Map<String, dynamic>.from(response.data as Map);
+    try {
+      final response = await _dio.get("/api/driver/dispatch/$accountId");
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      if (exc.response == null) {
+        return <String, dynamic>{
+          "success": false,
+          "error": "Could not reach the server. Check your connection.",
+          "trip": null,
+          "is_available": false,
+        };
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not load dispatch. Try again.",
+        "trip": null,
+        "is_available": false,
+      };
+    }
   }
 
   Future<Map<String, dynamic>> setDriverAvailability({
