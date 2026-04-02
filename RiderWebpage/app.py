@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
+import mimetypes
 from datetime import timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = Path(__file__).resolve().parent
@@ -48,6 +49,21 @@ def _rider_logged_in() -> bool:
 
 def _rider_session_user() -> dict:
     return session.get("rider_user") or {}
+
+
+def _driver_photo_url_if_exists(account_id: int | None) -> str | None:
+    if not account_id:
+        return None
+    try:
+        from Database.admin_queries import fetch_driver_profile_photo_path
+
+        existing_path = fetch_driver_profile_photo_path(int(account_id))
+    except Exception as exc:
+        app.logger.warning("Could not check driver profile photo path for account %s: %s", account_id, exc)
+        return None
+    if not str(existing_path or "").strip():
+        return None
+    return url_for("api_rider_driver_photo", driver_id=int(account_id))
 
 
 @app.before_request
@@ -299,6 +315,95 @@ def api_rider_request():
         return jsonify({"success": False, "error": "Could not request a ride right now."}), 500
 
     return jsonify({"success": True, "trip": active_trip}), 200
+
+
+@app.route("/api/rider/match-candidates", methods=["POST"])
+def api_rider_match_candidates():
+    payload = request.get_json(silent=True) or {}
+    rider_id = int(payload.get("rider_id") or 0)
+    start_loc = str(payload.get("start_loc") or "").strip()
+    end_loc = str(payload.get("end_loc") or "").strip()
+    ride_type = str(payload.get("ride_type") or "standard").strip() or "standard"
+    notes = str(payload.get("notes") or "").strip()
+
+    if not rider_id:
+        return jsonify({"success": False, "error": "rider_id is required."}), 400
+    if not start_loc or not end_loc:
+        return jsonify({"success": False, "error": "Pickup and dropoff locations are required."}), 400
+
+    try:
+        from Database.admin_queries import fetch_active_rider_trip, fetch_driver_match_candidates
+
+        active_trip = fetch_active_rider_trip(rider_id)
+        if active_trip:
+            return jsonify({"success": True, "trip": active_trip, "candidates": []}), 200
+        candidates = fetch_driver_match_candidates(
+            rider_id=rider_id,
+            start_loc=start_loc,
+            end_loc=end_loc,
+            ride_type=ride_type,
+            notes=notes,
+        )
+        for candidate in candidates:
+            driver_id = int(candidate.get("account_id") or 0)
+            candidate["photo_url"] = _driver_photo_url_if_exists(driver_id)
+    except Exception as exc:
+        app.logger.warning("Rider match candidates API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load driver matches right now."}), 500
+
+    return jsonify({"success": True, "candidates": candidates, "trip": None}), 200
+
+
+@app.route("/api/rider/match-choice", methods=["POST"])
+def api_rider_match_choice():
+    payload = request.get_json(silent=True) or {}
+    rider_id = int(payload.get("rider_id") or 0)
+    driver_id = int(payload.get("driver_id") or 0)
+    direction = str(payload.get("direction") or "").strip().lower()
+    start_loc = str(payload.get("start_loc") or "").strip()
+    end_loc = str(payload.get("end_loc") or "").strip()
+    ride_type = str(payload.get("ride_type") or "standard").strip() or "standard"
+    notes = str(payload.get("notes") or "").strip()
+
+    if not rider_id or not driver_id:
+        return jsonify({"success": False, "error": "rider_id and driver_id are required."}), 400
+    if direction not in {"left", "right"}:
+        return jsonify({"success": False, "error": "direction must be 'left' or 'right'."}), 400
+
+    try:
+        from Database.admin_queries import create_matched_trip_for_driver, record_rider_match_choice
+
+        if direction == "left":
+            record_rider_match_choice(
+                rider_id=rider_id,
+                driver_id=driver_id,
+                direction="left",
+                start_loc=start_loc,
+                end_loc=end_loc,
+                ride_type=ride_type,
+                notes=notes,
+            )
+            return jsonify({"success": True, "trip": None}), 200
+
+        if not start_loc or not end_loc:
+            return jsonify({"success": False, "error": "Pickup and dropoff locations are required."}), 400
+
+        trip = create_matched_trip_for_driver(
+            rider_id=rider_id,
+            driver_id=driver_id,
+            start_loc=start_loc,
+            end_loc=end_loc,
+            ride_type=ride_type,
+            notes=notes,
+        )
+        publish_trip_event("trip_created", trip)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except Exception as exc:
+        app.logger.warning("Rider match choice API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not save your match choice right now."}), 500
+
+    return jsonify({"success": True, "trip": trip}), 200
 
 
 @app.route("/api/rider/trip/<int:trip_id>/cancel", methods=["POST"])
@@ -583,6 +688,34 @@ def api_rider_active_trip(rider_id: int):
         return jsonify({"success": False, "error": "Could not load active trip."}), 500
 
     return jsonify({"success": True, "trip": trip}), 200
+
+
+@app.route("/api/rider/driver-photo/<int:driver_id>")
+def api_rider_driver_photo(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_driver_profile_photo_path
+
+        stored_path = fetch_driver_profile_photo_path(driver_id)
+    except Exception as exc:
+        app.logger.warning("Rider driver photo load failed for driver_id=%s: %s", driver_id, exc)
+        return jsonify({"success": False, "error": "Could not load driver photo."}), 500
+
+    if not stored_path:
+        return jsonify({"success": False, "error": "Driver photo not found."}), 404
+
+    driver_photo_root = (PROJECT_ROOT / "DriverWebpage" / "uploads" / "driver_profiles").resolve()
+    full_path = (PROJECT_ROOT / "DriverWebpage" / str(stored_path)).resolve()
+    try:
+        full_path.relative_to(driver_photo_root)
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid driver photo path."}), 400
+    if not full_path.is_file():
+        return jsonify({"success": False, "error": "Driver photo file is missing."}), 404
+
+    guessed_mime = mimetypes.guess_type(full_path.name)[0]
+    response = send_file(full_path, mimetype=guessed_mime or "application/octet-stream", conditional=False, max_age=0)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/settings", methods=["GET", "POST"])

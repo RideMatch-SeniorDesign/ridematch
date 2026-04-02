@@ -222,6 +222,13 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  Future<Map<String, dynamic>> fetchTrips({
+    required int driverId,
+  }) async {
+    final response = await _dio.get("/api/driver/trips/$driverId");
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
   Future<Map<String, dynamic>> fetchIncome({
     required int driverId,
   }) async {

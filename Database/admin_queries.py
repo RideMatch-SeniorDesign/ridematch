@@ -217,9 +217,42 @@ def _ensure_driver_live_location_table() -> None:
     )
 
 
+def _ensure_rider_match_swipe_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS rider_match_swipe (
+            SwipeID INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            RiderID INT NOT NULL,
+            DriverID INT NOT NULL,
+            Direction VARCHAR(8) NOT NULL,
+            StartLoc VARCHAR(255) NULL,
+            EndLoc VARCHAR(255) NULL,
+            RideType VARCHAR(50) NULL,
+            Notes TEXT NULL,
+            CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_rider_match_swipe_rider
+                FOREIGN KEY (RiderID) REFERENCES rider(AccountID)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_rider_match_swipe_driver
+                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
+                ON DELETE CASCADE,
+            CONSTRAINT uq_rider_match_swipe UNIQUE (RiderID, DriverID)
+        )
+        """
+    )
+
+
 def _ensure_dispatch_query_tables() -> None:
     """Tables joined by _dispatch_trip_select() must exist before any dispatch query."""
     _ensure_driver_live_location_table()
+
+
+def _split_preference_csv(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {item.strip().lower() for item in str(value).split(",") if item.strip()}
 
 
 def _ensure_trip_location_columns() -> None:
@@ -1223,6 +1256,229 @@ def _pick_best_driver_for_request() -> int | None:
     return int(rows[0]["account_id"])
 
 
+def _driver_is_matchable(driver_id: int) -> bool:
+    if not _table_exists("driver") or not _table_exists("trip"):
+        return False
+    _ensure_driver_dispatch_state_table()
+    rows = _fetch_all(
+        """
+        SELECT d.AccountID AS account_id
+        FROM driver d
+        JOIN driver_dispatch_state ds
+            ON ds.DriverID = d.AccountID
+        LEFT JOIN trip active_trip
+            ON active_trip.DriverID = d.AccountID
+           AND active_trip.Status IN ('requested', 'accepted', 'in_progress')
+        WHERE d.AccountID = %s
+          AND COALESCE(d.Status, '') = 'approved'
+          AND ds.IsAvailable = 1
+          AND active_trip.TripID IS NULL
+        LIMIT 1
+        """,
+        (driver_id,),
+    )
+    return bool(rows)
+
+
+def _create_trip_with_driver(
+    *,
+    rider_id: int,
+    driver_id: int,
+    start_loc: str,
+    end_loc: str,
+) -> dict[str, Any]:
+    _ensure_trip_location_columns()
+    _ensure_dispatch_query_tables()
+
+    normalized_start = start_loc.strip()
+    normalized_end = end_loc.strip()
+    trip_id = _insert_returning_id(
+        """
+        INSERT INTO trip (RiderID, DriverID, Status, StartLoc, EndLoc, FinalCost, DriverRate, RiderRate)
+        VALUES (%s, %s, 'requested', %s, %s, %s, NULL, NULL)
+        """,
+        (rider_id, driver_id, normalized_start, normalized_end, 0.00),
+    )
+    created_trip = _fetch_all(
+        f"""
+        {_dispatch_trip_select()}
+        WHERE t.TripID = %s
+        LIMIT 1
+        """,
+        (trip_id,),
+    )
+    if not created_trip:
+        raise ValueError("Ride request was created but could not be loaded.")
+    return created_trip[0]
+
+
+def fetch_driver_match_candidates(
+    *,
+    rider_id: int,
+    start_loc: str = "",
+    end_loc: str = "",
+    ride_type: str = "standard",
+    notes: str | None = None,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    if not _table_exists("driver") or not _table_exists("trip"):
+        return []
+    _ensure_driver_dispatch_state_table()
+    _ensure_driver_live_location_table()
+    _ensure_rider_match_swipe_table()
+    has_review = _table_exists("driver_review")
+
+    rating_expr = "ROUND(COALESCE(AVG(dr.Rating), 0), 1)" if has_review else "0.0"
+    review_join = "LEFT JOIN driver_review dr ON dr.DriverID = d.AccountID" if has_review else ""
+    review_group_by = ", dl.Latitude, dl.Longitude, dl.UpdatedAt" if has_review else ", dl.Latitude, dl.Longitude, dl.UpdatedAt"
+
+    rows = _fetch_all(
+        f"""
+        SELECT
+            d.AccountID AS account_id,
+            a.FirstName AS first_name,
+            a.LastName AS last_name,
+            CONCAT(a.FirstName, ' ', a.LastName) AS name,
+            d.Preferences AS preferences,
+            {rating_expr} AS rating,
+            COUNT(DISTINCT completed.TripID) AS rides,
+            dl.Latitude AS driver_latitude,
+            dl.Longitude AS driver_longitude,
+            dl.UpdatedAt AS driver_location_updated_at
+        FROM driver d
+        JOIN account a
+            ON a.AccountID = d.AccountID
+        JOIN driver_dispatch_state ds
+            ON ds.DriverID = d.AccountID
+        LEFT JOIN trip active_trip
+            ON active_trip.DriverID = d.AccountID
+           AND active_trip.Status IN ('requested', 'accepted', 'in_progress')
+        LEFT JOIN trip completed
+            ON completed.DriverID = d.AccountID
+           AND completed.Status = 'completed'
+        LEFT JOIN rider_match_swipe rms
+            ON rms.RiderID = %s
+           AND rms.DriverID = d.AccountID
+        LEFT JOIN driver_live_location dl
+            ON dl.DriverID = d.AccountID
+        {review_join}
+        WHERE COALESCE(d.Status, '') = 'approved'
+          AND ds.IsAvailable = 1
+          AND active_trip.TripID IS NULL
+          AND COALESCE(rms.Direction, '') <> 'left'
+        GROUP BY
+            d.AccountID,
+            a.FirstName,
+            a.LastName,
+            d.Preferences
+            {review_group_by}
+        ORDER BY {rating_expr} DESC, rides DESC, d.AccountID ASC
+        LIMIT %s
+        """,
+        (rider_id, max(1, min(int(limit), 50))),
+    )
+
+    rider = fetch_portal_profile("rider", rider_id) or {}
+    rider_preferences = _split_preference_csv(str(rider.get("preferences") or ""))
+    desired_ride_type = (ride_type or "standard").strip().lower() or "standard"
+    normalized_start = start_loc.strip()
+    normalized_end = end_loc.strip()
+    normalized_notes = (notes or "").strip()
+
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        candidate = dict(row)
+        driver_preferences = _split_preference_csv(str(candidate.get("preferences") or ""))
+        matching_preferences = sorted(rider_preferences.intersection(driver_preferences))
+        compatibility_score = len(matching_preferences)
+        candidate["matching_preferences"] = matching_preferences
+        candidate["compatibility_score"] = compatibility_score
+        candidate["pickup_preview"] = normalized_start
+        candidate["dropoff_preview"] = normalized_end
+        candidate["ride_type"] = desired_ride_type
+        candidate["notes_preview"] = normalized_notes
+        candidates.append(candidate)
+
+    candidates.sort(
+        key=lambda row: (
+            -int(row.get("compatibility_score") or 0),
+            -float(row.get("rating") or 0),
+            -int(row.get("rides") or 0),
+            int(row.get("account_id") or 0),
+        )
+    )
+    return candidates
+
+
+def record_rider_match_choice(
+    *,
+    rider_id: int,
+    driver_id: int,
+    direction: str,
+    start_loc: str = "",
+    end_loc: str = "",
+    ride_type: str = "standard",
+    notes: str | None = None,
+) -> bool:
+    normalized_direction = str(direction or "").strip().lower()
+    if normalized_direction not in {"left", "right"}:
+        return False
+    _ensure_rider_match_swipe_table()
+    rows = _execute(
+        """
+        INSERT INTO rider_match_swipe (RiderID, DriverID, Direction, StartLoc, EndLoc, RideType, Notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            Direction = VALUES(Direction),
+            StartLoc = VALUES(StartLoc),
+            EndLoc = VALUES(EndLoc),
+            RideType = VALUES(RideType),
+            Notes = VALUES(Notes)
+        """,
+        (
+            rider_id,
+            driver_id,
+            normalized_direction,
+            start_loc.strip(),
+            end_loc.strip(),
+            (ride_type or "standard").strip() or "standard",
+            (notes or "").strip() or None,
+        ),
+    )
+    return rows >= 0
+
+
+def create_matched_trip_for_driver(
+    *,
+    rider_id: int,
+    driver_id: int,
+    start_loc: str,
+    end_loc: str,
+    ride_type: str = "standard",
+    notes: str | None = None,
+) -> dict[str, Any]:
+    existing_trip = fetch_active_rider_trip(rider_id)
+    if existing_trip:
+        return existing_trip
+    if not _driver_is_matchable(driver_id):
+        raise ValueError("That driver is no longer available. Try another card.")
+    record_rider_match_choice(
+        rider_id=rider_id,
+        driver_id=driver_id,
+        direction="right",
+        start_loc=start_loc,
+        end_loc=end_loc,
+        ride_type=ride_type,
+        notes=notes,
+    )
+    return _create_trip_with_driver(
+        rider_id=rider_id,
+        driver_id=driver_id,
+        start_loc=start_loc,
+        end_loc=end_loc,
+    )
+
+
 def create_matched_trip(
     *,
     rider_id: int,
@@ -1241,30 +1497,21 @@ def create_matched_trip(
     if driver_id is None:
         raise ValueError("No approved drivers are available right now.")
 
-    normalized_start = start_loc.strip()
-    normalized_end = end_loc.strip()
-    # Keep stored trip addresses geocode-friendly for routing in the rider and
-    # driver apps. Ride type and notes can be modeled separately later.
-
-    trip_id = _insert_returning_id(
-        """
-        INSERT INTO trip (RiderID, DriverID, Status, StartLoc, EndLoc, FinalCost, DriverRate, RiderRate)
-        VALUES (%s, %s, 'requested', %s, %s, %s, NULL, NULL)
-        """,
-        (rider_id, driver_id, normalized_start, normalized_end, 0.00),
+    record_rider_match_choice(
+        rider_id=rider_id,
+        driver_id=driver_id,
+        direction="right",
+        start_loc=start_loc,
+        end_loc=end_loc,
+        ride_type=ride_type,
+        notes=notes,
     )
-
-    created_trip = _fetch_all(
-        f"""
-        {_dispatch_trip_select()}
-        WHERE t.TripID = %s
-        LIMIT 1
-        """,
-        (trip_id,),
+    return _create_trip_with_driver(
+        rider_id=rider_id,
+        driver_id=driver_id,
+        start_loc=start_loc,
+        end_loc=end_loc,
     )
-    if not created_trip:
-        raise ValueError("Ride request was created but could not be loaded.")
-    return created_trip[0]
 
 
 def update_trip_status_for_driver(

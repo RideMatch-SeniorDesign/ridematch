@@ -1608,6 +1608,7 @@ class _DriverRatingTabState extends State<DriverRatingTab> {
   List<Map<String, dynamic>> _received = [];
   List<Map<String, dynamic>> _given = [];
   List<Map<String, dynamic>> _pending = [];
+  List<Map<String, dynamic>> _recentCompleted = [];
   Map<String, dynamic> _summary = {};
 
   @override
@@ -1629,17 +1630,28 @@ class _DriverRatingTabState extends State<DriverRatingTab> {
       final dash = await _api.fetchDashboard(driverId: id);
       final rev = await _api.fetchReviews(driverId: id);
       final pend = await _api.fetchPendingReviews(driverId: id);
+      final tripsRes = await _api.fetchTrips(driverId: id);
       if (!mounted) {
         return;
       }
       final data = Map<String, dynamic>.from((rev["review_data"] as Map?) ?? {});
+      final rawTrips = (tripsRes["trips"] as List?) ?? [];
+      final recentCompleted = rawTrips
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .where((trip) => (trip["status"] ?? "").toString().toLowerCase() == "completed")
+          .take(10)
+          .toList();
       setState(() {
         _summary = Map<String, dynamic>.from((dash["summary"] as Map?) ?? {});
         _received = ((data["received"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         _given = ((data["given"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         _pending = ((pend["pending"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _recentCompleted = recentCompleted;
         _loading = false;
-        _error = rev["success"] == true && pend["success"] == true ? "" : (rev["error"]?.toString() ?? pend["error"]?.toString() ?? "Could not load.");
+        _error = rev["success"] == true && pend["success"] == true && tripsRes["success"] == true
+            ? ""
+            : (rev["error"]?.toString() ?? pend["error"]?.toString() ?? tripsRes["error"]?.toString() ?? "Could not load.");
       });
     } catch (exc) {
       setState(() {
@@ -1772,6 +1784,89 @@ class _DriverRatingTabState extends State<DriverRatingTab> {
                   ),
                 ),
               ],
+              const SizedBox(height: 14),
+              _ShellCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Last 10 riders", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Review riders from your 10 most recent completed trips whenever you're ready.",
+                      style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.65)),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_recentCompleted.isEmpty)
+                      Text("No completed trips yet.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65)))
+                    else
+                      ..._recentCompleted.map(
+                        (trip) {
+                          final alreadyReviewed = trip["driver_rate"] != null;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                color: Colors.white.withValues(alpha: 0.06),
+                                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "Rider: ${trip["rider_name"] ?? "Unknown rider"}",
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          "${trip["start_loc"] ?? "-"} -> ${trip["end_loc"] ?? "-"}",
+                                          style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 12),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  if (alreadyReviewed)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(999),
+                                        color: Colors.white.withValues(alpha: 0.08),
+                                        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+                                      ),
+                                      child: Text(
+                                        "Reviewed ${trip["driver_rate"]}/5",
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12),
+                                      ),
+                                    )
+                                  else
+                                    FilledButton(
+                                      onPressed: () => showDriverTripReviewSheet(
+                                        context,
+                                        api: _api,
+                                        driverId: _driverInt(widget.user["account_id"]) ?? 0,
+                                        trip: trip,
+                                        onSubmitted: _load,
+                                      ),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: _kAuthDeepBlue,
+                                      ),
+                                      child: const Text("Review now"),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 14),
               _ShellCard(
                 child: Column(
@@ -2653,7 +2748,17 @@ class _StartDriveTabState extends State<StartDriveTab> {
         );
       }
       if (action == "complete") {
+        final completedTrip = updatedTrip is Map<String, dynamic> ? Map<String, dynamic>.from(updatedTrip) : null;
         await _loadDispatch();
+        if (completedTrip != null && mounted) {
+          await showDriverTripReviewSheet(
+            context,
+            api: _api,
+            driverId: accountId,
+            trip: completedTrip,
+            onSubmitted: _loadDispatch,
+          );
+        }
       }
     } catch (exc) {
       if (!mounted) {

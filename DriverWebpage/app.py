@@ -771,6 +771,18 @@ def api_driver_pending_reviews(driver_id: int):
     return jsonify({"success": True, "pending": pending}), 200
 
 
+@app.route("/api/driver/trips/<int:driver_id>", methods=["GET"])
+def api_driver_trips(driver_id: int):
+    try:
+        from Database.admin_queries import fetch_portal_trip_history
+
+        trips = fetch_portal_trip_history("driver", driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver trip history API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load trip history right now."}), 500
+    return jsonify({"success": True, "trips": trips}), 200
+
+
 @app.route("/api/driver/trip/<int:trip_id>/review", methods=["POST"])
 def api_driver_trip_review(trip_id: int):
     payload = request.get_json(silent=True) or {}
