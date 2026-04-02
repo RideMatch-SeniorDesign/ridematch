@@ -1,6 +1,8 @@
 import "dart:async";
 import "dart:convert";
+import "dart:typed_data";
 
+import "package:dio/dio.dart";
 import "package:flutter/material.dart";
 import "package:flutter_map/flutter_map.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
@@ -10,6 +12,11 @@ import "package:latlong2/latlong.dart";
 import "api_client.dart";
 
 void main() => runApp(const RiderMobileApp());
+
+const _kRiderApiHost = String.fromEnvironment(
+  "API_HOST",
+  defaultValue: "10.0.2.2",
+);
 
 class RiderMobileApp extends StatelessWidget {
   const RiderMobileApp({super.key});
@@ -1155,8 +1162,11 @@ class _RideTabState extends State<RideTab> {
   bool _suppressPickupSuggest = false;
   bool _suppressDropoffSuggest = false;
   Map<String, dynamic>? _trip;
+  List<Map<String, dynamic>> _matchCandidates = [];
   String _message = "";
   bool _busy = false;
+  bool _loadingMatches = false;
+  bool _showMatchDeckOnly = false;
   String _rideType = "standard";
   LatLng? _pickupPoint;
   LatLng? _dropoffPoint;
@@ -1186,6 +1196,12 @@ class _RideTabState extends State<RideTab> {
   }
 
   void _onPickupTextChanged() {
+    if (_trip == null && _matchCandidates.isNotEmpty) {
+      setState(() {
+        _matchCandidates = [];
+        _showMatchDeckOnly = false;
+      });
+    }
     if (_suppressPickupSuggest) {
       return;
     }
@@ -1198,6 +1214,12 @@ class _RideTabState extends State<RideTab> {
   }
 
   void _onDropoffTextChanged() {
+    if (_trip == null && _matchCandidates.isNotEmpty) {
+      setState(() {
+        _matchCandidates = [];
+        _showMatchDeckOnly = false;
+      });
+    }
     if (_suppressDropoffSuggest) {
       return;
     }
@@ -1328,6 +1350,10 @@ class _RideTabState extends State<RideTab> {
         _dropoffSuggestions = [];
         _dropoffSuggestLoading = false;
       }
+      if (_trip == null) {
+        _matchCandidates = [];
+        _showMatchDeckOnly = false;
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -1389,6 +1415,10 @@ class _RideTabState extends State<RideTab> {
       setState(() {
         _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
+        if (_trip != null) {
+          _matchCandidates = [];
+          _showMatchDeckOnly = false;
+        }
       });
       if (hadTrip && nextTrip == null) {
         await _promptPostRideReviewIfPending();
@@ -1452,6 +1482,10 @@ class _RideTabState extends State<RideTab> {
       setState(() {
         _pickup.text = formatted.isEmpty ? "${position.latitude}, ${position.longitude}" : formatted;
         _pickupPoint = LatLng(position.latitude, position.longitude);
+        if (_trip == null) {
+          _matchCandidates = [];
+          _showMatchDeckOnly = false;
+        }
       });
     } catch (exc) {
       setState(() => _message = "$exc");
@@ -1461,9 +1495,14 @@ class _RideTabState extends State<RideTab> {
   Future<void> _requestRide() async {
     setState(() {
       _busy = true;
+      _loadingMatches = true;
       _message = "";
     });
     try {
+      if (_pickup.text.trim().isEmpty || _dropoff.text.trim().isEmpty) {
+        setState(() => _message = "Pickup and dropoff locations are required.");
+        return;
+      }
       final maps = await _api.fetchMapsConfig();
       final key = (maps["geoapify_api_key"] ?? "").toString().trim();
       if (key.isNotEmpty) {
@@ -1489,13 +1528,105 @@ class _RideTabState extends State<RideTab> {
           }
         }
       }
-      final res = await _api.requestRide(riderId: _id(widget.user), startLoc: _pickup.text.trim(), endLoc: _dropoff.text.trim(), rideType: _rideType, notes: _notes.text.trim());
+      final res = await _api.fetchMatchCandidates(
+        riderId: _id(widget.user),
+        startLoc: _pickup.text.trim(),
+        endLoc: _dropoff.text.trim(),
+        rideType: _rideType,
+        notes: _notes.text.trim(),
+      );
+      if (!mounted) {
+        return;
+      }
+      final trip = res["trip"];
+      final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
+      final rawCandidates = (res["candidates"] as List?) ?? const [];
+      final nextCandidates = rawCandidates.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       setState(() {
-        _message = res["success"] == true ? "Ride request sent." : (res["error"]?.toString() ?? "Request failed.");
+        _trip = nextTrip;
+        _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
+        _matchCandidates = nextTrip == null ? nextCandidates : [];
+        _showMatchDeckOnly = nextTrip == null && nextCandidates.isNotEmpty;
+        if (res["success"] == true) {
+          if (nextTrip != null) {
+            _message = "You already have an active ride.";
+          } else if (nextCandidates.isEmpty) {
+            _message = "No available drivers right now. Try again in a minute.";
+          } else {
+            _message = "Swipe right to request this driver or left to keep browsing.";
+          }
+        } else {
+          _message = res["error"]?.toString() ?? "Could not load driver matches.";
+        }
       });
-      await _load();
     } catch (exc) {
       setState(() => _message = "$exc");
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _loadingMatches = false;
+        });
+      }
+    }
+  }
+
+  Future<bool> _submitSwipe(String direction) async {
+    if (_matchCandidates.isEmpty) {
+      return false;
+    }
+    final candidate = Map<String, dynamic>.from(_matchCandidates.first);
+    final driverId = _int(candidate["account_id"]);
+    if (driverId == null) {
+      return false;
+    }
+    setState(() => _busy = true);
+    try {
+      final res = await _api.submitMatchChoice(
+        riderId: _id(widget.user),
+        driverId: driverId,
+        direction: direction,
+        startLoc: _pickup.text.trim(),
+        endLoc: _dropoff.text.trim(),
+        rideType: _rideType,
+        notes: _notes.text.trim(),
+      );
+      if (!mounted) {
+        return false;
+      }
+      if (res["success"] != true) {
+        setState(() => _message = res["error"]?.toString() ?? "Could not save your swipe.");
+        return false;
+      }
+      if (direction == "right") {
+        final trip = res["trip"];
+        final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
+        setState(() {
+          _trip = nextTrip;
+          _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
+          _matchCandidates = [];
+          _showMatchDeckOnly = false;
+          _message = nextTrip != null
+              ? "Ride request sent to ${(candidate["name"] ?? "your driver").toString()}."
+              : "Ride request sent.";
+        });
+        return true;
+      }
+      setState(() {
+        final remainingCandidates = _matchCandidates.skip(1).toList();
+        final hasMoreCandidates = remainingCandidates.isNotEmpty;
+        _matchCandidates = remainingCandidates;
+        _showMatchDeckOnly = hasMoreCandidates;
+        _message = hasMoreCandidates
+            ? "Passed. Swipe on the next driver."
+            : "No more drivers in this deck right now.";
+      });
+      return true;
+    } catch (exc) {
+      if (mounted) {
+        setState(() => _message = "$exc");
+      }
+      return false;
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -1516,6 +1647,7 @@ class _RideTabState extends State<RideTab> {
         if (res["success"] == true) {
           _trip = null;
           _driverPoint = null;
+          _showMatchDeckOnly = false;
         }
       });
     } catch (exc) {
@@ -1554,11 +1686,17 @@ class _RideTabState extends State<RideTab> {
     ];
     final welcomeFirst = (widget.user["first_name"] ?? "").toString().trim();
     final rideHeroTitle = welcomeFirst.isEmpty ? "Request a ride" : "Welcome, $welcomeFirst";
+    final messageIsError = !(_message.startsWith("Ride request sent") ||
+        _message == "Ride canceled." ||
+        _message.startsWith("Passed.") ||
+        _message.startsWith("Swipe right") ||
+        _message == "You already have an active ride.");
+    final isBrowsingMatches = _trip == null && _showMatchDeckOnly && _matchCandidates.isNotEmpty;
     return _PageShell(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [
-          if (_message.isNotEmpty) _Notice(_message, _message != "Ride request sent." && _message != "Ride canceled."),
+          if (_message.isNotEmpty) _Notice(_message, messageIsError),
           if (_message.isNotEmpty) const SizedBox(height: 8),
           _RiderCard(
             child: Column(
@@ -1569,35 +1707,41 @@ class _RideTabState extends State<RideTab> {
                     Icon(Icons.map_outlined, color: Colors.white.withValues(alpha: 0.9), size: 22),
                     const SizedBox(width: 8),
                     Text(
-                      rideHeroTitle,
+                      isBrowsingMatches ? "Browse drivers" : rideHeroTitle,
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  "Set pickup and destination, then request. Track your driver on the map.",
+                  isBrowsingMatches
+                      ? "Swipe through the available drivers for this ride request."
+                      : _trip == null
+                      ? "Set pickup and destination, then browse available drivers with a swipe deck."
+                      : "Track your matched driver on the map and manage the trip here.",
                   style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.65), height: 1.35),
                 ),
                 const SizedBox(height: 14),
-                SizedBox(
-                  height: 240,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: FlutterMap(
-                      options: const MapOptions(initialCenter: LatLng(41.6611, -91.5302), initialZoom: 12),
-                      children: [
-                        TileLayer(
-                          urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                          userAgentPackageName: "com.example.ridermobile",
-                        ),
-                        MarkerLayer(markers: markers),
-                      ],
+                if (!isBrowsingMatches) ...[
+                  SizedBox(
+                    height: 240,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: FlutterMap(
+                        options: const MapOptions(initialCenter: LatLng(41.6611, -91.5302), initialZoom: 12),
+                        children: [
+                          TileLayer(
+                            urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                            userAgentPackageName: "com.example.ridermobile",
+                          ),
+                          MarkerLayer(markers: markers),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                if (_trip == null) ...[
+                  const SizedBox(height: 14),
+                ],
+                if (_trip == null && !isBrowsingMatches) ...[
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -1674,14 +1818,258 @@ class _RideTabState extends State<RideTab> {
                     width: double.infinity,
                     child: FilledButton.icon(
                       onPressed: _busy ? null : _requestRide,
-                      icon: const Icon(Icons.send_outlined),
-                      label: Text(_busy ? "Requesting..." : "Request ride"),
+                      icon: Icon(_loadingMatches ? Icons.hourglass_top_rounded : Icons.swipe_rounded),
+                      label: Text(_loadingMatches ? "Loading matches..." : "Find drivers"),
                       style: FilledButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: _kAuthDeepBlue,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                     ),
+                  ),
+                  if (_matchCandidates.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        const Icon(Icons.swipe_rounded, color: Colors.white, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          "${_matchCandidates.length} driver${_matchCandidates.length == 1 ? "" : "s"} ready",
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Swipe left to pass, or swipe right to request this driver.",
+                      style: TextStyle(fontSize: 12.5, color: Colors.white.withValues(alpha: 0.62)),
+                    ),
+                    const SizedBox(height: 14),
+                    if (_matchCandidates.length > 1)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 18, right: 18, bottom: 10),
+                        child: Container(
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                    Dismissible(
+                      key: ValueKey("driver-card-${_matchCandidates.first["account_id"]}"),
+                      direction: _busy ? DismissDirection.none : DismissDirection.horizontal,
+                      confirmDismiss: (direction) async {
+                        if (direction == DismissDirection.startToEnd) {
+                          await _submitSwipe("right");
+                          return false;
+                        }
+                        if (direction == DismissDirection.endToStart) {
+                          await _submitSwipe("left");
+                          return false;
+                        }
+                        return false;
+                      },
+                      background: const _SwipeActionBackground(
+                        alignment: Alignment.centerLeft,
+                        color: Color(0xFF14B8A6),
+                        icon: Icons.favorite_rounded,
+                        label: "Request",
+                      ),
+                      secondaryBackground: const _SwipeActionBackground(
+                        alignment: Alignment.centerRight,
+                        color: Color(0xFFEF4444),
+                        icon: Icons.close_rounded,
+                        label: "Pass",
+                      ),
+                      child: _MatchCandidateCard(candidate: _matchCandidates.first),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _busy ? null : () => _submitSwipe("left"),
+                            icon: const Icon(Icons.close_rounded),
+                            label: const Text("Swipe left"),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: _busy ? null : () => _submitSwipe("right"),
+                            icon: const Icon(Icons.favorite_rounded),
+                            label: const Text("Swipe right"),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: _kAuthDeepBlue,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ] else if (isBrowsingMatches) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Pickup",
+                                style: TextStyle(fontSize: 11.5, color: Colors.white.withValues(alpha: 0.55)),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                _pickup.text.trim().isEmpty ? "Not set" : _pickup.text.trim(),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Dropoff",
+                                style: TextStyle(fontSize: 11.5, color: Colors.white.withValues(alpha: 0.55)),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                _dropoff.text.trim().isEmpty ? "Not set" : _dropoff.text.trim(),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _busy
+                          ? null
+                          : () {
+                              setState(() {
+                                _showMatchDeckOnly = false;
+                              });
+                            },
+                      icon: const Icon(Icons.edit_location_alt_outlined),
+                      label: const Text("Edit ride details"),
+                      style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.swipe_rounded, color: Colors.white, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        "${_matchCandidates.length} driver${_matchCandidates.length == 1 ? "" : "s"} ready",
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Swipe left to pass, or swipe right to request this driver.",
+                    style: TextStyle(fontSize: 12.5, color: Colors.white.withValues(alpha: 0.62)),
+                  ),
+                  const SizedBox(height: 14),
+                  if (_matchCandidates.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 18, right: 18, bottom: 10),
+                      child: Container(
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                  Dismissible(
+                    key: ValueKey("driver-card-${_matchCandidates.first["account_id"]}"),
+                    direction: _busy ? DismissDirection.none : DismissDirection.horizontal,
+                    confirmDismiss: (direction) async {
+                      if (direction == DismissDirection.startToEnd) {
+                        await _submitSwipe("right");
+                        return false;
+                      }
+                      if (direction == DismissDirection.endToStart) {
+                        await _submitSwipe("left");
+                        return false;
+                      }
+                      return false;
+                    },
+                    background: const _SwipeActionBackground(
+                      alignment: Alignment.centerLeft,
+                      color: Color(0xFF14B8A6),
+                      icon: Icons.favorite_rounded,
+                      label: "Request",
+                    ),
+                    secondaryBackground: const _SwipeActionBackground(
+                      alignment: Alignment.centerRight,
+                      color: Color(0xFFEF4444),
+                      icon: Icons.close_rounded,
+                      label: "Pass",
+                    ),
+                    child: _MatchCandidateCard(candidate: _matchCandidates.first),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _busy ? null : () => _submitSwipe("left"),
+                          icon: const Icon(Icons.close_rounded),
+                          label: const Text("Swipe left"),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _busy ? null : () => _submitSwipe("right"),
+                          icon: const Icon(Icons.favorite_rounded),
+                          label: const Text("Swipe right"),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: _kAuthDeepBlue,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ] else ...[
                   _RiderRow("Status", _title(_trip?["status"])),
@@ -1714,6 +2102,401 @@ class _RideTabState extends State<RideTab> {
   }
 }
 
+class _SwipeActionBackground extends StatelessWidget {
+  const _SwipeActionBackground({
+    required this.alignment,
+    required this.color,
+    required this.icon,
+    required this.label,
+  });
+
+  final Alignment alignment;
+  final Color color;
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLeftAligned = alignment == Alignment.centerLeft;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          colors: [
+            color.withValues(alpha: 0.82),
+            color.withValues(alpha: 0.56),
+          ],
+          begin: isLeftAligned ? Alignment.centerLeft : Alignment.centerRight,
+          end: isLeftAligned ? Alignment.centerRight : Alignment.centerLeft,
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 22),
+      alignment: alignment,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isLeftAligned) ...[
+            Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+            const SizedBox(width: 8),
+          ],
+          Icon(icon, color: Colors.white, size: 28),
+          if (isLeftAligned) ...[
+            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MatchCandidateCard extends StatelessWidget {
+  const _MatchCandidateCard({required this.candidate});
+
+  final Map<String, dynamic> candidate;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (candidate["name"] ?? "Driver").toString();
+    final rating = double.tryParse("${candidate["rating"] ?? ""}") ?? 0;
+    final rides = int.tryParse("${candidate["rides"] ?? ""}") ?? 0;
+    final rideType = (candidate["ride_type"] ?? "standard").toString();
+    final photoUrl = _resolveRiderApiUrl((candidate["photo_url"] ?? "").toString().trim());
+    final preferences = _splitListString(candidate["preferences"]);
+    final matchingPreferences = ((candidate["matching_preferences"] as List?) ?? const [])
+        .map((item) => item.toString())
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF132B47), Color(0xFF0E2137)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: SizedBox(
+              height: 196,
+              width: double.infinity,
+              child: photoUrl.isEmpty
+                  ? _MatchPhotoFallback(name: name)
+                  : _MatchPhoto(url: photoUrl, name: name),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "${_title(rideType)} ride match",
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.62), fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MatchStatPill(icon: Icons.star_rounded, label: rating <= 0 ? "New driver" : "${rating.toStringAsFixed(1)} rating"),
+              _MatchStatPill(icon: Icons.route_rounded, label: "$rides rides"),
+              _MatchStatPill(
+                icon: Icons.favorite_border_rounded,
+                label: "${candidate["compatibility_score"] ?? 0} shared prefs",
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            "Shared vibe",
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.58), fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          if (matchingPreferences.isEmpty)
+            Text(
+              "No saved preference overlap yet, but this driver is available now.",
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.72), fontSize: 13, height: 1.35),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: matchingPreferences
+                  .map(
+                    (item) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF7EB3FF).withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFF7EB3FF).withValues(alpha: 0.28)),
+                      ),
+                      child: Text(item, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+                    ),
+                  )
+                  .toList(),
+            ),
+          if (preferences.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              "Driver preferences",
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.58), fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              preferences.join(", "),
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.72), fontSize: 13, height: 1.35),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: Colors.white.withValues(alpha: 0.06),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _MatchRouteLine(label: "Pickup", value: (candidate["pickup_preview"] ?? "").toString()),
+                const SizedBox(height: 8),
+                _MatchRouteLine(label: "Dropoff", value: (candidate["dropoff_preview"] ?? "").toString()),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MatchPhotoFallback extends StatelessWidget {
+  const _MatchPhotoFallback({required this.name});
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.trim().isEmpty ? "D" : name.trim()[0].toUpperCase();
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF183A5A), Color(0xFF0D2137)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned(
+            right: -12,
+            top: -10,
+            child: Icon(
+              Icons.local_taxi_rounded,
+              size: 120,
+              color: Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+          Center(
+            child: Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.12),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 30,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MatchPhoto extends StatefulWidget {
+  const _MatchPhoto({required this.url, required this.name});
+
+  final String url;
+  final String name;
+
+  @override
+  State<_MatchPhoto> createState() => _MatchPhotoState();
+}
+
+class _MatchPhotoState extends State<_MatchPhoto> {
+  Uint8List? _bytes;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MatchPhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _bytes = null;
+      _loading = true;
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    try {
+      final response = await Dio().get<List<int>>(
+        widget.url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      if (!mounted) {
+        return;
+      }
+      final data = response.data;
+      if (data == null || data.isEmpty) {
+        setState(() {
+          _bytes = null;
+          _loading = false;
+        });
+        return;
+      }
+      setState(() {
+        _bytes = Uint8List.fromList(data);
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _bytes = null;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bytes != null) {
+      return Image.memory(
+        _bytes!,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+      );
+    }
+    if (_loading) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          _MatchPhotoFallback(name: widget.name),
+          const Center(
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.4,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return _MatchPhotoFallback(name: widget.name);
+  }
+}
+
+class _MatchStatPill extends StatelessWidget {
+  const _MatchStatPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: const Color(0xFF7EB3FF), size: 18),
+          const SizedBox(width: 7),
+          Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12.5)),
+        ],
+      ),
+    );
+  }
+}
+
+class _MatchRouteLine extends StatelessWidget {
+  const _MatchRouteLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.52), fontSize: 11.5)),
+        const SizedBox(height: 3),
+        Text(
+          value.isEmpty ? "Not set" : value,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+        ),
+      ],
+    );
+  }
+}
+
 class RatingTab extends StatefulWidget {
   const RatingTab({super.key, required this.user});
   final Map<String, dynamic> user;
@@ -1729,6 +2512,7 @@ class _RatingTabState extends State<RatingTab> {
   List<Map<String, dynamic>> _received = [];
   List<Map<String, dynamic>> _given = [];
   List<Map<String, dynamic>> _pending = [];
+  List<Map<String, dynamic>> _recentCompleted = [];
   Map<String, dynamic> _summary = {};
 
   @override
@@ -1742,17 +2526,28 @@ class _RatingTabState extends State<RatingTab> {
       final dash = await _api.fetchDashboard(riderId: _id(widget.user));
       final rev = await _api.fetchReviews(riderId: _id(widget.user));
       final pend = await _api.fetchPendingReviews(riderId: _id(widget.user));
+      final tripsRes = await _api.fetchTrips(riderId: _id(widget.user));
       if (!mounted) {
         return;
       }
       final data = Map<String, dynamic>.from((rev["review_data"] as Map?) ?? {});
+      final rawTrips = (tripsRes["trips"] as List?) ?? [];
+      final recentCompleted = rawTrips
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .where((trip) => (trip["status"] ?? "").toString().toLowerCase() == "completed")
+          .take(10)
+          .toList();
       setState(() {
         _summary = Map<String, dynamic>.from((dash["summary"] as Map?) ?? {});
         _received = ((data["received"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         _given = ((data["given"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
         _pending = ((pend["pending"] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _recentCompleted = recentCompleted;
         _loading = false;
-        _error = rev["success"] == true && pend["success"] == true ? "" : (rev["error"]?.toString() ?? pend["error"]?.toString() ?? "Could not load.");
+        _error = rev["success"] == true && pend["success"] == true && tripsRes["success"] == true
+            ? ""
+            : (rev["error"]?.toString() ?? pend["error"]?.toString() ?? tripsRes["error"]?.toString() ?? "Could not load.");
       });
     } catch (exc) {
       setState(() {
@@ -1880,6 +2675,89 @@ class _RatingTabState extends State<RatingTab> {
                   ),
                 ),
               ],
+              const SizedBox(height: 14),
+              _RiderCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Last 10 drivers", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Review drivers from your 10 most recent completed trips whenever you want.",
+                      style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.65)),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_recentCompleted.isEmpty)
+                      Text("No completed trips yet.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65)))
+                    else
+                      ..._recentCompleted.map(
+                        (trip) {
+                          final alreadyReviewed = trip["rider_rate"] != null;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                color: Colors.white.withValues(alpha: 0.06),
+                                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "Driver: ${trip["driver_name"] ?? "Unknown driver"}",
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          "${trip["start_loc"] ?? "-"} -> ${trip["end_loc"] ?? "-"}",
+                                          style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 12),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  if (alreadyReviewed)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(999),
+                                        color: Colors.white.withValues(alpha: 0.08),
+                                        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+                                      ),
+                                      child: Text(
+                                        "Reviewed ${trip["rider_rate"]}/5",
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12),
+                                      ),
+                                    )
+                                  else
+                                    FilledButton(
+                                      onPressed: () => showRiderTripReviewSheet(
+                                        context,
+                                        api: _api,
+                                        riderId: _id(widget.user),
+                                        trip: trip,
+                                        onSubmitted: _load,
+                                      ),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: _kAuthDeepBlue,
+                                      ),
+                                      child: const Text("Review now"),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 14),
               _RiderCard(
                 child: Column(
@@ -2671,4 +3549,23 @@ int _id(Map<String, dynamic> user) => _int(user["account_id"]) ?? 0;
 int? _int(dynamic value) => value is int ? value : int.tryParse((value ?? "").toString().split(".").first.trim());
 LatLng? _point(dynamic lat, dynamic lng) => double.tryParse((lat ?? "").toString()) != null && double.tryParse((lng ?? "").toString()) != null ? LatLng(double.parse(lat.toString()), double.parse(lng.toString())) : null;
 String _metric(dynamic value) => value == null ? "N/A" : value.toString();
+String _resolveRiderApiUrl(String value) {
+  final text = value.trim();
+  if (text.isEmpty) {
+    return "";
+  }
+  if (text.startsWith("http://") || text.startsWith("https://")) {
+    return text;
+  }
+  if (text.startsWith("/")) {
+    return "http://$_kRiderApiHost:8003$text";
+  }
+  return "http://$_kRiderApiHost:8003/$text";
+}
+List<String> _splitListString(dynamic value) => (value ?? "")
+    .toString()
+    .split(",")
+    .map((item) => item.trim())
+    .where((item) => item.isNotEmpty)
+    .toList();
 String _title(dynamic value) => (value ?? "unknown").toString().replaceAll("_", " ");
