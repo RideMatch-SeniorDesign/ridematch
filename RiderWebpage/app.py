@@ -6,6 +6,8 @@ import mimetypes
 from datetime import timedelta
 from pathlib import Path
 
+import requests
+
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for
 
@@ -415,8 +417,6 @@ def api_rider_match_choice():
         return jsonify({"success": False, "error": "Could not save your match choice right now."}), 500
 
     return jsonify({"success": True, "trip": trip}), 200
-
-import requests
 
 def notify_driver_server(event_name: str, payload: dict) -> None:
     driver_server_base = os.environ.get("DRIVER_SERVER_URL", "http://127.0.0.1:8002")

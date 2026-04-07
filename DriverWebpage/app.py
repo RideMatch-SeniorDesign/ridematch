@@ -10,6 +10,8 @@ from datetime import date, datetime
 from datetime import timedelta
 from pathlib import Path
 
+from math import radians, sin, cos, sqrt, atan2
+
 import boto3
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -738,12 +740,44 @@ def api_driver_location():
         update_driver_live_location(driver_id, latitude, longitude)
         trip = fetch_active_driver_trip(driver_id)
         if trip:
-          _emit_driver_location_update(trip)
+            _emit_driver_location_update(trip)
+            pickup_lat = trip.get("start_latitude")
+            pickup_lng = trip.get("start_longitude")
+
+            if (
+                pickup_lat is not None
+                and pickup_lng is not None
+                and not trip.get("arrival_notified")
+            ):
+                meters = distance_meters(
+                    latitude,
+                    longitude,
+                    float(pickup_lat),
+                    float(pickup_lng),
+                )
+                if meters <= 50:
+                    _emit_popup_notification(
+                        target_role="rider",
+                        account_id=trip.get("rider_id"),
+                        event_name="driver_arrived",
+                        title="Driver arrived",
+                        message="Your driver is at the pickup location.",
+                        trip=trip,
+                    )
+                    # call DB helper here to mark arrival_notified = 1
     except Exception as exc:
         app.logger.warning("Driver location update failed: %s", exc)
         return jsonify({"success": False, "error": "Could not update driver location."}), 500
 
     return jsonify({"success": True}), 200
+
+def distance_meters(lat1, lon1, lat2, lon2):
+    r = 6371000
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return r * c
 
 
 @app.route("/api/config/maps", methods=["GET"])
@@ -1172,6 +1206,36 @@ def signup():
         preference_options=PREFERENCE_OPTIONS,
         state_options=US_STATE_OPTIONS,
     )
+
+def is_internal_authorized(req) -> bool:
+    return req.headers.get("X-Internal-Key") == os.environ.get("INTERNAL_API_KEY", "change-this-key")
+
+
+@app.route("/internal/notify", methods=["POST"])
+def internal_notify():
+    if not is_internal_authorized(request):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    event_name = str(payload.get("event") or "").strip()
+    inner = payload.get("payload") or {}
+
+    target_role = str(inner.get("target_role") or "").strip()
+    account_id = inner.get("account_id")
+
+    if event_name == "" or target_role not in {"rider", "driver"} or not account_id:
+        return jsonify({"success": False, "error": "Invalid payload"}), 400
+
+    _emit_popup_notification(
+        target_role=target_role,
+        account_id=account_id,
+        event_name=event_name,
+        title=str(inner.get("title") or "Notification"),
+        message=str(inner.get("message") or ""),
+        trip=inner.get("trip") if isinstance(inner.get("trip"), dict) else None,
+        extra=inner.get("extra") if isinstance(inner.get("extra"), dict) else None,
+    )
+    return jsonify({"success": True}), 200
 
 
 if __name__ == "__main__":
