@@ -8,6 +8,7 @@ import "package:flutter_map/flutter_map.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:geolocator/geolocator.dart";
 import "package:latlong2/latlong.dart";
+import "package:socket_io_client/socket_io_client.dart" as io;
 
 import "api_client.dart";
 
@@ -1155,6 +1156,7 @@ class _RideTabState extends State<RideTab> {
   Timer? _poll;
   Timer? _pickupSuggestTimer;
   Timer? _dropoffSuggestTimer;
+  io.Socket? _socket;
   List<Map<String, dynamic>> _pickupSuggestions = [];
   List<Map<String, dynamic>> _dropoffSuggestions = [];
   bool _pickupSuggestLoading = false;
@@ -1179,6 +1181,7 @@ class _RideTabState extends State<RideTab> {
     _pickup.addListener(_onPickupTextChanged);
     _dropoff.addListener(_onDropoffTextChanged);
     _load();
+    _connectRealTime();
     _poll = Timer.periodic(const Duration(seconds: 7), (_) => _load());
   }
 
@@ -1192,6 +1195,7 @@ class _RideTabState extends State<RideTab> {
     _pickup.dispose();
     _dropoff.dispose();
     _notes.dispose();
+    _socket?.dispose();
     super.dispose();
   }
 
@@ -2414,6 +2418,59 @@ class _MatchPhotoState extends State<_MatchPhoto> {
         _loading = false;
       });
     }
+  }
+
+  void _connectRealtime() {
+    final socket = io.io(
+      "http://10.0.2.2:8002",
+      <String, dynamic>{
+        "transports": ["websocket"],
+        "autoConnect": false,
+      },
+    );
+
+    socket.on("connect", (_) {
+      socket.emit("subscribe", {
+        "role": "rider",
+        "account_id": _id(widget.user).toString(),
+      });
+    });
+
+    socket.on("trip_updated", (_) async {
+      if (!mounted) return;
+      await _load();
+    });
+
+    socket.on("driver_location_updated", (data) async {
+      if (!mounted) return;
+      // update map / driver marker here
+      await _load();
+    });
+
+    socket.on("ride_request_accepted", (data) {
+      if (!mounted) return;
+      final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final title = (map["title"] ?? "Ride accepted").toString();
+      final message = (map["message"] ?? "Your driver accepted the ride.").toString();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$title\n$message")),
+      );
+    });
+
+    socket.on("driver_arrived", (data) {
+      if (!mounted) return;
+      final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final title = (map["title"] ?? "Driver arrived").toString();
+      final message = (map["message"] ?? "Your driver is at pickup.").toString();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$title\n$message")),
+      );
+    });
+
+    socket.connect();
+    _socket = socket;
   }
 
   @override

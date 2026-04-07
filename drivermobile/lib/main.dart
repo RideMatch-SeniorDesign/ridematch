@@ -2673,6 +2673,20 @@ class _StartDriveTabState extends State<StartDriveTab> {
         _loadDispatch(showLoader: false);
       }
     });
+    socket.on("ride_request_received", (data) {
+      if (!mounted) return;
+
+      final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final title = (map["title"] ?? "New ride request").toString();
+      final message = (map["message"] ?? "A rider sent you a request.").toString();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$title\n$message")),
+      );
+
+      _loadDispatch(showLoader: false);
+    });
+    
     socket.connect();
     _socket = socket;
   }
