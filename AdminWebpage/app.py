@@ -8,10 +8,9 @@ from pathlib import Path
 from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
-# import requests
 
-# REALTIME_HUB_URL = os.getenv("REALTIME_HUB_URL", "http://127.0.0.1:5001/publish-event")
-# INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "my-internal-notify-key")
+import smtplib
+from email.message import EmailMessage
 
 # Allow running from either project root or AdminWebpage directory.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +22,21 @@ if str(ADMIN_PATH) not in sys.path:
 
 ENV_PATH = PROJECT_ROOT / ".env"
 load_dotenv(ENV_PATH)
+
+#email and phone number setup
+ENABLE_EMAIL_NOTIFICATIONS = os.environ.get("ENABLE_EMAIL_NOTIFICATIONS", "false").strip().lower() in {"1", "true", "yes"}
+ENABLE_SMS_NOTIFICATIONS = os.environ.get("ENABLE_SMS_NOTIFICATIONS", "false").strip().lower() in {"1", "true", "yes"}
+
+SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "").strip()
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes"}
+FROM_EMAIL = os.environ.get("FROM_EMAIL", SMTP_USERNAME or "").strip()
+
+# TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+# TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+# TWILIO_FROM_PHONE = os.environ.get("TWILIO_FROM_PHONE", "").strip()
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
@@ -1019,12 +1033,35 @@ def verify_driver(driver_id: int):
 
     notice = "update_failed"
     try:
-        updated = _get_admin_repository().update_driver_status(driver_id, action)
+        repository = _get_admin_repository()
+        driver = repository.fetch_driver_detail(driver_id)
+        updated = repository.update_driver_status(driver_id, action)
+
         if updated:
-            notice = "approved" if action == "approve" else "denied"
-            
-            # code for sending realtime notification to driver
-            # respond_to_driver_verification_update(driver_id, updated)
+            if action == "approve":
+                notice = "approved"
+                if driver:
+                    driver_name = str(driver.get("name") or "Driver").strip()
+                    notify_user(
+                        driver,
+                        (
+                            f"Hello {driver_name}, your RideMatch driver account has been approved. "
+                            "You can now sign in and begin using the driver app."
+                        ),
+                        subject="Your RideMatch driver account has been approved",
+                    )
+            else:
+                notice = "denied"
+                if driver:
+                    driver_name = str(driver.get("name") or "Driver").strip()
+                    notify_user(
+                        driver,
+                        (
+                            f"Hello {driver_name}, your RideMatch driver application was not approved at this time. "
+                            "Please contact support or resubmit your verification details."
+                        ),
+                        subject="Update on your RideMatch driver application",
+                    )
 
     except Exception as exc:
         app.logger.warning("Driver verification update failed: %s", exc)
@@ -1279,26 +1316,94 @@ def logout():
     return redirect(url_for("login"))
 
 #helper for notifications
-# def respond_to_driver_verification_update(driver_id: int, msg_body = None):
-#     header = {"X-Internal-Secret": INTERNAL_API_KEY,
-#               "Content-type": "application/json"}
-#     try:
-#         response = requests.post(
-#             REALTIME_HUB_URL,
-#             json=msg_body or {"driver_id": driver_id, "message": "Your verification status has been updated."},
-#             headers=header,
-#             timeout=5
-#         )
+def _send_email_notification(to_email: str, subject: str, message: str) -> bool:
+    if not ENABLE_EMAIL_NOTIFICATIONS:
+        app.logger.info("Email notifications are disabled.")
+        return False
 
-#         response.raise_for_status()
-#         return response.json()
-#     except requests.RequestException as exc:
-#         app.logger.warning("Failed to send realtime notification: %s", exc)
-#         return None
+    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, FROM_EMAIL, to_email]):
+        app.logger.warning("Email notification skipped: SMTP or recipient data missing.")
+        return False
 
-        
+    try:
+        email = EmailMessage()
+        email["Subject"] = subject
+        email["From"] = FROM_EMAIL
+        email["To"] = to_email
+        email.set_content(message)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(email)
+
+        return True
+    except Exception as exc:
+        app.logger.warning("Email notification failed for %s: %s", to_email, exc)
+        return False
 
 
+def _send_sms_notification(to_sms_email: str, message: str) -> bool:
+    """
+    Sends a text-like notification through an email-to-SMS gateway.
+    Example recipient: 3195551234@vtext.com
+    """
+    if not ENABLE_SMS_NOTIFICATIONS:
+        app.logger.info("SMS notifications are disabled.")
+        return False
+
+    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, FROM_EMAIL, to_sms_email]):
+        app.logger.warning("SMS notification skipped: SMTP or SMS gateway recipient data missing.")
+        return False
+
+    try:
+        email = EmailMessage()
+        email["Subject"] = ""   # usually best blank for SMS gateways
+        email["From"] = FROM_EMAIL
+        email["To"] = to_sms_email
+        email.set_content(message[:160])  # keep it short
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(email)
+
+        return True
+    except Exception as exc:
+        app.logger.warning("SMS-via-email failed for %s: %s", to_sms_email, exc)
+        return False
+
+def notify_user(
+    user: dict[str, Any],
+    message: str,
+    *,
+    subject: str = "RideMatch Notification",
+    send_email: bool = True,
+    send_sms: bool = True,
+) -> dict[str, bool]:
+    email = str(user.get("email") or "").strip()
+    sms_email = str(user.get("sms_email") or "").strip()
+
+    results = {
+        "email_sent": False,
+        "sms_sent": False,
+    }
+
+    if send_email and email:
+        results["email_sent"] = _send_email_notification(email, subject, message)
+
+    if send_sms and sms_email:
+        results["sms_sent"] = _send_sms_notification(sms_email, message)
+
+    if not email and not sms_email:
+        app.logger.warning(
+            "notify_user skipped: no email or sms_email for user=%s",
+            user.get("account_id")
+        )
+
+    return results
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
