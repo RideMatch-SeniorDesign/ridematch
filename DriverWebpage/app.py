@@ -114,6 +114,41 @@ def _emit_driver_location_update(trip: dict | None) -> None:
         socketio.emit("driver_location_updated", payload, room=f"driver:{driver_id}")
 
 
+def _emit_popup_notification(
+    *,
+    target_role: str,
+    account_id: int | str | None,
+    event_name: str,
+    title: str,
+    message: str,
+    trip: dict | None = None,
+    extra: dict | None = None,
+) -> None:
+    if not account_id:
+        return
+
+    def _json_safe(value):
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {key: _json_safe(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [_json_safe(item) for item in value]
+        return value
+
+    payload = {
+        "title": title,
+        "message": message,
+        "trip": _json_safe(trip) if trip else None,
+    }
+
+    if extra:
+        payload.update(_json_safe(extra))
+
+    socketio.emit(event_name, payload, room=f"{target_role}:{account_id}")
+
 @socketio.on("subscribe")
 def socket_subscribe(data):
     payload = data if isinstance(data, dict) else {}
@@ -842,6 +877,15 @@ def api_driver_accept_trip(trip_id: int):
     if not trip:
         return jsonify({"success": False, "error": "Trip is no longer available to accept."}), 409
     _emit_trip_update("trip_accepted", trip)
+    #driver accepting a trip is the key event that riders need to be notified about, so we send a specific notification for this with a clear message (instead of relying on the more generic trip update handling on the client)
+    _emit_popup_notification(
+        target_role="rider",
+        account_id=trip.get("rider_id"),
+        event_name="ride_request_accepted",
+        title="Ride accepted",
+        message="Your driver accepted the request and is heading to pickup.",
+        trip=trip,
+    )
     return jsonify({"success": True, "trip": trip}), 200
 
 

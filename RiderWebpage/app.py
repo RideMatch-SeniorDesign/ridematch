@@ -397,6 +397,17 @@ def api_rider_match_choice():
             notes=notes,
         )
         publish_trip_event("trip_created", trip)
+        #notify driver server of the new ride request so it can trigger a notification if the driver is connected
+        notify_driver_server(
+            "ride_request_received",
+            {
+                "target_role": "driver",
+                "account_id": driver_id,
+                "title": "New ride request",
+                "message": f"Pickup: {start_loc} • Dropoff: {end_loc}",
+                "trip": trip,
+            },
+        )
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 409
     except Exception as exc:
@@ -404,6 +415,22 @@ def api_rider_match_choice():
         return jsonify({"success": False, "error": "Could not save your match choice right now."}), 500
 
     return jsonify({"success": True, "trip": trip}), 200
+
+import requests
+
+def notify_driver_server(event_name: str, payload: dict) -> None:
+    driver_server_base = os.environ.get("DRIVER_SERVER_URL", "http://127.0.0.1:8002")
+    internal_key = os.environ.get("INTERNAL_API_KEY", "change-this-key")
+
+    requests.post(
+        f"{driver_server_base}/internal/notify",
+        json={
+            "event": event_name,
+            "payload": payload,
+        },
+        headers={"X-Internal-Key": internal_key},
+        timeout=3,
+    )
 
 
 @app.route("/api/rider/trip/<int:trip_id>/cancel", methods=["POST"])
