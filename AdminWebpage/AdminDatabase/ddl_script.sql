@@ -8,7 +8,7 @@ CREATE TABLE `account` (
 	`AccountID` int AUTO_INCREMENT,
     `UserName` varchar(50),
     `Email` varchar(100) NOT NULL,
-    `PhoneNum` varchar(20),
+    `PhoneNum` varchar(100),
     `Password` varchar(100) NOT NULL,
     `FirstName` varchar(50) NOT NULL,
     `LastName` varchar(50) NOT NULL,

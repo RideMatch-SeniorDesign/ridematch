@@ -1386,22 +1386,33 @@ def notify_user(
     email = str(user.get("email") or "").strip()
     sms_email = str(user.get("sms_email") or "").strip()
 
+    app.logger.warning(
+        "notify_user user_id=%s email=%r sms_email=%r email_enabled=%s sms_enabled=%s",
+        user.get("account_id"),
+        email,
+        sms_email,
+        ENABLE_EMAIL_NOTIFICATIONS,
+        ENABLE_SMS_NOTIFICATIONS,
+    )
+
     results = {
         "email_sent": False,
         "sms_sent": False,
     }
 
-    if send_email and email:
-        results["email_sent"] = _send_email_notification(email, subject, message)
+    if send_email:
+        if email:
+            results["email_sent"] = _send_email_notification(email, subject, message)
+            app.logger.warning("email_sent=%s", results["email_sent"])
+        else:
+            app.logger.warning("Email skipped: missing email")
 
-    if send_sms and sms_email:
-        results["sms_sent"] = _send_sms_notification(sms_email, message)
-
-    if not email and not sms_email:
-        app.logger.warning(
-            "notify_user skipped: no email or sms_email for user=%s",
-            user.get("account_id")
-        )
+    if send_sms:
+        if sms_email:
+            results["sms_sent"] = _send_sms_notification(sms_email, message)
+            app.logger.warning("sms_sent=%s", results["sms_sent"])
+        else:
+            app.logger.warning("SMS skipped: missing sms_email")
 
     return results
 
