@@ -952,10 +952,13 @@ def api_driver_complete_trip(trip_id: int):
         return jsonify({"success": False, "error": "driver_id is required."}), 400
 
     final_cost_raw = payload.get("final_cost")
-    try:
-        final_cost = float(final_cost_raw) if final_cost_raw is not None else 0.00
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "final_cost must be numeric."}), 400
+    if final_cost_raw is None or str(final_cost_raw).strip() == "":
+        final_cost = None
+    else:
+        try:
+            final_cost = float(final_cost_raw)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "final_cost must be numeric."}), 400
 
     try:
         from Database.admin_queries import update_trip_status_for_driver

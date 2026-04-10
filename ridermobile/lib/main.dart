@@ -6,6 +6,7 @@ import "package:dio/dio.dart";
 import "package:flutter/material.dart";
 import "package:flutter_map/flutter_map.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
+import "package:flutter_stripe/flutter_stripe.dart";
 import "package:geolocator/geolocator.dart";
 import "package:latlong2/latlong.dart";
 import "package:socket_io_client/socket_io_client.dart" as io;
@@ -834,6 +835,7 @@ class DashboardTab extends StatefulWidget {
 class _DashboardTabState extends State<DashboardTab> {
   final _api = ApiClient();
   bool _loading = true;
+  bool _paymentBusy = false;
   String _error = "";
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _trips = [];
@@ -889,9 +891,99 @@ class _DashboardTabState extends State<DashboardTab> {
     ];
   }
 
+  bool _tripNeedsPayment(Map<String, dynamic> trip) {
+    final completed = (trip["status"] ?? "").toString().toLowerCase() == "completed";
+    final paymentStatus = (trip["payment_status"] ?? "").toString().trim().toLowerCase();
+    return completed && paymentStatus != "succeeded";
+  }
+
+  Future<void> _payForTrip(Map<String, dynamic> trip) async {
+    final tripId = _int(trip["trip_id"]);
+    if (tripId == null || _paymentBusy) {
+      return;
+    }
+    setState(() => _paymentBusy = true);
+    try {
+      final riderId = _id(widget.user);
+      final stripeConfig = await _api.fetchStripeConfig();
+      if (stripeConfig["configured"] != true) {
+        throw Exception("Stripe test mode is not configured on the server yet.");
+      }
+      final publishableKey = (stripeConfig["publishable_key"] ?? "").toString().trim();
+      if (publishableKey.isEmpty) {
+        throw Exception("Stripe publishable key is missing.");
+      }
+
+      Stripe.publishableKey = publishableKey;
+      await Stripe.instance.applySettings();
+
+      final paymentIntent = await _api.createTripPaymentIntent(
+        tripId: tripId,
+        riderId: riderId,
+      );
+      if (paymentIntent["success"] != true) {
+        throw Exception(paymentIntent["error"]?.toString() ?? "Could not start payment.");
+      }
+      if (paymentIntent["already_paid"] == true) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("This trip is already paid.")),
+        );
+        await _load();
+        return;
+      }
+      final clientSecret = (paymentIntent["client_secret"] ?? "").toString().trim();
+      if (clientSecret.isEmpty) {
+        throw Exception("Stripe did not return a client secret.");
+      }
+
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          merchantDisplayName: "RideMatch",
+          style: ThemeMode.dark,
+        ),
+      );
+      await Stripe.instance.presentPaymentSheet();
+
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Payment submitted. Waiting for confirmation...")),
+      );
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await _load();
+    } on StripeException catch (exc) {
+      if (!mounted) {
+        return;
+      }
+      final message = exc.error.message ?? "Payment was canceled.";
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } catch (exc) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$exc")),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _paymentBusy = false);
+      }
+    }
+  }
+
   void _showTripInfo(Map<String, dynamic> trip) {
     final cost = trip["final_cost"];
-    final costLabel = cost == null ? "Not finalized yet" : "\$$cost";
+    final estimated = trip["estimated_cost"];
+    final hasFinal = cost != null && cost.toString().trim().isNotEmpty && cost.toString() != "0.0";
+    final costLabel = hasFinal ? "\$$cost" : "Estimated \$${estimated ?? "0.00"}";
+    final paymentStatus = _paymentStatusLabel(trip["payment_status"]);
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -908,6 +1000,8 @@ class _DashboardTabState extends State<DashboardTab> {
               ),
               const SizedBox(height: 12),
               Text("Fare: $costLabel", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Text("Payment: $paymentStatus", style: const TextStyle(color: Color(0xFF7EB3FF), fontWeight: FontWeight.w600)),
               ..._tripDetailTipWidgets(trip),
               const SizedBox(height: 8),
               Text(
@@ -918,6 +1012,16 @@ class _DashboardTabState extends State<DashboardTab> {
           ),
         ),
         actions: [
+          if (_tripNeedsPayment(trip))
+            TextButton(
+              onPressed: _paymentBusy
+                  ? null
+                  : () {
+                      Navigator.pop(ctx);
+                      _payForTrip(trip);
+                    },
+              child: Text(_paymentBusy ? "Processing..." : "Pay now"),
+            ),
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
         ],
       ),
@@ -1074,6 +1178,8 @@ class _DashboardTabState extends State<DashboardTab> {
                             trip: trip,
                             onInfo: () => _showTripInfo(trip),
                             onReview: () => _openReviewForTrip(trip),
+                            onPay: _tripNeedsPayment(trip) ? () => _payForTrip(trip) : null,
+                            paymentBusy: _paymentBusy,
                           )),
                   ],
                 ),
@@ -1087,16 +1193,25 @@ class _DashboardTabState extends State<DashboardTab> {
 }
 
 class _DashboardTripRow extends StatelessWidget {
-  const _DashboardTripRow({required this.trip, required this.onInfo, required this.onReview});
+  const _DashboardTripRow({
+    required this.trip,
+    required this.onInfo,
+    required this.onReview,
+    required this.paymentBusy,
+    this.onPay,
+  });
   final Map<String, dynamic> trip;
   final VoidCallback onInfo;
   final VoidCallback onReview;
+  final VoidCallback? onPay;
+  final bool paymentBusy;
 
   @override
   Widget build(BuildContext context) {
     final route = "${trip["start_loc"] ?? "—"} → ${trip["end_loc"] ?? "—"}";
     final driver = (trip["driver_name"] ?? "Unassigned").toString();
     final status = _title(trip["status"]);
+    final paymentStatus = _paymentStatusLabel(trip["payment_status"]);
     final completed = (trip["status"] ?? "").toString().toLowerCase() == "completed";
     final needsReview = completed && trip["rider_rate"] == null;
     return Padding(
@@ -1114,6 +1229,10 @@ class _DashboardTripRow extends StatelessWidget {
             Text(route, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white, fontSize: 13)),
             const SizedBox(height: 4),
             Text("$driver · $status", style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.65))),
+            if (completed) ...[
+              const SizedBox(height: 4),
+              Text("Payment: $paymentStatus", style: const TextStyle(fontSize: 12, color: Color(0xFF7EB3FF))),
+            ],
             const SizedBox(height: 8),
             Row(
               children: [
@@ -1124,6 +1243,14 @@ class _DashboardTripRow extends StatelessWidget {
                   tooltip: "Fare & tip info",
                 ),
                 const SizedBox(width: 4),
+                if (onPay != null)
+                  TextButton.icon(
+                    onPressed: paymentBusy ? null : onPay,
+                    icon: Icon(paymentBusy ? Icons.hourglass_top_rounded : Icons.payment_rounded, size: 18),
+                    label: Text(paymentBusy ? "Processing..." : "Pay now"),
+                    style: TextButton.styleFrom(foregroundColor: const Color(0xFF5EEAD4)),
+                  ),
+                if (onPay != null) const SizedBox(width: 4),
                 if (completed)
                   TextButton.icon(
                     onPressed: onReview,
@@ -1172,6 +1299,8 @@ class _RideTabState extends State<RideTab> {
   String _rideType = "standard";
   LatLng? _pickupPoint;
   LatLng? _dropoffPoint;
+  double? _estimatedDistanceMiles;
+  double? _estimatedDurationMinutes;
   LatLng? _driverPoint;
   final Set<int> _autoShownReviewTripIds = <int>{};
 
@@ -1585,12 +1714,39 @@ class _RideTabState extends State<RideTab> {
           }
         }
       }
+      if (key.isNotEmpty && _pickupPoint != null && _dropoffPoint != null) {
+        try {
+          final route = await _api.fetchRoute(
+            apiKey: key,
+            startLatitude: _pickupPoint!.latitude,
+            startLongitude: _pickupPoint!.longitude,
+            endLatitude: _dropoffPoint!.latitude,
+            endLongitude: _dropoffPoint!.longitude,
+          );
+          final features = route["features"];
+          if (features is List && features.isNotEmpty && features.first is Map) {
+            final feature = Map<String, dynamic>.from(features.first as Map);
+            final properties = feature["properties"];
+            if (properties is Map) {
+              final distanceMeters = double.tryParse((properties["distance"] ?? "").toString());
+              final durationSeconds = double.tryParse((properties["time"] ?? "").toString());
+              _estimatedDistanceMiles = distanceMeters == null ? null : distanceMeters / 1609.344;
+              _estimatedDurationMinutes = durationSeconds == null ? null : durationSeconds / 60.0;
+            }
+          }
+        } catch (_) {
+          _estimatedDistanceMiles = null;
+          _estimatedDurationMinutes = null;
+        }
+      }
       final res = await _api.fetchMatchCandidates(
         riderId: _id(widget.user),
         startLoc: _pickup.text.trim(),
         endLoc: _dropoff.text.trim(),
         rideType: _rideType,
         notes: _notes.text.trim(),
+        estimatedDistanceMiles: _estimatedDistanceMiles,
+        estimatedDurationMinutes: _estimatedDurationMinutes,
       );
       if (!mounted) {
         return;
@@ -1647,6 +1803,8 @@ class _RideTabState extends State<RideTab> {
         endLoc: _dropoff.text.trim(),
         rideType: _rideType,
         notes: _notes.text.trim(),
+        estimatedDistanceMiles: _estimatedDistanceMiles,
+        estimatedDurationMinutes: _estimatedDurationMinutes,
       );
       if (!mounted) {
         return false;
@@ -1709,6 +1867,87 @@ class _RideTabState extends State<RideTab> {
       });
     } catch (exc) {
       setState(() => _message = "$exc");
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _completeRideAndPay() async {
+    final tripId = _int(_trip?["trip_id"]);
+    if (tripId == null) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final riderId = _id(widget.user);
+      final completeRes = await _api.completeRide(
+        tripId: tripId,
+        riderId: riderId,
+      );
+      if (completeRes["success"] != true) {
+        throw Exception(completeRes["error"]?.toString() ?? "Could not complete the ride.");
+      }
+
+      final completedTrip = completeRes["trip"];
+      final tripForPayment = completedTrip is Map ? Map<String, dynamic>.from(completedTrip) : Map<String, dynamic>.from(_trip ?? {});
+      final stripeConfig = await _api.fetchStripeConfig();
+      if (stripeConfig["configured"] != true) {
+        throw Exception("Stripe test mode is not configured on the server yet.");
+      }
+      final publishableKey = (stripeConfig["publishable_key"] ?? "").toString().trim();
+      if (publishableKey.isEmpty) {
+        throw Exception("Stripe publishable key is missing.");
+      }
+
+      Stripe.publishableKey = publishableKey;
+      await Stripe.instance.applySettings();
+
+      final paymentIntent = await _api.createTripPaymentIntent(
+        tripId: tripId,
+        riderId: riderId,
+      );
+      if (paymentIntent["success"] != true) {
+        throw Exception(paymentIntent["error"]?.toString() ?? "Could not start payment.");
+      }
+
+      final clientSecret = (paymentIntent["client_secret"] ?? "").toString().trim();
+      if (clientSecret.isEmpty) {
+        throw Exception("Stripe did not return a client secret.");
+      }
+
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          merchantDisplayName: "RideMatch",
+          style: ThemeMode.dark,
+        ),
+      );
+      await Stripe.instance.presentPaymentSheet();
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _trip = tripForPayment;
+        _message = "Ride completed and payment submitted.";
+      });
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await _load();
+    } on StripeException catch (exc) {
+      if (!mounted) {
+        return;
+      }
+      final message = exc.error.message ?? "Payment was canceled.";
+      setState(() => _message = message);
+      await _load();
+    } catch (exc) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _message = "$exc");
+      await _load();
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -2149,6 +2388,22 @@ class _RideTabState extends State<RideTab> {
                       ),
                     ),
                   ],
+                  if ((_trip?["status"] ?? "").toString() == "in_progress") ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _busy ? null : _completeRideAndPay,
+                        icon: const Icon(Icons.payments_outlined),
+                        label: Text(_busy ? "Processing..." : "Complete ride & pay"),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: _kAuthDeepBlue,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -2220,6 +2475,11 @@ class _MatchCandidateCard extends StatelessWidget {
     final rideType = (candidate["ride_type"] ?? "standard").toString();
     final photoUrl = _resolveRiderApiUrl((candidate["photo_url"] ?? "").toString().trim());
     final preferences = _splitListString(candidate["preferences"]);
+    final fareEstimateMap = candidate["fare_estimate"] is Map
+        ? Map<String, dynamic>.from(candidate["fare_estimate"] as Map)
+        : <String, dynamic>{};
+    final estimatedFareRaw = fareEstimateMap["estimated_cost"] ?? candidate["estimated_cost"];
+    final estimatedFare = double.tryParse("$estimatedFareRaw");
     final matchingPreferences = ((candidate["matching_preferences"] as List?) ?? const [])
         .map((item) => item.toString())
         .where((item) => item.trim().isNotEmpty)
@@ -2284,6 +2544,10 @@ class _MatchCandidateCard extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
+              _MatchStatPill(
+                icon: Icons.attach_money_rounded,
+                label: estimatedFare == null ? "Fare pending" : "\$${estimatedFare.toStringAsFixed(2)} est.",
+              ),
               _MatchStatPill(icon: Icons.star_rounded, label: rating <= 0 ? "New driver" : "${rating.toStringAsFixed(1)} rating"),
               _MatchStatPill(icon: Icons.route_rounded, label: "$rides rides"),
               _MatchStatPill(
@@ -3626,3 +3890,22 @@ List<String> _splitListString(dynamic value) => (value ?? "")
     .where((item) => item.isNotEmpty)
     .toList();
 String _title(dynamic value) => (value ?? "unknown").toString().replaceAll("_", " ");
+String _paymentStatusLabel(dynamic value) {
+  final text = (value ?? "unpaid").toString().trim().toLowerCase();
+  switch (text) {
+    case "succeeded":
+      return "Paid";
+    case "processing":
+      return "Processing";
+    case "requires_payment_method":
+      return "Awaiting payment";
+    case "requires_action":
+      return "Action required";
+    case "payment_failed":
+      return "Payment failed";
+    case "canceled":
+      return "Canceled";
+    default:
+      return "Unpaid";
+  }
+}

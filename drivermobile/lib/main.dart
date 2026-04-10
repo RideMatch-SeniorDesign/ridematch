@@ -1279,7 +1279,9 @@ class _DriverDashboardTabState extends State<DriverDashboardTab> {
 
   void _showTripInfo(Map<String, dynamic> trip) {
     final cost = trip["final_cost"];
-    final costLabel = cost == null ? "Not finalized yet" : "\$$cost";
+    final estimated = trip["estimated_cost"];
+    final hasFinal = cost != null && cost.toString().trim().isNotEmpty && cost.toString() != "0.0";
+    final costLabel = hasFinal ? "\$$cost" : "Estimated \$${estimated ?? "0.00"}";
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2405,7 +2407,6 @@ class StartDriveTab extends StatefulWidget {
 
 class _StartDriveTabState extends State<StartDriveTab> {
   final ApiClient _api = ApiClient();
-  final TextEditingController _fareController = TextEditingController(text: "18.50");
   final MapController _mapController = MapController();
   Map<String, dynamic>? _trip;
   bool _loading = true;
@@ -2450,7 +2451,6 @@ class _StartDriveTabState extends State<StartDriveTab> {
     _socket?.dispose();
     _refreshTimer?.cancel();
     _locationTimer?.cancel();
-    _fareController.dispose();
     super.dispose();
   }
 
@@ -2720,14 +2720,9 @@ class _StartDriveTabState extends State<StartDriveTab> {
       } else if (action == "start") {
         response = await _api.startTrip(tripId: tripId, driverId: accountId);
       } else {
-        final fare = double.tryParse(_fareController.text.trim());
-        if (fare == null) {
-          throw const FormatException("Enter a valid fare amount.");
-        }
         response = await _api.completeTrip(
           tripId: tripId,
           driverId: accountId,
-          finalCost: fare,
         );
       }
 
@@ -3221,11 +3216,6 @@ class _StartDriveTabState extends State<StartDriveTab> {
     final status = (trip?["status"] ?? "").toString();
     final driverLatLng = _currentDriverLatLng();
     final targetLatLng = _targetLatLng;
-    final mapPoints = <LatLng>[
-      ?driverLatLng,
-      ?targetLatLng,
-      ..._routePoints,
-    ];
     final fallbackCenter = driverLatLng ?? targetLatLng ?? const LatLng(41.6611, -91.5302);
     final routeSummary = [
       if (_routeDistance.isNotEmpty) _routeDistance,
@@ -3347,6 +3337,10 @@ class _StartDriveTabState extends State<StartDriveTab> {
                       _DispatchDetailRow(label: "Rider", value: (trip["rider_name"] ?? "Unknown").toString()),
                       _DispatchDetailRow(label: "Pickup", value: (trip["start_loc"] ?? "").toString()),
                       _DispatchDetailRow(label: "Dropoff", value: (trip["end_loc"] ?? "").toString()),
+                      _DispatchDetailRow(
+                        label: status == "requested" ? "Estimated fare" : "Fare",
+                        value: "\$${trip["estimated_cost"] ?? trip["final_cost"] ?? "0.00"}",
+                      ),
                       const SizedBox(height: 12),
                       Container(
                         width: double.infinity,
@@ -3400,11 +3394,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
                                       WidgetsBinding.instance
                                           .addPostFrameCallback((_) => _recenterMapToRoute());
                                     },
-                                    cameraConstraint: mapPoints.length >= 2
-                                        ? CameraConstraint.contain(
-                                            bounds: LatLngBounds.fromPoints(mapPoints),
-                                          )
-                                        : const CameraConstraint.unconstrained(),
+                                    cameraConstraint: const CameraConstraint.unconstrained(),
                                   ),
                                   children: [
                                     TileLayer(
@@ -3522,28 +3512,22 @@ class _StartDriveTabState extends State<StartDriveTab> {
                         ),
                       ],
                       if (status == "in_progress") ...[
-                        TextField(
-                          controller: _fareController,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          style: const TextStyle(color: Colors.white),
-                          cursorColor: Colors.white,
-                          decoration: _shellInputDecoration(label: "Final fare").copyWith(
-                            prefixText: "\$ ",
-                            prefixStyle: const TextStyle(color: Colors.white70),
-                          ),
+                        Text(
+                          "Estimated fare: \$${trip["estimated_cost"] ?? trip["final_cost"] ?? "0.00"}",
+                          style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(height: 10),
-                        SizedBox(
+                        Container(
                           width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: _submitting ? null : () => _runTripAction("complete"),
-                            icon: const Icon(Icons.flag_circle_outlined),
-                            label: const Text("Complete Trip"),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: _kAuthDeepBlue,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            color: Colors.white.withValues(alpha: 0.06),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                          ),
+                          child: Text(
+                            "Ride is in progress. The rider will complete the ride and submit payment from their app.",
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.78), height: 1.35),
                           ),
                         ),
                       ],

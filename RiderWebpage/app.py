@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import requests
+import stripe
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -39,6 +40,65 @@ PREFERENCE_OPTIONS = [
     "temperature warm",
     "no highway",
 ]
+
+
+def _optional_float(value):
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _stripe_publishable_key() -> str:
+    return str(os.environ.get("STRIPE_PUBLISHABLE_KEY", "")).strip()
+
+
+def _stripe_secret_key() -> str:
+    return str(os.environ.get("STRIPE_SECRET_KEY", "")).strip()
+
+
+def _stripe_webhook_secret() -> str:
+    return str(os.environ.get("STRIPE_WEBHOOK_SECRET", "")).strip()
+
+
+def _stripe_is_configured() -> bool:
+    return bool(_stripe_publishable_key() and _stripe_secret_key())
+
+
+def _stripe_mode() -> str:
+    explicit = str(os.environ.get("STRIPE_MODE", "")).strip().lower()
+    if explicit in {"test", "live"}:
+        return explicit
+    secret = _stripe_secret_key()
+    publishable = _stripe_publishable_key()
+    if secret.startswith("sk_test_") or publishable.startswith("pk_test_"):
+        return "test"
+    if secret.startswith("sk_live_") or publishable.startswith("pk_live_"):
+        return "live"
+    return "test"
+
+
+def _stripe_has_test_keys() -> bool:
+    return _stripe_secret_key().startswith("sk_test_") and _stripe_publishable_key().startswith("pk_test_")
+
+
+def _trip_charge_amount(trip: dict) -> float:
+    final_cost = _optional_float(trip.get("final_cost"))
+    estimated_cost = _optional_float(trip.get("estimated_cost"))
+    return round(max(final_cost or estimated_cost or 0.0, 0.0), 2)
+
+
+def _stripe_value(obj, key: str, default=None):
+    if obj is None:
+        return default
+    try:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return obj[key]
+    except Exception:
+        return default
 
 
 def _v(name: str) -> str:
@@ -293,6 +353,8 @@ def api_rider_request():
     end_loc = str(payload.get("end_loc") or "").strip()
     ride_type = str(payload.get("ride_type") or "standard").strip() or "standard"
     notes = str(payload.get("notes") or "").strip()
+    estimated_distance_miles = _optional_float(payload.get("estimated_distance_miles"))
+    estimated_duration_minutes = _optional_float(payload.get("estimated_duration_minutes"))
 
     if not rider_id:
         return jsonify({"success": False, "error": "rider_id is required."}), 400
@@ -308,6 +370,8 @@ def api_rider_request():
             end_loc=end_loc,
             ride_type=ride_type,
             notes=notes,
+            estimated_distance_miles=estimated_distance_miles,
+            estimated_duration_minutes=estimated_duration_minutes,
         )
         publish_trip_event("trip_created", active_trip)
     except ValueError as exc:
@@ -327,6 +391,8 @@ def api_rider_match_candidates():
     end_loc = str(payload.get("end_loc") or "").strip()
     ride_type = str(payload.get("ride_type") or "standard").strip() or "standard"
     notes = str(payload.get("notes") or "").strip()
+    estimated_distance_miles = _optional_float(payload.get("estimated_distance_miles"))
+    estimated_duration_minutes = _optional_float(payload.get("estimated_duration_minutes"))
 
     if not rider_id:
         return jsonify({"success": False, "error": "rider_id is required."}), 400
@@ -334,7 +400,7 @@ def api_rider_match_candidates():
         return jsonify({"success": False, "error": "Pickup and dropoff locations are required."}), 400
 
     try:
-        from Database.admin_queries import fetch_active_rider_trip, fetch_driver_match_candidates
+        from Database.admin_queries import calculate_trip_fare, fetch_active_rider_trip, fetch_driver_match_candidates
 
         active_trip = fetch_active_rider_trip(rider_id)
         if active_trip:
@@ -346,14 +412,20 @@ def api_rider_match_candidates():
             ride_type=ride_type,
             notes=notes,
         )
+        estimate = calculate_trip_fare(
+            ride_type=ride_type,
+            estimated_distance_miles=estimated_distance_miles,
+            estimated_duration_minutes=estimated_duration_minutes,
+        )
         for candidate in candidates:
             driver_id = int(candidate.get("account_id") or 0)
             candidate["photo_url"] = _driver_photo_url_if_exists(driver_id)
+            candidate["fare_estimate"] = estimate
     except Exception as exc:
         app.logger.warning("Rider match candidates API failed: %s", exc)
         return jsonify({"success": False, "error": "Could not load driver matches right now."}), 500
 
-    return jsonify({"success": True, "candidates": candidates, "trip": None}), 200
+    return jsonify({"success": True, "candidates": candidates, "trip": None, "fare_estimate": estimate}), 200
 
 
 @app.route("/api/rider/match-choice", methods=["POST"])
@@ -366,6 +438,8 @@ def api_rider_match_choice():
     end_loc = str(payload.get("end_loc") or "").strip()
     ride_type = str(payload.get("ride_type") or "standard").strip() or "standard"
     notes = str(payload.get("notes") or "").strip()
+    estimated_distance_miles = _optional_float(payload.get("estimated_distance_miles"))
+    estimated_duration_minutes = _optional_float(payload.get("estimated_duration_minutes"))
 
     if not rider_id or not driver_id:
         return jsonify({"success": False, "error": "rider_id and driver_id are required."}), 400
@@ -397,6 +471,8 @@ def api_rider_match_choice():
             end_loc=end_loc,
             ride_type=ride_type,
             notes=notes,
+            estimated_distance_miles=estimated_distance_miles,
+            estimated_duration_minutes=estimated_duration_minutes,
         )
         publish_trip_event("trip_created", trip)
         #notify driver server of the new ride request so it can trigger a notification if the driver is connected
@@ -417,6 +493,26 @@ def api_rider_match_choice():
         return jsonify({"success": False, "error": "Could not save your match choice right now."}), 500
 
     return jsonify({"success": True, "trip": trip}), 200
+
+
+@app.route("/api/rider/fare-estimate", methods=["POST"])
+def api_rider_fare_estimate():
+    payload = request.get_json(silent=True) or {}
+    ride_type = str(payload.get("ride_type") or "standard").strip() or "standard"
+    estimated_distance_miles = _optional_float(payload.get("estimated_distance_miles"))
+    estimated_duration_minutes = _optional_float(payload.get("estimated_duration_minutes"))
+    try:
+        from Database.admin_queries import calculate_trip_fare
+
+        estimate = calculate_trip_fare(
+            ride_type=ride_type,
+            estimated_distance_miles=estimated_distance_miles,
+            estimated_duration_minutes=estimated_duration_minutes,
+        )
+    except Exception as exc:
+        app.logger.warning("Rider fare estimate API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not calculate fare right now."}), 500
+    return jsonify({"success": True, "estimate": estimate}), 200
 
 def notify_driver_server(event_name: str, payload: dict) -> None:
     driver_server_base = os.environ.get("DRIVER_SERVER_URL", "http://127.0.0.1:8002")
@@ -455,6 +551,28 @@ def api_rider_cancel_trip(trip_id: int):
     if not canceled:
         return jsonify({"success": False, "error": "Trip cannot be canceled from its current state."}), 409
     return jsonify({"success": True}), 200
+
+
+@app.route("/api/rider/trip/<int:trip_id>/complete", methods=["POST"])
+def api_rider_complete_trip(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    rider_id = int(payload.get("rider_id") or 0)
+    if not rider_id:
+        return jsonify({"success": False, "error": "rider_id is required."}), 400
+
+    try:
+        from Database.admin_queries import complete_trip_for_rider
+
+        trip = complete_trip_for_rider(trip_id=trip_id, rider_id=rider_id)
+        if trip:
+            publish_trip_event("trip_completed", trip)
+    except Exception as exc:
+        app.logger.warning("Rider complete API failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not complete ride right now."}), 500
+
+    if not trip:
+        return jsonify({"success": False, "error": "Trip cannot be completed from its current state."}), 409
+    return jsonify({"success": True, "trip": trip}), 200
 
 
 @app.route("/api/rider/change-password", methods=["POST"])
@@ -554,6 +672,149 @@ def api_maps_config():
             "geoapify_api_key": os.environ.get("GEOAPIFY_API_KEY", "").strip(),
         }
     ), 200
+
+
+@app.route("/api/config/stripe", methods=["GET"])
+def api_stripe_config():
+    return jsonify(
+        {
+            "success": True,
+            "publishable_key": _stripe_publishable_key(),
+            "configured": _stripe_is_configured(),
+            "mode": _stripe_mode(),
+            "test_mode_ready": _stripe_has_test_keys(),
+        }
+    ), 200
+
+
+@app.route("/api/rider/trip/<int:trip_id>/payment", methods=["GET"])
+def api_rider_trip_payment(trip_id: int):
+    rider_id = int(request.args.get("rider_id") or 0)
+    if not rider_id:
+        return jsonify({"success": False, "error": "rider_id is required."}), 400
+    try:
+        from Database.admin_queries import fetch_trip_by_id, fetch_trip_payment
+
+        trip = fetch_trip_by_id(trip_id)
+        if not trip or int(trip.get("rider_id") or 0) != rider_id:
+            return jsonify({"success": False, "error": "Trip not found."}), 404
+        payment = fetch_trip_payment(trip_id)
+    except Exception as exc:
+        app.logger.warning("Rider trip payment fetch failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not load payment right now."}), 500
+    return jsonify({"success": True, "trip": trip, "payment": payment}), 200
+
+
+@app.route("/api/rider/trip/<int:trip_id>/payment-intent", methods=["POST"])
+def api_rider_trip_payment_intent(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    rider_id = int(payload.get("rider_id") or 0)
+    if not rider_id:
+        return jsonify({"success": False, "error": "rider_id is required."}), 400
+    if not _stripe_is_configured():
+        return jsonify({"success": False, "error": "Stripe is not configured on the server."}), 503
+    if _stripe_mode() != "test":
+        app.logger.warning("Stripe payment intent requested while server mode is %s", _stripe_mode())
+
+    try:
+        from Database.admin_queries import fetch_trip_by_id, fetch_trip_payment, upsert_trip_payment
+
+        trip = fetch_trip_by_id(trip_id)
+        if not trip or int(trip.get("rider_id") or 0) != rider_id:
+            return jsonify({"success": False, "error": "Trip not found."}), 404
+        if str(trip.get("status") or "").strip().lower() != "completed":
+            return jsonify({"success": False, "error": "Payment is available after trip completion."}), 409
+
+        amount = _trip_charge_amount(trip)
+        if amount <= 0:
+            return jsonify({"success": False, "error": "Trip amount is not ready for payment."}), 409
+
+        existing = fetch_trip_payment(trip_id)
+        if existing and str(existing.get("payment_status") or "").strip().lower() == "succeeded":
+            return jsonify({"success": True, "payment": existing, "already_paid": True}), 200
+
+        stripe.api_key = _stripe_secret_key()
+        intent = stripe.PaymentIntent.create(
+            amount=int(round(amount * 100)),
+            currency="usd",
+            automatic_payment_methods={"enabled": True},
+            metadata={
+                "trip_id": str(trip_id),
+                "rider_id": str(rider_id),
+            },
+        )
+        payment = upsert_trip_payment(
+            trip_id=trip_id,
+            rider_id=rider_id,
+            amount=amount,
+            currency="usd",
+            payment_type="stripe",
+            status=str(_stripe_value(intent, "status") or "pending"),
+            stripe_payment_intent_id=str(_stripe_value(intent, "id") or ""),
+            stripe_client_secret=str(_stripe_value(intent, "client_secret") or ""),
+        )
+        trip = fetch_trip_by_id(trip_id)
+    except Exception as exc:
+        app.logger.warning("Stripe payment intent create failed for trip %s: %s", trip_id, exc)
+        return jsonify({"success": False, "error": "Could not start payment right now."}), 500
+
+    return jsonify(
+        {
+            "success": True,
+            "trip": trip,
+            "payment": payment,
+            "client_secret": payment.get("stripe_client_secret"),
+            "publishable_key": _stripe_publishable_key(),
+        }
+    ), 200
+
+
+@app.route("/api/stripe/webhook", methods=["POST"])
+def api_stripe_webhook():
+    if not _stripe_secret_key():
+        return jsonify({"success": False, "error": "Stripe secret key is not configured."}), 503
+
+    payload = request.get_data(as_text=False)
+    signature = request.headers.get("Stripe-Signature", "")
+    webhook_secret = _stripe_webhook_secret()
+    try:
+        stripe.api_key = _stripe_secret_key()
+        if webhook_secret:
+            event = stripe.Webhook.construct_event(payload, signature, webhook_secret)
+        else:
+            event = stripe.Event.construct_from(request.get_json(silent=True) or {}, stripe.api_key)
+    except Exception as exc:
+        app.logger.warning("Stripe webhook verification failed: %s", exc)
+        return jsonify({"success": False, "error": "Invalid webhook payload."}), 400
+
+    event_type = str(_stripe_value(event, "type") or "")
+    data_wrapper = _stripe_value(event, "data", {}) or {}
+    data_object = _stripe_value(data_wrapper, "object", {}) or {}
+    intent_id = str(_stripe_value(data_object, "id") or "").strip()
+    intent_status = str(_stripe_value(data_object, "status") or "").strip().lower() or "pending"
+    client_secret = str(_stripe_value(data_object, "client_secret") or "").strip() or None
+
+    if intent_id:
+        try:
+            from Database.admin_queries import update_payment_status_by_intent
+
+            if event_type in {
+                "payment_intent.succeeded",
+                "payment_intent.processing",
+                "payment_intent.payment_failed",
+                "payment_intent.canceled",
+                "payment_intent.requires_action",
+            }:
+                update_payment_status_by_intent(
+                    intent_id,
+                    status=intent_status,
+                    stripe_client_secret=client_secret,
+                )
+        except Exception as exc:
+            app.logger.warning("Stripe webhook payment update failed for %s: %s", intent_id, exc)
+            return jsonify({"success": False, "error": "Webhook update failed."}), 500
+
+    return jsonify({"success": True}), 200
 
 
 @app.route("/")
