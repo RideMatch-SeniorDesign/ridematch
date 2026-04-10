@@ -51,11 +51,20 @@ CREATE TABLE `rider` (
 -- PAYMENT TABLE
 CREATE TABLE `payment` (
 	`PaymentID` int AUTO_INCREMENT,
+    `TripID` int,
     `RiderID` int NOT NULL,
-    `PaymentType` varchar(50) NOT NULL,
-    -- TODO: add other necessary payment info
+    `PaymentType` varchar(50) NOT NULL DEFAULT 'stripe',
+    `Amount` decimal(10,2) NOT NULL DEFAULT 0.00,
+    `Currency` varchar(10) NOT NULL DEFAULT 'usd',
+    `Status` varchar(50) NOT NULL DEFAULT 'pending',
+    `StripePaymentIntentID` varchar(255),
+    `StripeClientSecret` varchar(255),
+    `CreatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `UpdatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `PaidAt` timestamp NULL DEFAULT NULL,
     PRIMARY KEY (`PaymentID`),
-    CONSTRAINT `FK_RiderID_payment` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`)
+    CONSTRAINT `FK_RiderID_payment` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
+    CONSTRAINT `FK_TripID_payment` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
 );
 
 -- DRIVER TABLE

@@ -150,6 +150,8 @@ class ApiClient {
     required String endLoc,
     required String rideType,
     required String notes,
+    double? estimatedDistanceMiles,
+    double? estimatedDurationMinutes,
   }) async {
     try {
       final response = await _dio.post(
@@ -160,6 +162,8 @@ class ApiClient {
           "end_loc": endLoc,
           "ride_type": rideType,
           "notes": notes,
+          ...?estimatedDistanceMiles == null ? null : {"estimated_distance_miles": estimatedDistanceMiles},
+          ...?estimatedDurationMinutes == null ? null : {"estimated_duration_minutes": estimatedDurationMinutes},
         },
       );
       return Map<String, dynamic>.from(response.data as Map);
@@ -189,6 +193,8 @@ class ApiClient {
     required String endLoc,
     required String rideType,
     required String notes,
+    double? estimatedDistanceMiles,
+    double? estimatedDurationMinutes,
   }) async {
     try {
       final response = await _dio.post(
@@ -199,6 +205,8 @@ class ApiClient {
           "end_loc": endLoc,
           "ride_type": rideType,
           "notes": notes,
+          ...?estimatedDistanceMiles == null ? null : {"estimated_distance_miles": estimatedDistanceMiles},
+          ...?estimatedDurationMinutes == null ? null : {"estimated_duration_minutes": estimatedDurationMinutes},
         },
       );
       return Map<String, dynamic>.from(response.data as Map);
@@ -230,6 +238,8 @@ class ApiClient {
     required String endLoc,
     required String rideType,
     required String notes,
+    double? estimatedDistanceMiles,
+    double? estimatedDurationMinutes,
   }) async {
     try {
       final response = await _dio.post(
@@ -242,6 +252,8 @@ class ApiClient {
           "end_loc": endLoc,
           "ride_type": rideType,
           "notes": notes,
+          ...?estimatedDistanceMiles == null ? null : {"estimated_distance_miles": estimatedDistanceMiles},
+          ...?estimatedDurationMinutes == null ? null : {"estimated_duration_minutes": estimatedDurationMinutes},
         },
       );
       return Map<String, dynamic>.from(response.data as Map);
@@ -312,11 +324,75 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  Future<Map<String, dynamic>> completeRide({
+    required int tripId,
+    required int riderId,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/rider/trip/$tripId/complete",
+        data: <String, dynamic>{"rider_id": riderId},
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not complete ride. Try again.",
+      };
+    }
+  }
+
   Future<Map<String, dynamic>> fetchTrips({
     required int riderId,
   }) async {
     final response = await _dio.get("/api/rider/trips/$riderId");
     return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> fetchStripeConfig() async {
+    final response = await _dio.get("/api/config/stripe");
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> fetchTripPayment({
+    required int tripId,
+    required int riderId,
+  }) async {
+    final response = await _dio.get(
+      "/api/rider/trip/$tripId/payment",
+      queryParameters: <String, dynamic>{"rider_id": riderId},
+    );
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> createTripPaymentIntent({
+    required int tripId,
+    required int riderId,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/rider/trip/$tripId/payment-intent",
+        data: <String, dynamic>{"rider_id": riderId},
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{
+        "success": false,
+        "error": "Could not start payment. Try again.",
+      };
+    }
   }
 
   Future<Map<String, dynamic>> submitTripReview({

@@ -14,6 +14,23 @@ _PAYOUT_SCHEDULE_LABELS = {
     "monthly": "Monthly",
 }
 
+_DEFAULT_FARE_CONFIG = {
+    "base_fare": 2.50,
+    "per_mile": 1.40,
+    "per_minute": 0.30,
+    "booking_fee": 1.75,
+    "minimum_fare": 6.00,
+    "surge_multiplier": 1.00,
+}
+
+_RIDE_TYPE_MULTIPLIERS = {
+    "standard": 1.00,
+    "shared": 0.90,
+    "comfort": 1.15,
+    "xl": 1.35,
+    "premium": 1.60,
+}
+
 
 def _normalize_payout_schedule(value: str | None) -> str:
     key = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
@@ -42,6 +59,72 @@ def _load_driver_fare_share() -> float:
         except ValueError:
             pass
     return 0.75
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = str(os.environ.get(name, "")).strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _normalize_ride_type(value: str | None) -> str:
+    key = str(value or "").strip().lower()
+    return key if key in _RIDE_TYPE_MULTIPLIERS else "standard"
+
+
+def _load_fare_config(ride_type: str | None = None) -> dict[str, float]:
+    normalized_ride_type = _normalize_ride_type(ride_type)
+    config = {
+        "base_fare": max(0.0, _env_float("FARE_BASE_FARE", _DEFAULT_FARE_CONFIG["base_fare"])),
+        "per_mile": max(0.0, _env_float("FARE_PER_MILE", _DEFAULT_FARE_CONFIG["per_mile"])),
+        "per_minute": max(0.0, _env_float("FARE_PER_MINUTE", _DEFAULT_FARE_CONFIG["per_minute"])),
+        "booking_fee": max(0.0, _env_float("FARE_BOOKING_FEE", _DEFAULT_FARE_CONFIG["booking_fee"])),
+        "minimum_fare": max(0.0, _env_float("FARE_MINIMUM", _DEFAULT_FARE_CONFIG["minimum_fare"])),
+        "surge_multiplier": max(1.0, _env_float("FARE_SURGE_MULTIPLIER", _DEFAULT_FARE_CONFIG["surge_multiplier"])),
+        "ride_type_multiplier": max(
+            0.5,
+            _env_float(
+                f"FARE_MULTIPLIER_{normalized_ride_type.upper()}",
+                _RIDE_TYPE_MULTIPLIERS[normalized_ride_type],
+            ),
+        ),
+    }
+    config["ride_type"] = normalized_ride_type
+    return config
+
+
+def calculate_trip_fare(
+    *,
+    ride_type: str = "standard",
+    estimated_distance_miles: float | None = None,
+    estimated_duration_minutes: float | None = None,
+) -> dict[str, float | str]:
+    config = _load_fare_config(ride_type)
+    distance_miles = max(0.0, round(float(estimated_distance_miles or 0.0), 2))
+    duration_minutes = max(0.0, round(float(estimated_duration_minutes or 0.0), 2))
+    multiplier = float(config["ride_type_multiplier"])
+    base_fare = round(float(config["base_fare"]) * multiplier, 2)
+    distance_fare = round(distance_miles * float(config["per_mile"]) * multiplier, 2)
+    time_fare = round(duration_minutes * float(config["per_minute"]) * multiplier, 2)
+    booking_fee = round(float(config["booking_fee"]), 2)
+    subtotal = base_fare + distance_fare + time_fare + booking_fee
+    surged_subtotal = subtotal * float(config["surge_multiplier"])
+    estimated_cost = round(max(float(config["minimum_fare"]), surged_subtotal), 2)
+    return {
+        "ride_type": str(config["ride_type"]),
+        "estimated_distance_miles": distance_miles,
+        "estimated_duration_minutes": duration_minutes,
+        "base_fare": base_fare,
+        "distance_fare": distance_fare,
+        "time_fare": time_fare,
+        "booking_fee": booking_fee,
+        "surge_multiplier": round(float(config["surge_multiplier"]), 2),
+        "estimated_cost": estimated_cost,
+    }
 
 
 def _pay_period_window(schedule: str) -> tuple[datetime, datetime, str]:
@@ -247,6 +330,8 @@ def _ensure_rider_match_swipe_table() -> None:
 def _ensure_dispatch_query_tables() -> None:
     """Tables joined by _dispatch_trip_select() must exist before any dispatch query."""
     _ensure_driver_live_location_table()
+    _ensure_trip_pricing_columns()
+    _ensure_payment_table()
 
 
 def _split_preference_csv(value: str | None) -> set[str]:
@@ -290,6 +375,66 @@ def _ensure_tip_amount_column() -> None:
     if not _table_exists("trip") or _column_exists("trip", "TipAmount"):
         return
     _execute("ALTER TABLE trip ADD COLUMN TipAmount DECIMAL(10, 2) NOT NULL DEFAULT 0.00")
+
+
+def _ensure_payment_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS payment (
+            PaymentID INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            TripID INT NULL,
+            RiderID INT NOT NULL,
+            PaymentType VARCHAR(50) NOT NULL DEFAULT 'stripe',
+            Amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+            Currency VARCHAR(10) NOT NULL DEFAULT 'usd',
+            Status VARCHAR(50) NOT NULL DEFAULT 'pending',
+            StripePaymentIntentID VARCHAR(255) NULL,
+            StripeClientSecret VARCHAR(255) NULL,
+            CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            PaidAt TIMESTAMP NULL DEFAULT NULL,
+            CONSTRAINT fk_payment_rider
+                FOREIGN KEY (RiderID) REFERENCES rider(AccountID)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_payment_trip
+                FOREIGN KEY (TripID) REFERENCES trip(TripID)
+                ON DELETE SET NULL
+        )
+        """
+    )
+    additions = [
+        ("TripID", "ALTER TABLE payment ADD COLUMN TripID INT NULL"),
+        ("Amount", "ALTER TABLE payment ADD COLUMN Amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("Currency", "ALTER TABLE payment ADD COLUMN Currency VARCHAR(10) NOT NULL DEFAULT 'usd'"),
+        ("Status", "ALTER TABLE payment ADD COLUMN Status VARCHAR(50) NOT NULL DEFAULT 'pending'"),
+        ("StripePaymentIntentID", "ALTER TABLE payment ADD COLUMN StripePaymentIntentID VARCHAR(255) NULL"),
+        ("StripeClientSecret", "ALTER TABLE payment ADD COLUMN StripeClientSecret VARCHAR(255) NULL"),
+        ("CreatedAt", "ALTER TABLE payment ADD COLUMN CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+        ("UpdatedAt", "ALTER TABLE payment ADD COLUMN UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+        ("PaidAt", "ALTER TABLE payment ADD COLUMN PaidAt TIMESTAMP NULL DEFAULT NULL"),
+    ]
+    for column_name, sql in additions:
+        if not _column_exists("payment", column_name):
+            _execute(sql)
+
+
+def _ensure_trip_pricing_columns() -> None:
+    if not _table_exists("trip"):
+        return
+    additions = [
+        ("EstimatedDistanceMiles", "ALTER TABLE trip ADD COLUMN EstimatedDistanceMiles DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("EstimatedDurationMinutes", "ALTER TABLE trip ADD COLUMN EstimatedDurationMinutes DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("BaseFare", "ALTER TABLE trip ADD COLUMN BaseFare DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("DistanceFare", "ALTER TABLE trip ADD COLUMN DistanceFare DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("TimeFare", "ALTER TABLE trip ADD COLUMN TimeFare DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("BookingFee", "ALTER TABLE trip ADD COLUMN BookingFee DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("SurgeMultiplier", "ALTER TABLE trip ADD COLUMN SurgeMultiplier DECIMAL(6, 2) NOT NULL DEFAULT 1.00"),
+        ("EstimatedCost", "ALTER TABLE trip ADD COLUMN EstimatedCost DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+    ]
+    for column_name, sql in additions:
+        if not _column_exists("trip", column_name):
+            _execute(sql)
 
 
 def _driver_info_mode() -> str | None:
@@ -1145,6 +1290,8 @@ def fetch_portal_trip_history(role: str, account_id: int) -> list[dict[str, Any]
         counterpart_label = "driver_name"
 
     _ensure_tip_amount_column()
+    _ensure_trip_pricing_columns()
+    _ensure_payment_table()
     return _fetch_all(
         f"""
         SELECT
@@ -1153,12 +1300,23 @@ def fetch_portal_trip_history(role: str, account_id: int) -> list[dict[str, Any]
             t.StartLoc AS start_loc,
             t.EndLoc AS end_loc,
             t.FinalCost AS final_cost,
+            COALESCE(t.EstimatedCost, 0) AS estimated_cost,
+            COALESCE(t.EstimatedDistanceMiles, 0) AS estimated_distance_miles,
+            COALESCE(t.EstimatedDurationMinutes, 0) AS estimated_duration_minutes,
+            COALESCE(t.BaseFare, 0) AS base_fare,
+            COALESCE(t.DistanceFare, 0) AS distance_fare,
+            COALESCE(t.TimeFare, 0) AS time_fare,
+            COALESCE(t.BookingFee, 0) AS booking_fee,
+            COALESCE(t.SurgeMultiplier, 1.0) AS surge_multiplier,
+            COALESCE(p.Status, 'unpaid') AS payment_status,
+            COALESCE(p.Amount, 0) AS payment_amount,
             t.DriverRate AS driver_rate,
             t.RiderRate AS rider_rate,
             COALESCE(t.TipAmount, 0) AS tip_amount,
             {counterpart_name} AS {counterpart_label}
         FROM trip t
         {counterpart_join}
+        LEFT JOIN payment p ON p.TripID = t.TripID
         WHERE {where_col} = %s
         ORDER BY t.TripID DESC
         LIMIT 20
@@ -1175,6 +1333,16 @@ def _dispatch_trip_select() -> str:
             t.StartLoc AS start_loc,
             t.EndLoc AS end_loc,
             t.FinalCost AS final_cost,
+            COALESCE(t.EstimatedCost, 0) AS estimated_cost,
+            COALESCE(t.EstimatedDistanceMiles, 0) AS estimated_distance_miles,
+            COALESCE(t.EstimatedDurationMinutes, 0) AS estimated_duration_minutes,
+            COALESCE(t.BaseFare, 0) AS base_fare,
+            COALESCE(t.DistanceFare, 0) AS distance_fare,
+            COALESCE(t.TimeFare, 0) AS time_fare,
+            COALESCE(t.BookingFee, 0) AS booking_fee,
+            COALESCE(t.SurgeMultiplier, 1.0) AS surge_multiplier,
+            COALESCE(p.Status, 'unpaid') AS payment_status,
+            COALESCE(p.Amount, 0) AS payment_amount,
             t.DriverID AS driver_id,
             t.RiderID AS rider_id,
             CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name,
@@ -1188,6 +1356,7 @@ def _dispatch_trip_select() -> str:
         JOIN account racc ON racc.AccountID = t.RiderID
         LEFT JOIN driver d ON d.AccountID = t.DriverID
         LEFT JOIN driver_live_location dl ON dl.DriverID = t.DriverID
+        LEFT JOIN payment p ON p.TripID = t.TripID
     """
 
 
@@ -1280,24 +1449,194 @@ def _driver_is_matchable(driver_id: int) -> bool:
     return bool(rows)
 
 
+def fetch_trip_payment(trip_id: int) -> dict[str, Any] | None:
+    _ensure_payment_table()
+    rows = _fetch_all(
+        """
+        SELECT
+            PaymentID AS payment_id,
+            TripID AS trip_id,
+            RiderID AS rider_id,
+            PaymentType AS payment_type,
+            Amount AS amount,
+            Currency AS currency,
+            Status AS payment_status,
+            StripePaymentIntentID AS stripe_payment_intent_id,
+            StripeClientSecret AS stripe_client_secret,
+            CreatedAt AS created_at,
+            UpdatedAt AS updated_at,
+            PaidAt AS paid_at
+        FROM payment
+        WHERE TripID = %s
+        ORDER BY PaymentID DESC
+        LIMIT 1
+        """,
+        (trip_id,),
+    )
+    return rows[0] if rows else None
+
+
+def upsert_trip_payment(
+    *,
+    trip_id: int,
+    rider_id: int,
+    amount: float,
+    currency: str = "usd",
+    payment_type: str = "stripe",
+    status: str = "pending",
+    stripe_payment_intent_id: str | None = None,
+    stripe_client_secret: str | None = None,
+) -> dict[str, Any]:
+    _ensure_payment_table()
+    existing = fetch_trip_payment(trip_id)
+    if existing:
+        _execute(
+            """
+            UPDATE payment
+            SET RiderID = %s,
+                PaymentType = %s,
+                Amount = %s,
+                Currency = %s,
+                Status = %s,
+                StripePaymentIntentID = %s,
+                StripeClientSecret = %s
+            WHERE PaymentID = %s
+            """,
+            (
+                rider_id,
+                payment_type,
+                round(max(float(amount or 0.0), 0.0), 2),
+                (currency or "usd").strip().lower() or "usd",
+                (status or "pending").strip().lower() or "pending",
+                stripe_payment_intent_id,
+                stripe_client_secret,
+                int(existing["payment_id"]),
+            ),
+        )
+    else:
+        _insert_returning_id(
+            """
+            INSERT INTO payment
+            (TripID, RiderID, PaymentType, Amount, Currency, Status, StripePaymentIntentID, StripeClientSecret)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                trip_id,
+                rider_id,
+                payment_type,
+                round(max(float(amount or 0.0), 0.0), 2),
+                (currency or "usd").strip().lower() or "usd",
+                (status or "pending").strip().lower() or "pending",
+                stripe_payment_intent_id,
+                stripe_client_secret,
+            ),
+        )
+    refreshed = fetch_trip_payment(trip_id)
+    if refreshed is None:
+        raise ValueError("Payment record could not be loaded.")
+    return refreshed
+
+
+def update_payment_status_by_intent(
+    stripe_payment_intent_id: str,
+    *,
+    status: str,
+    stripe_client_secret: str | None = None,
+) -> dict[str, Any] | None:
+    _ensure_payment_table()
+    normalized_status = (status or "pending").strip().lower() or "pending"
+    params: list[Any] = [normalized_status]
+    assignments = ["Status = %s"]
+    if stripe_client_secret is not None:
+        assignments.append("StripeClientSecret = %s")
+        params.append(stripe_client_secret)
+    if normalized_status == "succeeded":
+        assignments.append("PaidAt = CURRENT_TIMESTAMP")
+    params.append(stripe_payment_intent_id)
+    rows = _execute(
+        f"""
+        UPDATE payment
+        SET {', '.join(assignments)}
+        WHERE StripePaymentIntentID = %s
+        """,
+        tuple(params),
+    )
+    if rows <= 0:
+        return None
+    found = _fetch_all(
+        """
+        SELECT TripID AS trip_id
+        FROM payment
+        WHERE StripePaymentIntentID = %s
+        ORDER BY PaymentID DESC
+        LIMIT 1
+        """,
+        (stripe_payment_intent_id,),
+    )
+    if not found:
+        return None
+    return fetch_trip_payment(int(found[0]["trip_id"]))
+    return bool(rows)
+
+
 def _create_trip_with_driver(
     *,
     rider_id: int,
     driver_id: int,
     start_loc: str,
     end_loc: str,
+    ride_type: str = "standard",
+    estimated_distance_miles: float | None = None,
+    estimated_duration_minutes: float | None = None,
 ) -> dict[str, Any]:
     _ensure_trip_location_columns()
     _ensure_dispatch_query_tables()
+    _ensure_trip_pricing_columns()
 
     normalized_start = start_loc.strip()
     normalized_end = end_loc.strip()
+    pricing = calculate_trip_fare(
+        ride_type=ride_type,
+        estimated_distance_miles=estimated_distance_miles,
+        estimated_duration_minutes=estimated_duration_minutes,
+    )
     trip_id = _insert_returning_id(
         """
-        INSERT INTO trip (RiderID, DriverID, Status, StartLoc, EndLoc, FinalCost, DriverRate, RiderRate)
-        VALUES (%s, %s, 'requested', %s, %s, %s, NULL, NULL)
+        INSERT INTO trip (
+            RiderID,
+            DriverID,
+            Status,
+            StartLoc,
+            EndLoc,
+            FinalCost,
+            DriverRate,
+            RiderRate,
+            EstimatedDistanceMiles,
+            EstimatedDurationMinutes,
+            BaseFare,
+            DistanceFare,
+            TimeFare,
+            BookingFee,
+            SurgeMultiplier,
+            EstimatedCost
+        )
+        VALUES (%s, %s, 'requested', %s, %s, %s, NULL, NULL, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (rider_id, driver_id, normalized_start, normalized_end, 0.00),
+        (
+            rider_id,
+            driver_id,
+            normalized_start,
+            normalized_end,
+            0.00,
+            pricing["estimated_distance_miles"],
+            pricing["estimated_duration_minutes"],
+            pricing["base_fare"],
+            pricing["distance_fare"],
+            pricing["time_fare"],
+            pricing["booking_fee"],
+            pricing["surge_multiplier"],
+            pricing["estimated_cost"],
+        ),
     )
     created_trip = _fetch_all(
         f"""
@@ -1356,16 +1695,12 @@ def fetch_driver_match_candidates(
         LEFT JOIN trip completed
             ON completed.DriverID = d.AccountID
            AND completed.Status = 'completed'
-        LEFT JOIN rider_match_swipe rms
-            ON rms.RiderID = %s
-           AND rms.DriverID = d.AccountID
         LEFT JOIN driver_live_location dl
             ON dl.DriverID = d.AccountID
         {review_join}
         WHERE COALESCE(d.Status, '') = 'approved'
           AND ds.IsAvailable = 1
           AND active_trip.TripID IS NULL
-          AND COALESCE(rms.Direction, '') <> 'left'
         GROUP BY
             d.AccountID,
             a.FirstName,
@@ -1375,7 +1710,7 @@ def fetch_driver_match_candidates(
         ORDER BY {rating_expr} DESC, rides DESC, d.AccountID ASC
         LIMIT %s
         """,
-        (rider_id, max(1, min(int(limit), 50))),
+        (max(1, min(int(limit), 50)),),
     )
 
     rider = fetch_portal_profile("rider", rider_id) or {}
@@ -1456,6 +1791,8 @@ def create_matched_trip_for_driver(
     end_loc: str,
     ride_type: str = "standard",
     notes: str | None = None,
+    estimated_distance_miles: float | None = None,
+    estimated_duration_minutes: float | None = None,
 ) -> dict[str, Any]:
     existing_trip = fetch_active_rider_trip(rider_id)
     if existing_trip:
@@ -1476,6 +1813,9 @@ def create_matched_trip_for_driver(
         driver_id=driver_id,
         start_loc=start_loc,
         end_loc=end_loc,
+        ride_type=ride_type,
+        estimated_distance_miles=estimated_distance_miles,
+        estimated_duration_minutes=estimated_duration_minutes,
     )
 
 
@@ -1486,6 +1826,8 @@ def create_matched_trip(
     end_loc: str,
     ride_type: str = "standard",
     notes: str | None = None,
+    estimated_distance_miles: float | None = None,
+    estimated_duration_minutes: float | None = None,
 ) -> dict[str, Any]:
     _ensure_trip_location_columns()
     _ensure_dispatch_query_tables()
@@ -1511,6 +1853,9 @@ def create_matched_trip(
         driver_id=driver_id,
         start_loc=start_loc,
         end_loc=end_loc,
+        ride_type=ride_type,
+        estimated_distance_miles=estimated_distance_miles,
+        estimated_duration_minutes=estimated_duration_minutes,
     )
 
 
@@ -1535,8 +1880,20 @@ def update_trip_status_for_driver(
     params: list[Any] = [next_status]
     if next_status == "completed":
         _ensure_trip_completed_at_column()
+        _ensure_trip_pricing_columns()
+        pricing_rows = _fetch_all(
+            """
+            SELECT COALESCE(EstimatedCost, 0) AS estimated_cost
+            FROM trip
+            WHERE TripID = %s AND DriverID = %s
+            LIMIT 1
+            """,
+            (trip_id, driver_id),
+        )
+        stored_estimated_cost = float(pricing_rows[0].get("estimated_cost") or 0.0) if pricing_rows else 0.0
+        resolved_final_cost = final_cost if final_cost is not None else stored_estimated_cost
         assignments.append("FinalCost = %s")
-        params.append(final_cost if final_cost is not None else 0.00)
+        params.append(round(max(float(resolved_final_cost or 0.0), 0.0), 2))
         assignments.append("CompletedAt = CURRENT_TIMESTAMP(6)")
 
     status_placeholders = ", ".join(["%s"] * len(allowed_prior))
@@ -1554,6 +1911,43 @@ def update_trip_status_for_driver(
     if rows <= 0:
         return None
     return fetch_active_driver_trip(driver_id) if next_status != "completed" else fetch_trip_by_id(trip_id)
+
+
+def complete_trip_for_rider(*, trip_id: int, rider_id: int) -> dict[str, Any] | None:
+    if not _table_exists("trip"):
+        return None
+    _ensure_trip_completed_at_column()
+    _ensure_trip_pricing_columns()
+    rows = _fetch_all(
+        """
+        SELECT TripID, RiderID, Status, COALESCE(EstimatedCost, 0) AS estimated_cost
+        FROM trip
+        WHERE TripID = %s AND RiderID = %s
+        LIMIT 1
+        """,
+        (trip_id, rider_id),
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    if str(row.get("Status") or "").strip().lower() != "in_progress":
+        return None
+    final_cost = round(max(float(row.get("estimated_cost") or 0.0), 0.0), 2)
+    updated = _execute(
+        """
+        UPDATE trip
+        SET Status = 'completed',
+            FinalCost = %s,
+            CompletedAt = CURRENT_TIMESTAMP(6)
+        WHERE TripID = %s
+          AND RiderID = %s
+          AND Status = 'in_progress'
+        """,
+        (final_cost, trip_id, rider_id),
+    )
+    if updated <= 0:
+        return None
+    return fetch_trip_by_id(trip_id)
 
 
 def cancel_trip_for_rider(*, trip_id: int, rider_id: int) -> bool:
@@ -1831,6 +2225,7 @@ def fetch_trips_pending_rider_rating(rider_id: int) -> list[dict[str, Any]]:
     if not _table_exists("trip"):
         return []
     _ensure_tip_amount_column()
+    _ensure_payment_table()
     return _fetch_all(
         """
         SELECT
@@ -1839,10 +2234,13 @@ def fetch_trips_pending_rider_rating(rider_id: int) -> list[dict[str, Any]]:
             t.StartLoc AS start_loc,
             t.EndLoc AS end_loc,
             t.FinalCost AS final_cost,
+            COALESCE(t.EstimatedCost, 0) AS estimated_cost,
             COALESCE(t.TipAmount, 0) AS tip_amount,
+            COALESCE(p.Status, 'unpaid') AS payment_status,
             CONCAT(dacc.FirstName, ' ', dacc.LastName) AS driver_name
         FROM trip t
         JOIN account dacc ON dacc.AccountID = t.DriverID
+        LEFT JOIN payment p ON p.TripID = t.TripID
         WHERE t.RiderID = %s
           AND t.Status = 'completed'
           AND t.RiderRate IS NULL

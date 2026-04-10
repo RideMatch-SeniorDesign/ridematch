@@ -398,13 +398,13 @@ class ApiClient {
   Future<Map<String, dynamic>> completeTrip({
     required int tripId,
     required int driverId,
-    required double finalCost,
+    double? finalCost,
   }) async {
     final response = await _dio.post(
       "/api/driver/trip/$tripId/complete",
       data: <String, dynamic>{
         "driver_id": driverId,
-        "final_cost": finalCost,
+        ...?finalCost == null ? null : {"final_cost": finalCost},
       },
     );
     return Map<String, dynamic>.from(response.data as Map);
