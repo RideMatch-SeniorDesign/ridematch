@@ -74,6 +74,8 @@ class ApiClient {
     required Map<String, String> fields,
     required List<String> preferences,
     required String profilePhotoPath,
+    required String licenseDocumentPath,
+    required String insuranceDocumentPath,
   }) async {
     try {
       final formData = FormData();
@@ -91,6 +93,28 @@ class ApiClient {
           await MultipartFile.fromFile(
             profilePhotoPath,
             filename: filename.isNotEmpty ? filename : "profile.jpg",
+          ),
+        ),
+      );
+      final normalizedLicensePath = licenseDocumentPath.replaceAll("\\", "/");
+      final licenseFilename = normalizedLicensePath.split("/").last;
+      formData.files.add(
+        MapEntry(
+          "license_document",
+          await MultipartFile.fromFile(
+            licenseDocumentPath,
+            filename: licenseFilename.isNotEmpty ? licenseFilename : "license.jpg",
+          ),
+        ),
+      );
+      final normalizedInsurancePath = insuranceDocumentPath.replaceAll("\\", "/");
+      final insuranceFilename = normalizedInsurancePath.split("/").last;
+      formData.files.add(
+        MapEntry(
+          "insurance_document",
+          await MultipartFile.fromFile(
+            insuranceDocumentPath,
+            filename: insuranceFilename.isNotEmpty ? insuranceFilename : "insurance.jpg",
           ),
         ),
       );
@@ -127,6 +151,59 @@ class ApiClient {
       );
       final response = await _dio.post(
         "/api/driver/profile/photo",
+        data: formData,
+        options: Options(
+          headers: <String, String>{"Content-Type": "multipart/form-data"},
+        ),
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> uploadDriverVerificationDocuments({
+    required int accountId,
+    String? licenseDocumentPath,
+    String? insuranceDocumentPath,
+  }) async {
+    try {
+      final formData = FormData();
+      formData.fields.add(MapEntry("account_id", accountId.toString()));
+      if (licenseDocumentPath != null && licenseDocumentPath.trim().isNotEmpty) {
+        final normalizedPath = licenseDocumentPath.replaceAll("\\", "/");
+        final filename = normalizedPath.split("/").last;
+        formData.files.add(
+          MapEntry(
+            "license_document",
+            await MultipartFile.fromFile(
+              licenseDocumentPath,
+              filename: filename.isNotEmpty ? filename : "license.jpg",
+            ),
+          ),
+        );
+      }
+      if (insuranceDocumentPath != null && insuranceDocumentPath.trim().isNotEmpty) {
+        final normalizedPath = insuranceDocumentPath.replaceAll("\\", "/");
+        final filename = normalizedPath.split("/").last;
+        formData.files.add(
+          MapEntry(
+            "insurance_document",
+            await MultipartFile.fromFile(
+              insuranceDocumentPath,
+              filename: filename.isNotEmpty ? filename : "insurance.jpg",
+            ),
+          ),
+        );
+      }
+      final response = await _dio.post(
+        "/api/driver/profile/documents",
         data: formData,
         options: Options(
           headers: <String, String>{"Content-Type": "multipart/form-data"},

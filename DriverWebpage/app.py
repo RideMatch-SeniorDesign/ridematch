@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import uuid
@@ -32,10 +33,16 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 SESSION_DAYS = int(os.environ.get("DRIVER_SESSION_DAYS", os.environ.get("PORTAL_SESSION_DAYS", "30")))
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
-app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("DRIVER_PROFILE_PHOTO_MAX_BYTES", str(5 * 1024 * 1024)))
+PROFILE_PHOTO_MAX_BYTES = int(os.environ.get("DRIVER_PROFILE_PHOTO_MAX_BYTES", str(5 * 1024 * 1024)))
+DRIVER_DOCUMENT_MAX_BYTES = int(os.environ.get("DRIVER_DOCUMENT_MAX_BYTES", str(5 * 1024 * 1024)))
+app.config["MAX_CONTENT_LENGTH"] = int(
+    os.environ.get("DRIVER_SIGNUP_MAX_BYTES", str(PROFILE_PHOTO_MAX_BYTES + (2 * DRIVER_DOCUMENT_MAX_BYTES)))
+)
 
 PROFILE_UPLOAD_DIR = APP_PATH / "uploads" / "driver_profiles"
+DOCUMENT_UPLOAD_DIR = APP_PATH / "uploads" / "driver_documents"
 ALLOWED_PROFILE_PHOTO_TYPES = {"jpeg", "png", "webp"}
+ALLOWED_DRIVER_DOCUMENT_TYPES = {"jpeg", "png"}
 
 PREFERENCE_OPTIONS = [
     "quiet ride",
@@ -258,7 +265,7 @@ def _validate_and_store_driver_profile_photo(*, required: bool = True):
     data = photo.read()
     if not data:
         return None, "Uploaded profile photo is empty."
-    if len(data) > int(app.config.get("MAX_CONTENT_LENGTH") or 0):
+    if len(data) > PROFILE_PHOTO_MAX_BYTES:
         return None, "Profile photo must be 5 MB or smaller."
 
     image_type = _detect_profile_photo_type(data)
@@ -358,6 +365,150 @@ def _moderate_profile_photo_with_aws(data: bytes) -> dict[str, object]:
     return {"status": "approved", "score": 0.0, "labels": None}
 
 
+def _normalize_document_text(value: str | None) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
+
+
+def _detect_driver_document_type(data: bytes) -> str | None:
+    image_type = _detect_profile_photo_type(data)
+    if image_type in ALLOWED_DRIVER_DOCUMENT_TYPES:
+        return image_type
+    return None
+
+
+def _read_driver_document_upload(field_name: str, label: str) -> tuple[bytes | None, str | None]:
+    upload = request.files.get(field_name)
+    if not upload or not getattr(upload, "filename", ""):
+        return None, f"{label} upload is required."
+
+    data = upload.read()
+    if not data:
+        return None, f"{label} upload is empty."
+    if len(data) > DRIVER_DOCUMENT_MAX_BYTES:
+        return None, f"{label} must be 5 MB or smaller."
+    if _detect_driver_document_type(data) not in ALLOWED_DRIVER_DOCUMENT_TYPES:
+        return None, f"{label} must be a JPG or PNG image."
+    return data, None
+
+
+def _has_driver_document_upload(field_name: str) -> bool:
+    upload = request.files.get(field_name)
+    return bool(upload and getattr(upload, "filename", ""))
+
+
+def _detect_text_with_aws_rekognition(data: bytes) -> str:
+    region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    client = boto3.client("rekognition", region_name=region)
+    response = client.detect_text(Image={"Bytes": data})
+    lines: list[str] = []
+    for item in response.get("TextDetections", []) or []:
+        if item.get("Type") != "LINE":
+            continue
+        text = str(item.get("DetectedText") or "").strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
+
+
+def _validate_license_document_text(text: str) -> str | None:
+    normalized_text = _normalize_document_text(text)
+    has_license_words = any(
+        phrase in normalized_text
+        for phrase in ("DRIVERLICENSE", "DRIVERSLICENSE", "DRIVINGLICENSE", "DL", "LICENSE")
+    )
+    if not has_license_words:
+        return "Upload a clear image of a valid U.S. driver's license."
+    return None
+
+
+def _validate_insurance_document_text(text: str) -> str | None:
+    normalized_text = _normalize_document_text(text)
+    has_insurance_words = any(
+        phrase in normalized_text
+        for phrase in ("INSURANCE", "AUTOINSURANCE", "VEHICLEINSURANCE", "PROOFOFINSURANCE", "POLICY")
+    )
+    if not has_insurance_words:
+        return "Upload a clear proof of vehicle insurance document."
+    return None
+
+
+def _store_driver_document_payload(document_type: str, data: bytes, labels: str) -> dict[str, object]:
+    DOCUMENT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    image_type = _detect_driver_document_type(data) or "jpeg"
+    ext = "jpg" if image_type == "jpeg" else image_type
+    stored_name = f"{uuid.uuid4().hex}.{ext}"
+    stored_path = DOCUMENT_UPLOAD_DIR / stored_name
+    stored_path.write_bytes(data)
+    return {
+        "document_type": document_type,
+        "storage_path": f"uploads/driver_documents/{stored_name}",
+        "mime_type": f"image/{'jpeg' if image_type == 'jpeg' else image_type}",
+        "file_size_bytes": len(data),
+        "recognition_status": "approved",
+        "recognition_labels": labels,
+    }
+
+
+def _validate_and_store_license_document() -> tuple[dict[str, object] | None, str | None]:
+    license_data, license_error = _read_driver_document_upload("license_document", "Driver's license")
+    if license_error:
+        return None, license_error
+
+    try:
+        license_text = _detect_text_with_aws_rekognition(license_data or b"")
+    except Exception as exc:
+        app.logger.warning("Driver document recognition failed: %s", exc)
+        return None, "Document recognition is unavailable right now. Please try again later."
+
+    license_error = _validate_license_document_text(license_text)
+    if license_error:
+        return None, license_error
+
+    return _store_driver_document_payload("license", license_data or b"", "license_text_matched"), None
+
+
+def _validate_and_store_insurance_document() -> tuple[dict[str, object] | None, str | None]:
+    insurance_data, insurance_error = _read_driver_document_upload("insurance_document", "Proof of vehicle insurance")
+    if insurance_error:
+        return None, insurance_error
+
+    try:
+        insurance_text = _detect_text_with_aws_rekognition(insurance_data or b"")
+    except Exception as exc:
+        app.logger.warning("Driver document recognition failed: %s", exc)
+        return None, "Document recognition is unavailable right now. Please try again later."
+
+    insurance_error = _validate_insurance_document_text(insurance_text)
+    if insurance_error:
+        return None, insurance_error
+
+    return _store_driver_document_payload("insurance", insurance_data or b"", "insurance_text_matched"), None
+
+
+def _validate_and_store_driver_documents() -> tuple[list[dict[str, object]] | None, str | None]:
+    license_payload, license_error = _validate_and_store_license_document()
+    if license_error or not license_payload:
+        return None, license_error or "Driver's license upload is required."
+
+    insurance_payload, insurance_error = _validate_and_store_insurance_document()
+    if insurance_error or not insurance_payload:
+        _delete_stored_driver_documents([license_payload])
+        return None, insurance_error or "Proof of vehicle insurance upload is required."
+
+    return [license_payload, insurance_payload], None
+
+
+def _delete_stored_driver_documents(documents: list[dict[str, object]] | None) -> None:
+    for document in documents or []:
+        storage_path = str(document.get("storage_path") or "").strip()
+        if not storage_path:
+            continue
+        try:
+            (APP_PATH / storage_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 @app.route("/")
 def home():
     if _driver_logged_in():
@@ -431,11 +582,6 @@ def api_driver_signup():
     username = str(request.form.get("username") or "").strip()
     email = str(request.form.get("email") or "").strip()
     phone = str(request.form.get("phone") or "").strip()
-    license_state = str(request.form.get("license_state") or "").strip().upper()
-    license_number = str(request.form.get("license_number") or "").strip()
-    license_expires = str(request.form.get("license_expires") or "").strip()
-    insurance_provider = str(request.form.get("insurance_provider") or "").strip()
-    insurance_policy = str(request.form.get("insurance_policy") or "").strip()
     date_of_birth = str(request.form.get("date_of_birth") or "").strip()
     password = str(request.form.get("password") or "")
     confirm_password = str(request.form.get("confirm_password") or "")
@@ -447,15 +593,9 @@ def api_driver_signup():
         username,
         email,
         phone,
-        license_state,
-        license_number,
-        insurance_provider,
-        insurance_policy,
     ]
     if not all(required):
         return jsonify({"success": False, "error": "Please fill in all required fields."}), 400
-    if license_state not in US_STATE_OPTIONS:
-        return jsonify({"success": False, "error": "Select a valid license state."}), 400
     if len(password) < 6:
         return jsonify({"success": False, "error": "Password must be at least 6 characters."}), 400
     if password != confirm_password:
@@ -463,8 +603,13 @@ def api_driver_signup():
 
     normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
 
+    document_payloads, document_error = _validate_and_store_driver_documents()
+    if document_error:
+        return jsonify({"success": False, "error": document_error}), 400
+
     photo_payload, photo_error = _validate_and_store_driver_profile_photo(required=True)
     if photo_error or not photo_payload:
+        _delete_stored_driver_documents(document_payloads)
         return jsonify({"success": False, "error": photo_error or "Driver profile photo is required."}), 400
 
     try:
@@ -479,12 +624,13 @@ def api_driver_signup():
             last_name=last_name,
             preferences=", ".join(normalized_preferences),
             date_of_birth=date_of_birth or None,
-            license_state=license_state,
-            license_number=license_number,
-            license_expires=license_expires or None,
-            insurance_provider=insurance_provider,
-            insurance_policy=insurance_policy,
+            license_state=None,
+            license_number=None,
+            license_expires=None,
+            insurance_provider=None,
+            insurance_policy=None,
             profile_photo=photo_payload,
+            documents=document_payloads,
         )
     except Exception as exc:
         app.logger.warning("Driver API signup failed: %s", exc)
@@ -493,6 +639,7 @@ def api_driver_signup():
                 (APP_PATH / str(photo_payload["storage_path"])).unlink(missing_ok=True)
         except Exception:
             pass
+        _delete_stored_driver_documents(document_payloads)
         return jsonify(
             {
                 "success": False,
@@ -527,6 +674,37 @@ def api_driver_photo(driver_id: int):
     full_path = (APP_PATH / stored_path).resolve()
     photo_root = PROFILE_UPLOAD_DIR.resolve()
     if not full_path.is_relative_to(photo_root) or not full_path.is_file():
+        abort(404)
+
+    guessed_mime, _ = mimetypes.guess_type(str(full_path))
+    response = send_file(full_path, mimetype=guessed_mime or "application/octet-stream", conditional=False, max_age=0)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.route("/api/driver/document/<int:driver_id>/<document_type>")
+def api_driver_document(driver_id: int, document_type: str):
+    normalized_type = str(document_type or "").strip().lower()
+    if normalized_type not in {"license", "insurance"}:
+        abort(404)
+
+    try:
+        from Database.admin_queries import fetch_driver_document_paths
+
+        document_paths = fetch_driver_document_paths(driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver document lookup failed: %s", exc)
+        document_paths = {}
+
+    stored_path = str(document_paths.get(normalized_type) or "").strip()
+    if not stored_path:
+        abort(404)
+
+    full_path = (APP_PATH / stored_path).resolve()
+    document_root = DOCUMENT_UPLOAD_DIR.resolve()
+    if not full_path.is_relative_to(document_root) or not full_path.is_file():
         abort(404)
 
     guessed_mime, _ = mimetypes.guess_type(str(full_path))
@@ -590,6 +768,68 @@ def api_driver_profile_photo_update():
         except Exception:
             pass
         return jsonify({"success": False, "error": "Could not update profile photo right now."}), 500
+
+
+@app.route("/api/driver/profile/documents", methods=["POST"])
+def api_driver_documents_update():
+    account_id_raw = str(request.form.get("account_id") or "").strip()
+    if not account_id_raw.isdigit():
+        return jsonify({"success": False, "error": "A valid account_id is required."}), 400
+    account_id = int(account_id_raw)
+
+    document_payloads: list[dict[str, object]] = []
+    if _has_driver_document_upload("license_document"):
+        license_payload, license_error = _validate_and_store_license_document()
+        if license_error or not license_payload:
+            return jsonify({"success": False, "error": license_error or "Could not read driver's license upload."}), 400
+        document_payloads.append(license_payload)
+
+    if _has_driver_document_upload("insurance_document"):
+        insurance_payload, insurance_error = _validate_and_store_insurance_document()
+        if insurance_error or not insurance_payload:
+            _delete_stored_driver_documents(document_payloads)
+            return jsonify({"success": False, "error": insurance_error or "Could not read proof of vehicle insurance upload."}), 400
+        document_payloads.append(insurance_payload)
+
+    if not document_payloads:
+        return jsonify({"success": False, "error": "Upload a driver's license or proof of insurance image."}), 400
+
+    try:
+        from Database.admin_queries import (
+            fetch_driver_document_paths,
+            fetch_portal_profile,
+            update_driver_documents,
+        )
+
+        existing_document_paths = fetch_driver_document_paths(account_id)
+        updated = update_driver_documents(account_id, document_payloads)
+        if not updated:
+            _delete_stored_driver_documents(document_payloads)
+            return jsonify({"success": False, "error": "Could not update verification documents in database."}), 500
+
+        for document in document_payloads:
+            document_type = str(document.get("document_type") or "").strip().lower()
+            new_document_path = str(document.get("storage_path") or "").strip()
+            old_document_path = str(existing_document_paths.get(document_type) or "").strip()
+            if old_document_path and old_document_path != new_document_path:
+                try:
+                    (APP_PATH / old_document_path).unlink(missing_ok=True)
+                except Exception as delete_exc:
+                    app.logger.warning("Could not delete replaced driver document '%s': %s", old_document_path, delete_exc)
+
+        user = fetch_portal_profile("driver", account_id) or {"account_id": account_id}
+        user["status"] = "under_review"
+        return jsonify(
+            {
+                "success": True,
+                "message": "Verification documents updated. Your driver account is now under review.",
+                "user": user,
+            }
+        ), 200
+    except Exception as exc:
+        _delete_stored_driver_documents(document_payloads)
+        app.logger.warning("Driver document API update failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not update verification documents right now."}), 500
 
 
 @app.route("/api/driver/profile/<int:driver_id>", methods=["GET"])
@@ -1040,16 +1280,23 @@ def settings():
     warning = None
     error = None
     current_photo_url = None
+    current_license_document_url = None
+    current_insurance_document_url = None
 
     account_id = int(user.get("account_id") or 0)
     if account_id:
         try:
-            from Database.admin_queries import fetch_driver_profile_photo_path
+            from Database.admin_queries import fetch_driver_document_paths, fetch_driver_profile_photo_path
 
             if fetch_driver_profile_photo_path(account_id):
                 current_photo_url = url_for("api_driver_photo", driver_id=account_id)
+            document_paths = fetch_driver_document_paths(account_id)
+            if document_paths.get("license"):
+                current_license_document_url = url_for("api_driver_document", driver_id=account_id, document_type="license")
+            if document_paths.get("insurance"):
+                current_insurance_document_url = url_for("api_driver_document", driver_id=account_id, document_type="insurance")
         except Exception as exc:
-            app.logger.warning("Could not load current driver profile photo path: %s", exc)
+            app.logger.warning("Could not load current driver uploaded media paths: %s", exc)
 
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
@@ -1059,17 +1306,36 @@ def settings():
         else:
             try:
                 from Database.admin_queries import (
+                    fetch_driver_document_paths,
                     fetch_driver_profile_photo_path,
                     fetch_portal_profile,
+                    update_driver_documents,
                     update_driver_profile_photo,
                     update_portal_profile,
                 )
 
                 photo_payload, photo_error = _validate_and_store_driver_profile_photo(required=False)
+                documents_saved = False
                 if photo_error:
                     error = photo_error
                     photo_payload = None
                     raise ValueError(photo_error)
+
+                document_payloads: list[dict[str, object]] = []
+                if _has_driver_document_upload("license_document"):
+                    license_payload, license_error = _validate_and_store_license_document()
+                    if license_error or not license_payload:
+                        error = license_error or "Could not read driver's license upload."
+                        raise ValueError(error)
+                    document_payloads.append(license_payload)
+
+                if _has_driver_document_upload("insurance_document"):
+                    insurance_payload, insurance_error = _validate_and_store_insurance_document()
+                    if insurance_error or not insurance_payload:
+                        _delete_stored_driver_documents(document_payloads)
+                        error = insurance_error or "Could not read proof of vehicle insurance upload."
+                        raise ValueError(error)
+                    document_payloads.append(insurance_payload)
 
                 payload = dict(form_data)
                 payload["preferences"] = _join_preferences(form_data["preferences"])
@@ -1088,6 +1354,23 @@ def settings():
                     session_user["status"] = "under_review"
                     session["driver_user"] = session_user
                     warning = "Profile photo changed. Your driver account has been placed under review again."
+                if document_payloads:
+                    existing_document_paths = fetch_driver_document_paths(int(user.get("account_id")))
+                    update_driver_documents(int(user.get("account_id")), document_payloads)
+                    documents_saved = True
+                    for document in document_payloads:
+                        document_type = str(document.get("document_type") or "").strip().lower()
+                        new_document_path = str(document.get("storage_path") or "").strip()
+                        old_document_path = str(existing_document_paths.get(document_type) or "").strip()
+                        if old_document_path and old_document_path != new_document_path:
+                            try:
+                                (APP_PATH / old_document_path).unlink(missing_ok=True)
+                            except Exception as delete_exc:
+                                app.logger.warning("Could not delete replaced driver document '%s': %s", old_document_path, delete_exc)
+                    session_user = _driver_session_user()
+                    session_user["status"] = "under_review"
+                    session["driver_user"] = session_user
+                    warning = "Verification document changed. Your driver account has been placed under review again."
                 refreshed = fetch_portal_profile("driver", int(user.get("account_id")))
                 if refreshed:
                     session["driver_user"] = refreshed
@@ -1095,6 +1378,8 @@ def settings():
                 if not error:
                     success = "Driver settings updated."
             except Exception as exc:
+                if "document_payloads" in locals() and not locals().get("documents_saved", False):
+                    _delete_stored_driver_documents(document_payloads)
                 app.logger.warning("Driver settings update failed: %s", exc)
                 if not error:
                     error = "Could not save settings right now."
@@ -1110,6 +1395,8 @@ def settings():
             preference_options=PREFERENCE_OPTIONS,
             state_options=US_STATE_OPTIONS,
             current_photo_url=current_photo_url,
+            current_license_document_url=current_license_document_url,
+            current_insurance_document_url=current_insurance_document_url,
         ),
     )
 
@@ -1148,6 +1435,7 @@ def signup():
         password = _v("password")
         confirm_password = _v("confirm_password")
         photo_payload = None
+        document_payloads = None
 
         required = [
             "first_name",
@@ -1155,10 +1443,6 @@ def signup():
             "username",
             "email",
             "phone",
-            "license_state",
-            "license_number",
-            "insurance_provider",
-            "insurance_policy",
         ]
         if any(not form_data[f] for f in required):
             error = "Please fill in all required fields."
@@ -1167,9 +1451,15 @@ def signup():
         elif password != confirm_password:
             error = "Passwords do not match."
         else:
+            document_payloads, document_error = _validate_and_store_driver_documents()
+            if document_error:
+                error = document_error
+
+        if request.method == "POST" and not error:
             photo_payload, photo_error = _validate_and_store_driver_profile_photo()
             if photo_error:
                 error = photo_error
+                _delete_stored_driver_documents(document_payloads)
         if request.method == "POST" and not error:
             try:
                 from Database.admin_queries import create_driver_signup
@@ -1183,12 +1473,13 @@ def signup():
                     last_name=form_data["last_name"],
                     preferences=", ".join(form_data["preferences"]),
                     date_of_birth=form_data["date_of_birth"] or None,
-                    license_state=form_data["license_state"],
-                    license_number=form_data["license_number"],
-                    license_expires=form_data["license_expires"] or None,
-                    insurance_provider=form_data["insurance_provider"],
-                    insurance_policy=form_data["insurance_policy"],
+                    license_state=None,
+                    license_number=None,
+                    license_expires=None,
+                    insurance_provider=None,
+                    insurance_policy=None,
                     profile_photo=photo_payload,
+                    documents=document_payloads,
                 )
                 success = f"Driver account created. Account ID: {account_id} (pending review)."
                 form_data = _driver_signup_form()
@@ -1198,6 +1489,7 @@ def signup():
                         (APP_PATH / photo_payload["storage_path"]).unlink(missing_ok=True)
                     except Exception:
                         pass
+                _delete_stored_driver_documents(document_payloads)
                 app.logger.warning("Driver signup failed: %s", exc)
                 error = "Could not create driver account. Username/email may already exist or the database is unavailable."
 

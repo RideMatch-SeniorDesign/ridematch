@@ -76,6 +76,20 @@
 
     <div class="table-box">
       <h3>License Verification</h3>
+      {% if driver.license_document_path %}
+      <div class="row">
+        <span><strong>License Image:</strong></span>
+        <span>
+          <a href="{{ url_for('driver_document', driver_id=driver.account_id, document_type='license') }}" target="_blank" rel="noopener">
+            <img
+              src="{{ url_for('driver_document', driver_id=driver.account_id, document_type='license') }}"
+              alt="Driver license document for {{ driver.name }}"
+              class="detail-photo"
+            />
+          </a>
+        </span>
+      </div>
+      {% endif %}
       <div class="row">
         <span><strong>License State:</strong></span>
         <span>{{ driver.license_state or "N/A" }}</span>
@@ -89,6 +103,14 @@
         <span>{{ driver.license_expiration or "N/A" }}</span>
       </div>
       <div class="row">
+        <span><strong>Recognition Status:</strong></span>
+        <span>{{ driver.license_document_recognition_status or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Recognition Notes:</strong></span>
+        <span>{{ driver.license_document_recognition_labels or "N/A" }}</span>
+      </div>
+      <div class="row">
         <span><strong>Background Check:</strong></span>
         <span>{{ driver.background_check or "Pending" }}</span>
       </div>
@@ -96,6 +118,20 @@
 
     <div class="table-box">
       <h3>Vehicle Information</h3>
+      {% if driver.insurance_document_path %}
+      <div class="row">
+        <span><strong>Insurance Image:</strong></span>
+        <span>
+          <a href="{{ url_for('driver_document', driver_id=driver.account_id, document_type='insurance') }}" target="_blank" rel="noopener">
+            <img
+              src="{{ url_for('driver_document', driver_id=driver.account_id, document_type='insurance') }}"
+              alt="Vehicle insurance document for {{ driver.name }}"
+              class="detail-photo"
+            />
+          </a>
+        </span>
+      </div>
+      {% endif %}
       <div class="row">
         <span><strong>Vehicle:</strong></span>
         <span>
@@ -110,6 +146,22 @@
       <div class="row">
         <span><strong>Insurance Verified:</strong></span>
         <span>{{ driver.insurance_verified or "Pending" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Insurance Provider:</strong></span>
+        <span>{{ driver.insurance_provider or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Insurance Policy:</strong></span>
+        <span>{{ driver.insurance_policy or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Recognition Status:</strong></span>
+        <span>{{ driver.insurance_document_recognition_status or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Recognition Notes:</strong></span>
+        <span>{{ driver.insurance_document_recognition_labels or "N/A" }}</span>
       </div>
     </div>
 
