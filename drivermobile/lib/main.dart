@@ -483,13 +483,10 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
   final _phone = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
-  final _licenseNumber = TextEditingController();
-  final _licenseExpires = TextEditingController();
   final _dob = TextEditingController();
-  final _insuranceProvider = TextEditingController();
-  final _insurancePolicy = TextEditingController();
-  String? _licenseState;
   String? _profilePhotoPath;
+  String? _licenseDocumentPath;
+  String? _insuranceDocumentPath;
   bool _busy = false;
   String _message = "";
   final Set<String> _prefs = <String>{};
@@ -506,14 +503,6 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
     "no highway",
   ];
 
-  static const _usStates = [
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
-  ];
-
   @override
   void dispose() {
     _first.dispose();
@@ -523,11 +512,7 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
     _phone.dispose();
     _password.dispose();
     _confirm.dispose();
-    _licenseNumber.dispose();
-    _licenseExpires.dispose();
     _dob.dispose();
-    _insuranceProvider.dispose();
-    _insurancePolicy.dispose();
     super.dispose();
   }
 
@@ -546,10 +531,52 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
     });
   }
 
+  Future<void> _pickLicenseDocument() async {
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 2400,
+      maxHeight: 2400,
+      imageQuality: 92,
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _licenseDocumentPath = picked.path;
+    });
+  }
+
+  Future<void> _pickInsuranceDocument() async {
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 2400,
+      maxHeight: 2400,
+      imageQuality: 92,
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _insuranceDocumentPath = picked.path;
+    });
+  }
+
   Future<void> _submit() async {
     if (_profilePhotoPath == null || _profilePhotoPath!.trim().isEmpty) {
       setState(() {
         _message = "Please choose a profile photo.";
+      });
+      return;
+    }
+    if (_licenseDocumentPath == null || _licenseDocumentPath!.trim().isEmpty) {
+      setState(() {
+        _message = "Please upload a valid U.S. driver's license.";
+      });
+      return;
+    }
+    if (_insuranceDocumentPath == null || _insuranceDocumentPath!.trim().isEmpty) {
+      setState(() {
+        _message = "Please upload proof of vehicle insurance.";
       });
       return;
     }
@@ -567,15 +594,12 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
           "phone": _phone.text.trim(),
           "password": _password.text,
           "confirm_password": _confirm.text,
-          "license_state": (_licenseState ?? "").trim(),
-          "license_number": _licenseNumber.text.trim(),
-          "license_expires": _licenseExpires.text.trim(),
           "date_of_birth": _dob.text.trim(),
-          "insurance_provider": _insuranceProvider.text.trim(),
-          "insurance_policy": _insurancePolicy.text.trim(),
         },
         preferences: _prefs.toList(),
         profilePhotoPath: _profilePhotoPath!,
+        licenseDocumentPath: _licenseDocumentPath!,
+        insuranceDocumentPath: _insuranceDocumentPath!,
       );
       if (!mounted) {
         return;
@@ -655,7 +679,7 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
                 children: [
                   Text(
-                    "Create your profile for admin review. Fields marked with your license and insurance must match verification.",
+                    "Create your profile for admin review. Upload your license and insurance so the team can verify your documents.",
                     style: subtle,
                   ),
                   if (_message.isNotEmpty) ...[
@@ -717,70 +741,78 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
                     cursorColor: Colors.white,
                     decoration: _authFieldDecoration("Date of birth (YYYY-MM-DD)"),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
                   Text(
-                    "License state",
+                    "Valid U.S. driver's license",
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 14),
                   ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0x22FFFFFF),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                  const SizedBox(height: 4),
+                  Text(
+                    "Upload a clear JPG or PNG. Admins will review the license details from the image.",
+                    style: subtle,
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _pickLicenseDocument,
+                    icon: const Icon(Icons.badge_outlined),
+                    label: Text(_licenseDocumentPath == null ? "Choose license image" : "Change license image"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.45)),
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        isExpanded: true,
-                        hint: Text("Select state", style: TextStyle(color: Colors.white.withValues(alpha: 0.45))),
-                        value: _licenseState,
-                        dropdownColor: const Color(0xFF152A3D),
-                        iconEnabledColor: Colors.white70,
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
-                        items: _usStates
-                            .map(
-                              (s) => DropdownMenuItem<String>(value: s, child: Text(s)),
-                            )
-                            .toList(),
-                        onChanged: _busy
-                            ? null
-                            : (value) {
-                                setState(() {
-                                  _licenseState = value;
-                                });
-                              },
+                  ),
+                  if (_licenseDocumentPath != null) ...[
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        height: 120,
+                        width: double.infinity,
+                        child: Image.file(
+                          File(_licenseDocumentPath!),
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
+                  ],
+                  const SizedBox(height: 16),
+                  Text(
+                    "Proof of vehicle insurance",
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 14),
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _licenseNumber,
-                    style: const TextStyle(color: Colors.white),
-                    cursorColor: Colors.white,
-                    decoration: _authFieldDecoration("License number"),
+                  const SizedBox(height: 4),
+                  Text(
+                    "Required if you plan to drive your own car. Admins will review the policy details from the image.",
+                    style: subtle,
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _licenseExpires,
-                    style: const TextStyle(color: Colors.white),
-                    cursorColor: Colors.white,
-                    decoration: _authFieldDecoration("License expires (YYYY-MM-DD)"),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _pickInsuranceDocument,
+                    icon: const Icon(Icons.description_outlined),
+                    label: Text(_insuranceDocumentPath == null ? "Choose insurance image" : "Change insurance image"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.45)),
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _insuranceProvider,
-                    style: const TextStyle(color: Colors.white),
-                    cursorColor: Colors.white,
-                    decoration: _authFieldDecoration("Insurance provider"),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _insurancePolicy,
-                    style: const TextStyle(color: Colors.white),
-                    cursorColor: Colors.white,
-                    decoration: _authFieldDecoration("Insurance policy"),
-                  ),
+                  if (_insuranceDocumentPath != null) ...[
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        height: 120,
+                        width: double.infinity,
+                        child: Image.file(
+                          File(_insuranceDocumentPath!),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Text(
                     "Profile photo",
@@ -3592,6 +3624,7 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
   final ImagePicker _picker = ImagePicker();
   late Map<String, dynamic> _user;
   bool _uploadingPhoto = false;
+  bool _uploadingDocuments = false;
   String _photoNotice = "";
   bool _photoNoticeIsError = false;
   int _photoVersion = DateTime.now().millisecondsSinceEpoch;
@@ -3793,6 +3826,82 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
     }
   }
 
+  Future<void> _changeVerificationDocument({required bool license}) async {
+    final accountId = _extractAccountId(_user) ?? _extractAccountId(widget.user);
+    if (accountId == null) {
+      setState(() {
+        _settingsMessage = "Cannot update document because account_id is missing.";
+        _settingsMessageIsError = true;
+      });
+      return;
+    }
+
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 2400,
+      maxHeight: 2400,
+      imageQuality: 92,
+    );
+    if (picked == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _settingsMessage = "No document selected.";
+        _settingsMessageIsError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      _uploadingDocuments = true;
+      _settingsMessage = "";
+      _settingsMessageIsError = false;
+    });
+
+    try {
+      final response = await _api.uploadDriverVerificationDocuments(
+        accountId: accountId,
+        licenseDocumentPath: license ? picked.path : null,
+        insuranceDocumentPath: license ? null : picked.path,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (response["success"] == true) {
+        final updatedUser = response["user"];
+        if (updatedUser is Map) {
+          _user = Map<String, dynamic>.from(updatedUser);
+        }
+        _user["status"] = "under_review";
+        _photoVersion = DateTime.now().millisecondsSinceEpoch;
+        await widget.onUserUpdated(Map<String, dynamic>.from(_user));
+        setState(() {
+          _settingsMessage = (response["message"] ?? "Verification document updated.").toString();
+          _settingsMessageIsError = false;
+        });
+      } else {
+        setState(() {
+          _settingsMessage = (response["error"] ?? "Could not update verification document.").toString();
+          _settingsMessageIsError = true;
+        });
+      }
+    } catch (exc) {
+      if (mounted) {
+        setState(() {
+          _settingsMessage = "Upload failed: $exc";
+          _settingsMessageIsError = true;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploadingDocuments = false;
+        });
+      }
+    }
+  }
+
   Future<void> _saveProfile() async {
     final accountId = _extractAccountId(_user) ?? _extractAccountId(widget.user);
     if (accountId == null) {
@@ -3943,6 +4052,8 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
     final statusTitle = status.replaceAll("_", " ");
     final accountId = _extractAccountId(_user) ?? _extractAccountId(widget.user);
     final photoUrl = accountId == null ? null : "${_api.realtimeBaseUrl}/api/driver/photo/$accountId?v=$_photoVersion";
+    final licenseDocumentUrl = accountId == null ? null : "${_api.realtimeBaseUrl}/api/driver/document/$accountId/license?v=$_photoVersion";
+    final insuranceDocumentUrl = accountId == null ? null : "${_api.realtimeBaseUrl}/api/driver/document/$accountId/insurance?v=$_photoVersion";
 
     return ColoredBox(
       color: _kAuthDeepBlue,
@@ -4148,12 +4259,54 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
           _SectionCard(
             title: "Driver Verification",
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (licenseDocumentUrl != null) ...[
+                  _DocumentImagePreview(label: "Current Driver's License", url: licenseDocumentUrl),
+                  const SizedBox(height: 10),
+                ],
+                if (insuranceDocumentUrl != null) ...[
+                  _DocumentImagePreview(label: "Current Proof of Insurance", url: insuranceDocumentUrl),
+                  const SizedBox(height: 12),
+                ],
                 _ProfileFieldRow(label: "License State", value: licenseState),
                 _ProfileFieldRow(label: "License Number", value: licenseNumber),
                 _ProfileFieldRow(label: "License Expires", value: licenseExpires),
                 _ProfileFieldRow(label: "Insurance Provider", value: insuranceProvider),
                 _ProfileFieldRow(label: "Insurance Policy", value: insurancePolicy),
+                const SizedBox(height: 12),
+                Text(
+                  "Reupload a document only if your license or insurance changed. Your account will be placed under review again.",
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _uploadingDocuments ? null : () => _changeVerificationDocument(license: true),
+                    icon: const Icon(Icons.badge_outlined),
+                    label: Text(_uploadingDocuments ? "Uploading..." : "Reupload Driver's License"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _uploadingDocuments ? null : () => _changeVerificationDocument(license: false),
+                    icon: const Icon(Icons.description_outlined),
+                    label: Text(_uploadingDocuments ? "Uploading..." : "Reupload Proof of Insurance"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -4273,6 +4426,67 @@ class _ProfileFieldRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _DocumentImagePreview extends StatelessWidget {
+  const _DocumentImagePreview({required this.label, required this.url});
+
+  final String label;
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.white.withValues(alpha: 0.55),
+          ),
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: AspectRatio(
+            aspectRatio: 16 / 10,
+            child: Image.network(
+              url,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.medium,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) {
+                  return child;
+                }
+                return Container(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF7EB3FF)),
+                    ),
+                  ),
+                );
+              },
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  alignment: Alignment.center,
+                  child: Text(
+                    "No image on file",
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

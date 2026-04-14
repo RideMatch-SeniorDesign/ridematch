@@ -195,11 +195,25 @@ button {
   flex-direction: column;
   gap: 8px;
 }
+.document-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .profile-photo-image {
   width: min(220px, 100%);
   aspect-ratio: 1 / 1;
   object-fit: cover;
   border-radius: 12px;
+  border: 1px solid #c8daf7;
+  background: #eef4ff;
+  box-shadow: 0 8px 18px rgba(16, 44, 94, 0.08);
+}
+.document-preview-image {
+  width: min(360px, 100%);
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 8px;
   border: 1px solid #c8daf7;
   background: #eef4ff;
   box-shadow: 0 8px 18px rgba(16, 44, 94, 0.08);

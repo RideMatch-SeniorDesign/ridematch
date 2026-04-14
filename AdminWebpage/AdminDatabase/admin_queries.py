@@ -272,6 +272,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     info_mode = _driver_info_mode()
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
+    has_profile_photo = _table_exists("driver_profile_photo")
+    has_document = _table_exists("driver_document")
     has_date_submitted = _column_exists("driver", "DateSubmitted")
     has_date_approved = _column_exists("driver", "DateApproved")
 
@@ -355,10 +357,59 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     review_count_expr = "COUNT(DISTINCT dr.ReviewID)" if has_review else "0"
     date_submitted_expr = "d.DateSubmitted" if has_date_submitted else "NULL"
     date_approved_expr = "d.DateApproved" if has_date_approved else "NULL"
+    photo_select = """
+            dpp.StoragePath AS profile_photo_path,
+            dpp.MimeType AS profile_photo_mime_type,
+            dpp.FileSizeBytes AS profile_photo_file_size_bytes,
+            dpp.ModerationStatus AS photo_moderation_status,
+            dpp.ModerationScore AS photo_moderation_score,
+            dpp.ModerationLabels AS photo_moderation_labels,
+            dpp.ReviewedAt AS photo_reviewed_at,
+    """ if has_profile_photo else """
+            NULL AS profile_photo_path,
+            NULL AS profile_photo_mime_type,
+            NULL AS profile_photo_file_size_bytes,
+            NULL AS photo_moderation_status,
+            NULL AS photo_moderation_score,
+            NULL AS photo_moderation_labels,
+            NULL AS photo_reviewed_at,
+    """
+    document_select = """
+            license_doc.StoragePath AS license_document_path,
+            license_doc.MimeType AS license_document_mime_type,
+            license_doc.FileSizeBytes AS license_document_file_size_bytes,
+            license_doc.RecognitionStatus AS license_document_recognition_status,
+            license_doc.RecognitionLabels AS license_document_recognition_labels,
+            license_doc.UploadedAt AS license_document_uploaded_at,
+            insurance_doc.StoragePath AS insurance_document_path,
+            insurance_doc.MimeType AS insurance_document_mime_type,
+            insurance_doc.FileSizeBytes AS insurance_document_file_size_bytes,
+            insurance_doc.RecognitionStatus AS insurance_document_recognition_status,
+            insurance_doc.RecognitionLabels AS insurance_document_recognition_labels,
+            insurance_doc.UploadedAt AS insurance_document_uploaded_at,
+    """ if has_document else """
+            NULL AS license_document_path,
+            NULL AS license_document_mime_type,
+            NULL AS license_document_file_size_bytes,
+            NULL AS license_document_recognition_status,
+            NULL AS license_document_recognition_labels,
+            NULL AS license_document_uploaded_at,
+            NULL AS insurance_document_path,
+            NULL AS insurance_document_mime_type,
+            NULL AS insurance_document_file_size_bytes,
+            NULL AS insurance_document_recognition_status,
+            NULL AS insurance_document_recognition_labels,
+            NULL AS insurance_document_uploaded_at,
+    """
 
     joins: list[str] = []
     if info_join:
         joins.append(info_join)
+    if has_profile_photo:
+        joins.append("LEFT JOIN driver_profile_photo dpp ON dpp.DriverID = d.AccountID")
+    if has_document:
+        joins.append("LEFT JOIN driver_document license_doc ON license_doc.DriverID = d.AccountID AND license_doc.DocumentType = 'license'")
+        joins.append("LEFT JOIN driver_document insurance_doc ON insurance_doc.DriverID = d.AccountID AND insurance_doc.DocumentType = 'insurance'")
     if has_trip:
         joins.append("LEFT JOIN trip t ON t.DriverID = d.AccountID")
     if has_review:
@@ -377,6 +428,31 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
         group_by_parts.append("d.DateSubmitted")
     if has_date_approved:
         group_by_parts.append("d.DateApproved")
+    if has_profile_photo:
+        group_by_parts.extend([
+            "dpp.StoragePath",
+            "dpp.MimeType",
+            "dpp.FileSizeBytes",
+            "dpp.ModerationStatus",
+            "dpp.ModerationScore",
+            "dpp.ModerationLabels",
+            "dpp.ReviewedAt",
+        ])
+    if has_document:
+        group_by_parts.extend([
+            "license_doc.StoragePath",
+            "license_doc.MimeType",
+            "license_doc.FileSizeBytes",
+            "license_doc.RecognitionStatus",
+            "license_doc.RecognitionLabels",
+            "license_doc.UploadedAt",
+            "insurance_doc.StoragePath",
+            "insurance_doc.MimeType",
+            "insurance_doc.FileSizeBytes",
+            "insurance_doc.RecognitionStatus",
+            "insurance_doc.RecognitionLabels",
+            "insurance_doc.UploadedAt",
+        ])
     group_by_parts.extend(info_group_by)
 
     rows = _fetch_all(
@@ -387,6 +463,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             d.Preferences AS preferences,
             {date_submitted_expr} AS date_submitted,
             {date_approved_expr} AS date_approved,
+            {photo_select}
+            {document_select}
             {info_select}
             {rating_expr} AS avg_rating,
             {rides_expr} AS total_rides,

@@ -300,6 +300,27 @@ def _ensure_driver_live_location_table() -> None:
     )
 
 
+def _ensure_driver_document_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS driver_document (
+            DriverID INT NOT NULL,
+            DocumentType VARCHAR(32) NOT NULL,
+            StoragePath VARCHAR(500) NOT NULL,
+            MimeType VARCHAR(100) DEFAULT NULL,
+            FileSizeBytes INT DEFAULT NULL,
+            RecognitionStatus VARCHAR(32) DEFAULT 'pending',
+            RecognitionLabels VARCHAR(500) DEFAULT NULL,
+            UploadedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (DriverID, DocumentType),
+            CONSTRAINT fk_driver_document_driver
+                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
 def _ensure_rider_match_swipe_table() -> None:
     _execute(
         """
@@ -473,6 +494,7 @@ def _driver_summary_rows() -> list[dict[str, Any]]:
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
     has_profile_photo = _table_exists("driver_profile_photo")
+    has_document = _table_exists("driver_document")
     has_date_submitted = _column_exists("driver", "DateSubmitted")
     has_date_approved = _column_exists("driver", "DateApproved")
 
@@ -709,12 +731,42 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             NULL AS photo_moderation_labels,
             NULL AS photo_reviewed_at,
     """
+    document_select = """
+            license_doc.StoragePath AS license_document_path,
+            license_doc.MimeType AS license_document_mime_type,
+            license_doc.FileSizeBytes AS license_document_file_size_bytes,
+            license_doc.RecognitionStatus AS license_document_recognition_status,
+            license_doc.RecognitionLabels AS license_document_recognition_labels,
+            license_doc.UploadedAt AS license_document_uploaded_at,
+            insurance_doc.StoragePath AS insurance_document_path,
+            insurance_doc.MimeType AS insurance_document_mime_type,
+            insurance_doc.FileSizeBytes AS insurance_document_file_size_bytes,
+            insurance_doc.RecognitionStatus AS insurance_document_recognition_status,
+            insurance_doc.RecognitionLabels AS insurance_document_recognition_labels,
+            insurance_doc.UploadedAt AS insurance_document_uploaded_at,
+    """ if has_document else """
+            NULL AS license_document_path,
+            NULL AS license_document_mime_type,
+            NULL AS license_document_file_size_bytes,
+            NULL AS license_document_recognition_status,
+            NULL AS license_document_recognition_labels,
+            NULL AS license_document_uploaded_at,
+            NULL AS insurance_document_path,
+            NULL AS insurance_document_mime_type,
+            NULL AS insurance_document_file_size_bytes,
+            NULL AS insurance_document_recognition_status,
+            NULL AS insurance_document_recognition_labels,
+            NULL AS insurance_document_uploaded_at,
+    """
 
     joins: list[str] = []
     if info_join:
         joins.append(info_join)
     if has_profile_photo:
         joins.append("LEFT JOIN driver_profile_photo dpp ON dpp.DriverID = d.AccountID")
+    if has_document:
+        joins.append("LEFT JOIN driver_document license_doc ON license_doc.DriverID = d.AccountID AND license_doc.DocumentType = 'license'")
+        joins.append("LEFT JOIN driver_document insurance_doc ON insurance_doc.DriverID = d.AccountID AND insurance_doc.DocumentType = 'insurance'")
     if has_trip:
         joins.append("LEFT JOIN trip t ON t.DriverID = d.AccountID")
     if has_review:
@@ -743,6 +795,21 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             "dpp.ModerationLabels",
             "dpp.ReviewedAt",
         ])
+    if has_document:
+        group_by_parts.extend([
+            "license_doc.StoragePath",
+            "license_doc.MimeType",
+            "license_doc.FileSizeBytes",
+            "license_doc.RecognitionStatus",
+            "license_doc.RecognitionLabels",
+            "license_doc.UploadedAt",
+            "insurance_doc.StoragePath",
+            "insurance_doc.MimeType",
+            "insurance_doc.FileSizeBytes",
+            "insurance_doc.RecognitionStatus",
+            "insurance_doc.RecognitionLabels",
+            "insurance_doc.UploadedAt",
+        ])
     group_by_parts.extend(info_group_by)
 
     rows = _fetch_all(
@@ -754,6 +821,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             {date_submitted_expr} AS date_submitted,
             {date_approved_expr} AS date_approved,
             {photo_select}
+            {document_select}
             {info_select}
             {rating_expr} AS avg_rating,
             {rides_expr} AS total_rides,
@@ -939,6 +1007,7 @@ def create_driver_signup(
     insurance_provider: str,
     insurance_policy: str,
     profile_photo: dict[str, Any] | None = None,
+    documents: list[dict[str, Any]] | None = None,
 ) -> int:
     account_id = _insert_returning_id(
         """
@@ -1030,6 +1099,39 @@ def create_driver_signup(
                 profile_photo.get("moderation_labels"),
             ),
         )
+
+    if documents:
+        _ensure_driver_document_table()
+        for document in documents:
+            document_type = str(document.get("document_type") or "").strip().lower()
+            if document_type not in {"license", "insurance"}:
+                continue
+            _execute(
+                """
+                INSERT INTO driver_document
+                (
+                    DriverID, DocumentType, StoragePath, MimeType, FileSizeBytes,
+                    RecognitionStatus, RecognitionLabels
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    StoragePath = VALUES(StoragePath),
+                    MimeType = VALUES(MimeType),
+                    FileSizeBytes = VALUES(FileSizeBytes),
+                    RecognitionStatus = VALUES(RecognitionStatus),
+                    RecognitionLabels = VALUES(RecognitionLabels),
+                    UploadedAt = CURRENT_TIMESTAMP
+                """,
+                (
+                    account_id,
+                    document_type,
+                    document.get("storage_path"),
+                    document.get("mime_type"),
+                    document.get("file_size_bytes"),
+                    document.get("recognition_status") or "pending",
+                    document.get("recognition_labels"),
+                ),
+            )
 
     return account_id
 
@@ -2158,6 +2260,71 @@ def update_driver_profile_photo(account_id: int, profile_photo: dict[str, Any]) 
         ("under_review", account_id),
     )
     return True
+
+
+def update_driver_documents(account_id: int, documents: list[dict[str, Any]]) -> bool:
+    if not documents:
+        return False
+
+    _ensure_driver_document_table()
+    for document in documents:
+        document_type = str(document.get("document_type") or "").strip().lower()
+        if document_type not in {"license", "insurance"}:
+            continue
+        _execute(
+            """
+            INSERT INTO driver_document
+            (
+                DriverID, DocumentType, StoragePath, MimeType, FileSizeBytes,
+                RecognitionStatus, RecognitionLabels
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                StoragePath = VALUES(StoragePath),
+                MimeType = VALUES(MimeType),
+                FileSizeBytes = VALUES(FileSizeBytes),
+                RecognitionStatus = VALUES(RecognitionStatus),
+                RecognitionLabels = VALUES(RecognitionLabels),
+                UploadedAt = CURRENT_TIMESTAMP
+            """,
+            (
+                account_id,
+                document_type,
+                document.get("storage_path"),
+                document.get("mime_type"),
+                document.get("file_size_bytes"),
+                document.get("recognition_status") or "pending",
+                document.get("recognition_labels"),
+            ),
+        )
+
+    _execute(
+        """
+        UPDATE driver
+        SET Status = %s
+        WHERE AccountID = %s
+        """,
+        ("under_review", account_id),
+    )
+    return True
+
+
+def fetch_driver_document_paths(account_id: int) -> dict[str, str]:
+    if not _table_exists("driver_document"):
+        return {}
+    rows = _fetch_all(
+        """
+        SELECT DocumentType AS document_type, StoragePath AS storage_path
+        FROM driver_document
+        WHERE DriverID = %s
+        """,
+        (account_id,),
+    )
+    return {
+        str(row.get("document_type") or "").strip().lower(): str(row.get("storage_path") or "").strip()
+        for row in rows
+        if str(row.get("document_type") or "").strip() and str(row.get("storage_path") or "").strip()
+    }
 
 
 def fetch_driver_profile_photo_path(account_id: int) -> str | None:

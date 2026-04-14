@@ -119,6 +119,20 @@ CREATE TABLE `driver_profile_photo` (
     CONSTRAINT `FK_ReviewedBy_driver_profile_photo` FOREIGN KEY (`ReviewedBy`) REFERENCES `admin` (`AccountID`)
 );
 
+-- DRIVER_DOCUMENT TABLE
+CREATE TABLE `driver_document` (
+    `DriverID` int NOT NULL,
+    `DocumentType` varchar(32) NOT NULL,
+    `StoragePath` varchar(500) NOT NULL,
+    `MimeType` varchar(100) DEFAULT NULL,
+    `FileSizeBytes` int DEFAULT NULL,
+    `RecognitionStatus` varchar(32) DEFAULT 'pending',
+    `RecognitionLabels` varchar(500) DEFAULT NULL,
+    `UploadedAt` timestamp(6) DEFAULT current_timestamp(6),
+    PRIMARY KEY (`DriverID`, `DocumentType`),
+    CONSTRAINT `FK_DriverID_driver_document` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)
+);
+
 -- CAR TABLE
 CREATE TABLE `car` (
     `DriverID` int NOT NULL,

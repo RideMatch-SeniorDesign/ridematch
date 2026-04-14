@@ -1126,6 +1126,39 @@ def driver_photo(driver_id: int):
     return send_file(full_path, mimetype=mimetype, conditional=True, max_age=0)
 
 
+@app.route("/drivers/document/<int:driver_id>/<document_type>")
+def driver_document(driver_id: int, document_type: str):
+    if not _is_logged_in():
+        return redirect(url_for("login"))
+
+    normalized_type = str(document_type or "").strip().lower()
+    if normalized_type not in {"license", "insurance"}:
+        abort(404)
+
+    try:
+        driver = _get_admin_repository().fetch_driver_detail(driver_id)
+    except Exception as exc:
+        app.logger.warning("Could not load driver document details: %s", exc)
+        driver = None
+
+    if not driver:
+        abort(404)
+
+    stored_path = str(driver.get(f"{normalized_type}_document_path") or "").strip()
+    if not stored_path:
+        abort(404)
+
+    document_root = (PROJECT_ROOT / "DriverWebpage" / "uploads" / "driver_documents").resolve()
+    full_path = (PROJECT_ROOT / "DriverWebpage" / stored_path).resolve()
+    if not full_path.is_relative_to(document_root):
+        abort(403)
+    if not full_path.is_file():
+        abort(404)
+
+    mimetype = str(driver.get(f"{normalized_type}_document_mime_type") or "").strip() or None
+    return send_file(full_path, mimetype=mimetype, conditional=True, max_age=0)
+
+
 @app.route("/riders")
 def riders():
     if not _is_logged_in():
