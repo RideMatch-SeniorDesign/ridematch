@@ -274,6 +274,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     has_review = _table_exists("driver_review")
     has_profile_photo = _table_exists("driver_profile_photo")
     has_document = _table_exists("driver_document")
+    has_document_details = has_document and _column_exists("driver_document", "ExtractedName")
+    has_car = _table_exists("car")
     has_date_submitted = _column_exists("driver", "DateSubmitted")
     has_date_approved = _column_exists("driver", "DateApproved")
 
@@ -289,6 +291,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             di.LicenseState AS license_state,
             di.LicenseNumber AS license_number,
             di.LicenseExpires AS license_expires,
+            di.LicenseExpires AS license_expiration,
             di.InsuranceProvider AS insurance_provider,
             di.InsurancePolicy AS insurance_policy,
             di.InformationNotes AS driver_notes,
@@ -319,6 +322,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             dv.LicenseState AS license_state,
             dv.LicenseNumber AS license_number,
             dv.LicenseExpires AS license_expires,
+            dv.LicenseExpires AS license_expiration,
             dv.InsuranceProvider AS insurance_provider,
             dv.InsurancePolicy AS insurance_policy,
             dv.VerificationNotes AS driver_notes,
@@ -345,6 +349,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             NULL AS license_state,
             NULL AS license_number,
             NULL AS license_expires,
+            NULL AS license_expiration,
             NULL AS insurance_provider,
             NULL AS insurance_policy,
             NULL AS driver_notes,
@@ -387,6 +392,11 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             insurance_doc.RecognitionStatus AS insurance_document_recognition_status,
             insurance_doc.RecognitionLabels AS insurance_document_recognition_labels,
             insurance_doc.UploadedAt AS insurance_document_uploaded_at,
+            CASE
+                WHEN insurance_doc.RecognitionStatus = 'approved' THEN 'Verified'
+                WHEN insurance_doc.StoragePath IS NOT NULL THEN COALESCE(insurance_doc.RecognitionStatus, 'Pending')
+                ELSE 'Pending'
+            END AS insurance_verified,
     """ if has_document else """
             NULL AS license_document_path,
             NULL AS license_document_mime_type,
@@ -400,6 +410,35 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             NULL AS insurance_document_recognition_status,
             NULL AS insurance_document_recognition_labels,
             NULL AS insurance_document_uploaded_at,
+            'Pending' AS insurance_verified,
+    """
+    document_detail_select = """
+            license_doc.ExtractedName AS license_document_extracted_name,
+            license_doc.IssuedDate AS license_document_issued_date,
+            license_doc.ExpirationDate AS license_document_expiration_date,
+            insurance_doc.EffectiveDate AS insurance_document_effective_date,
+            insurance_doc.ExpirationDate AS insurance_document_expiration_date,
+            insurance_doc.Vin AS insurance_document_vin,
+            insurance_doc.VehicleColor AS insurance_document_vehicle_color,
+    """ if has_document_details else """
+            NULL AS license_document_extracted_name,
+            NULL AS license_document_issued_date,
+            NULL AS license_document_expiration_date,
+            NULL AS insurance_document_effective_date,
+            NULL AS insurance_document_expiration_date,
+            NULL AS insurance_document_vin,
+            NULL AS insurance_document_vehicle_color,
+    """
+    car_select = """
+            c.Make AS vehicle_make,
+            c.Model AS vehicle_model,
+            c.Color AS vehicle_color,
+            c.PlateNum AS license_plate,
+    """ if has_car else """
+            NULL AS vehicle_make,
+            NULL AS vehicle_model,
+            NULL AS vehicle_color,
+            NULL AS license_plate,
     """
 
     joins: list[str] = []
@@ -410,6 +449,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     if has_document:
         joins.append("LEFT JOIN driver_document license_doc ON license_doc.DriverID = d.AccountID AND license_doc.DocumentType = 'license'")
         joins.append("LEFT JOIN driver_document insurance_doc ON insurance_doc.DriverID = d.AccountID AND insurance_doc.DocumentType = 'insurance'")
+    if has_car:
+        joins.append("LEFT JOIN car c ON c.DriverID = d.AccountID")
     if has_trip:
         joins.append("LEFT JOIN trip t ON t.DriverID = d.AccountID")
     if has_review:
@@ -453,6 +494,18 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             "insurance_doc.RecognitionLabels",
             "insurance_doc.UploadedAt",
         ])
+    if has_document_details:
+        group_by_parts.extend([
+            "license_doc.ExtractedName",
+            "license_doc.IssuedDate",
+            "license_doc.ExpirationDate",
+            "insurance_doc.EffectiveDate",
+            "insurance_doc.ExpirationDate",
+            "insurance_doc.Vin",
+            "insurance_doc.VehicleColor",
+        ])
+    if has_car:
+        group_by_parts.extend(["c.Make", "c.Model", "c.Color", "c.PlateNum"])
     group_by_parts.extend(info_group_by)
 
     rows = _fetch_all(
@@ -465,6 +518,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             {date_approved_expr} AS date_approved,
             {photo_select}
             {document_select}
+            {document_detail_select}
+            {car_select}
             {info_select}
             {rating_expr} AS avg_rating,
             {rides_expr} AS total_rides,

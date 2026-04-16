@@ -128,6 +128,12 @@ CREATE TABLE `driver_document` (
     `FileSizeBytes` int DEFAULT NULL,
     `RecognitionStatus` varchar(32) DEFAULT 'pending',
     `RecognitionLabels` varchar(500) DEFAULT NULL,
+    `ExtractedName` varchar(150) DEFAULT NULL,
+    `IssuedDate` date DEFAULT NULL,
+    `EffectiveDate` date DEFAULT NULL,
+    `ExpirationDate` date DEFAULT NULL,
+    `Vin` varchar(50) DEFAULT NULL,
+    `VehicleColor` varchar(50) DEFAULT NULL,
     `UploadedAt` timestamp(6) DEFAULT current_timestamp(6),
     PRIMARY KEY (`DriverID`, `DocumentType`),
     CONSTRAINT `FK_DriverID_driver_document` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)

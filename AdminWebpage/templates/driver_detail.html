@@ -95,12 +95,28 @@
         <span>{{ driver.license_state or "N/A" }}</span>
       </div>
       <div class="row">
+        <span><strong>Name on License:</strong></span>
+        <span>{{ driver.license_document_extracted_name or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Date of Birth:</strong></span>
+        <span>{{ driver.date_of_birth or "N/A" }}</span>
+      </div>
+      <div class="row">
         <span><strong>License Number:</strong></span>
         <span>{{ driver.license_number or "N/A" }}</span>
       </div>
       <div class="row">
+        <span><strong>License Issued:</strong></span>
+        <span>{{ driver.license_document_issued_date or "N/A" }}</span>
+      </div>
+      <div class="row">
         <span><strong>License Expiration:</strong></span>
-        <span>{{ driver.license_expiration or "N/A" }}</span>
+        <span>{{ driver.license_document_expiration_date or driver.license_expiration or driver.license_expires or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>License Uploaded:</strong></span>
+        <span>{{ driver.license_document_uploaded_at or "N/A" }}</span>
       </div>
       <div class="row">
         <span><strong>Recognition Status:</strong></span>
@@ -140,8 +156,16 @@
         </span>
       </div>
       <div class="row">
+        <span><strong>Vehicle Color:</strong></span>
+        <span>{{ driver.vehicle_color or driver.insurance_document_vehicle_color or "N/A" }}</span>
+      </div>
+      <div class="row">
         <span><strong>License Plate:</strong></span>
         <span>{{ driver.license_plate or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>VIN:</strong></span>
+        <span>{{ driver.insurance_document_vin or "N/A" }}</span>
       </div>
       <div class="row">
         <span><strong>Insurance Verified:</strong></span>
@@ -154,6 +178,18 @@
       <div class="row">
         <span><strong>Insurance Policy:</strong></span>
         <span>{{ driver.insurance_policy or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Insurance Effective:</strong></span>
+        <span>{{ driver.insurance_document_effective_date or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Insurance Expiration:</strong></span>
+        <span>{{ driver.insurance_document_expiration_date or "N/A" }}</span>
+      </div>
+      <div class="row">
+        <span><strong>Insurance Uploaded:</strong></span>
+        <span>{{ driver.insurance_document_uploaded_at or "N/A" }}</span>
       </div>
       <div class="row">
         <span><strong>Recognition Status:</strong></span>

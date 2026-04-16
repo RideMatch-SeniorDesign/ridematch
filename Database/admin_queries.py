@@ -319,6 +319,28 @@ def _ensure_driver_document_table() -> None:
         )
         """
     )
+    extra_columns = {
+        "ExtractedName": "VARCHAR(150) DEFAULT NULL",
+        "IssuedDate": "DATE DEFAULT NULL",
+        "EffectiveDate": "DATE DEFAULT NULL",
+        "ExpirationDate": "DATE DEFAULT NULL",
+        "Vin": "VARCHAR(50) DEFAULT NULL",
+        "VehicleColor": "VARCHAR(50) DEFAULT NULL",
+    }
+    for column_name, column_type in extra_columns.items():
+        if not _column_exists("driver_document", column_name):
+            _execute(f"ALTER TABLE driver_document ADD COLUMN {column_name} {column_type}")
+
+
+def _document_detail_value(document: dict[str, Any], *keys: str) -> Any:
+    details = document.get("extracted_details")
+    if not isinstance(details, dict):
+        return None
+    for key in keys:
+        value = details.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
 
 
 def _ensure_rider_match_swipe_table() -> None:
@@ -631,6 +653,9 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     has_trip = _table_exists("trip")
     has_review = _table_exists("driver_review")
     has_profile_photo = _table_exists("driver_profile_photo")
+    has_document = _table_exists("driver_document")
+    has_document_details = has_document and _column_exists("driver_document", "ExtractedName")
+    has_car = _table_exists("car")
     has_date_submitted = _column_exists("driver", "DateSubmitted")
     has_date_approved = _column_exists("driver", "DateApproved")
 
@@ -646,6 +671,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             di.LicenseState AS license_state,
             di.LicenseNumber AS license_number,
             di.LicenseExpires AS license_expires,
+            di.LicenseExpires AS license_expiration,
             di.InsuranceProvider AS insurance_provider,
             di.InsurancePolicy AS insurance_policy,
             di.InformationNotes AS driver_notes,
@@ -676,6 +702,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             dv.LicenseState AS license_state,
             dv.LicenseNumber AS license_number,
             dv.LicenseExpires AS license_expires,
+            dv.LicenseExpires AS license_expiration,
             dv.InsuranceProvider AS insurance_provider,
             dv.InsurancePolicy AS insurance_policy,
             dv.VerificationNotes AS driver_notes,
@@ -702,6 +729,7 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             NULL AS license_state,
             NULL AS license_number,
             NULL AS license_expires,
+            NULL AS license_expiration,
             NULL AS insurance_provider,
             NULL AS insurance_policy,
             NULL AS driver_notes,
@@ -744,6 +772,11 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             insurance_doc.RecognitionStatus AS insurance_document_recognition_status,
             insurance_doc.RecognitionLabels AS insurance_document_recognition_labels,
             insurance_doc.UploadedAt AS insurance_document_uploaded_at,
+            CASE
+                WHEN insurance_doc.RecognitionStatus = 'approved' THEN 'Verified'
+                WHEN insurance_doc.StoragePath IS NOT NULL THEN COALESCE(insurance_doc.RecognitionStatus, 'Pending')
+                ELSE 'Pending'
+            END AS insurance_verified,
     """ if has_document else """
             NULL AS license_document_path,
             NULL AS license_document_mime_type,
@@ -757,6 +790,35 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             NULL AS insurance_document_recognition_status,
             NULL AS insurance_document_recognition_labels,
             NULL AS insurance_document_uploaded_at,
+            'Pending' AS insurance_verified,
+    """
+    document_detail_select = """
+            license_doc.ExtractedName AS license_document_extracted_name,
+            license_doc.IssuedDate AS license_document_issued_date,
+            license_doc.ExpirationDate AS license_document_expiration_date,
+            insurance_doc.EffectiveDate AS insurance_document_effective_date,
+            insurance_doc.ExpirationDate AS insurance_document_expiration_date,
+            insurance_doc.Vin AS insurance_document_vin,
+            insurance_doc.VehicleColor AS insurance_document_vehicle_color,
+    """ if has_document_details else """
+            NULL AS license_document_extracted_name,
+            NULL AS license_document_issued_date,
+            NULL AS license_document_expiration_date,
+            NULL AS insurance_document_effective_date,
+            NULL AS insurance_document_expiration_date,
+            NULL AS insurance_document_vin,
+            NULL AS insurance_document_vehicle_color,
+    """
+    car_select = """
+            c.Make AS vehicle_make,
+            c.Model AS vehicle_model,
+            c.Color AS vehicle_color,
+            c.PlateNum AS license_plate,
+    """ if has_car else """
+            NULL AS vehicle_make,
+            NULL AS vehicle_model,
+            NULL AS vehicle_color,
+            NULL AS license_plate,
     """
 
     joins: list[str] = []
@@ -767,6 +829,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
     if has_document:
         joins.append("LEFT JOIN driver_document license_doc ON license_doc.DriverID = d.AccountID AND license_doc.DocumentType = 'license'")
         joins.append("LEFT JOIN driver_document insurance_doc ON insurance_doc.DriverID = d.AccountID AND insurance_doc.DocumentType = 'insurance'")
+    if has_car:
+        joins.append("LEFT JOIN car c ON c.DriverID = d.AccountID")
     if has_trip:
         joins.append("LEFT JOIN trip t ON t.DriverID = d.AccountID")
     if has_review:
@@ -810,6 +874,18 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             "insurance_doc.RecognitionLabels",
             "insurance_doc.UploadedAt",
         ])
+    if has_document_details:
+        group_by_parts.extend([
+            "license_doc.ExtractedName",
+            "license_doc.IssuedDate",
+            "license_doc.ExpirationDate",
+            "insurance_doc.EffectiveDate",
+            "insurance_doc.ExpirationDate",
+            "insurance_doc.Vin",
+            "insurance_doc.VehicleColor",
+        ])
+    if has_car:
+        group_by_parts.extend(["c.Make", "c.Model", "c.Color", "c.PlateNum"])
     group_by_parts.extend(info_group_by)
 
     rows = _fetch_all(
@@ -822,6 +898,8 @@ def driver_detail(driver_id: int) -> dict[str, Any] | None:
             {date_approved_expr} AS date_approved,
             {photo_select}
             {document_select}
+            {document_detail_select}
+            {car_select}
             {info_select}
             {rating_expr} AS avg_rating,
             {rides_expr} AS total_rides,
@@ -1111,15 +1189,22 @@ def create_driver_signup(
                 INSERT INTO driver_document
                 (
                     DriverID, DocumentType, StoragePath, MimeType, FileSizeBytes,
-                    RecognitionStatus, RecognitionLabels
+                    RecognitionStatus, RecognitionLabels, ExtractedName, IssuedDate,
+                    EffectiveDate, ExpirationDate, Vin, VehicleColor
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     StoragePath = VALUES(StoragePath),
                     MimeType = VALUES(MimeType),
                     FileSizeBytes = VALUES(FileSizeBytes),
                     RecognitionStatus = VALUES(RecognitionStatus),
                     RecognitionLabels = VALUES(RecognitionLabels),
+                    ExtractedName = VALUES(ExtractedName),
+                    IssuedDate = VALUES(IssuedDate),
+                    EffectiveDate = VALUES(EffectiveDate),
+                    ExpirationDate = VALUES(ExpirationDate),
+                    Vin = VALUES(Vin),
+                    VehicleColor = VALUES(VehicleColor),
                     UploadedAt = CURRENT_TIMESTAMP
                 """,
                 (
@@ -1130,8 +1215,15 @@ def create_driver_signup(
                     document.get("file_size_bytes"),
                     document.get("recognition_status") or "pending",
                     document.get("recognition_labels"),
+                    _document_detail_value(document, "license_full_name"),
+                    _document_detail_value(document, "license_issued"),
+                    _document_detail_value(document, "insurance_effective"),
+                    _document_detail_value(document, "license_expires", "insurance_expires"),
+                    _document_detail_value(document, "vehicle_vin"),
+                    _document_detail_value(document, "vehicle_color"),
                 ),
             )
+        _update_driver_car_from_documents(account_id, documents)
 
     return account_id
 
@@ -2262,6 +2354,116 @@ def update_driver_profile_photo(account_id: int, profile_photo: dict[str, Any]) 
     return True
 
 
+def _merge_document_extracted_details(documents: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for document in documents:
+        details = document.get("extracted_details")
+        if not isinstance(details, dict):
+            continue
+        for key, value in details.items():
+            if value is not None and str(value).strip():
+                merged[str(key)] = str(value).strip()
+    return merged
+
+
+def _update_driver_verification_from_documents(account_id: int, documents: list[dict[str, Any]]) -> None:
+    details = _merge_document_extracted_details(documents)
+    if not details:
+        return
+
+    info_mode = _driver_info_mode()
+    if info_mode == "driver_information":
+        _execute(
+            """
+            UPDATE driver_information
+            SET DateOfBirth = COALESCE(%s, DateOfBirth),
+                LicenseState = COALESCE(%s, LicenseState),
+                LicenseNumber = COALESCE(%s, LicenseNumber),
+                LicenseExpires = COALESCE(%s, LicenseExpires),
+                InsuranceProvider = COALESCE(%s, InsuranceProvider),
+                InsurancePolicy = COALESCE(%s, InsurancePolicy)
+            WHERE DriverID = %s
+            """,
+            (
+                details.get("date_of_birth") or None,
+                details.get("license_state") or None,
+                details.get("license_number") or None,
+                details.get("license_expires") or None,
+                details.get("insurance_provider") or None,
+                details.get("insurance_policy") or None,
+                account_id,
+            ),
+        )
+    elif info_mode == "driver_verification":
+        _execute(
+            """
+            UPDATE driver_verification
+            SET DateOfBirth = COALESCE(%s, DateOfBirth),
+                LicenseState = COALESCE(%s, LicenseState),
+                LicenseNumber = COALESCE(%s, LicenseNumber),
+                LicenseExpires = COALESCE(%s, LicenseExpires),
+                InsuranceProvider = COALESCE(%s, InsuranceProvider),
+                InsurancePolicy = COALESCE(%s, InsurancePolicy)
+            WHERE DriverID = %s
+            """,
+            (
+                details.get("date_of_birth") or None,
+                details.get("license_state") or None,
+                details.get("license_number") or None,
+                details.get("license_expires") or None,
+                details.get("insurance_provider") or None,
+                details.get("insurance_policy") or None,
+                account_id,
+            ),
+        )
+
+
+def _update_driver_car_from_documents(account_id: int, documents: list[dict[str, Any]]) -> None:
+    if not _table_exists("car"):
+        return
+
+    details = _merge_document_extracted_details(documents)
+    plate = str(details.get("license_plate") or "").strip().upper()
+    make = str(details.get("vehicle_make") or "").strip() or "Unknown"
+    model = str(details.get("vehicle_model") or "").strip() or "Unknown"
+    color = str(details.get("vehicle_color") or "").strip() or "Unknown"
+    if not plate and make == "Unknown" and model == "Unknown" and color == "Unknown":
+        return
+
+    existing = _fetch_all(
+        """
+        SELECT PlateNum AS plate_num
+        FROM car
+        WHERE DriverID = %s
+        ORDER BY PlateNum
+        LIMIT 1
+        """,
+        (account_id,),
+    )
+
+    if existing:
+        current_plate = str(existing[0].get("plate_num") or "").strip()
+        _execute(
+            """
+            UPDATE car
+            SET PlateNum = %s,
+                Make = %s,
+                Model = %s,
+                Color = %s
+            WHERE DriverID = %s AND PlateNum = %s
+            """,
+            (plate or current_plate, make, model, color, account_id, current_plate),
+        )
+    elif plate:
+        _execute(
+            """
+            INSERT INTO car (DriverID, PlateNum, Make, Model, Color)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (account_id, plate, make, model, color),
+        )
+
+
 def update_driver_documents(account_id: int, documents: list[dict[str, Any]]) -> bool:
     if not documents:
         return False
@@ -2276,15 +2478,22 @@ def update_driver_documents(account_id: int, documents: list[dict[str, Any]]) ->
             INSERT INTO driver_document
             (
                 DriverID, DocumentType, StoragePath, MimeType, FileSizeBytes,
-                RecognitionStatus, RecognitionLabels
+                RecognitionStatus, RecognitionLabels, ExtractedName, IssuedDate,
+                EffectiveDate, ExpirationDate, Vin, VehicleColor
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 StoragePath = VALUES(StoragePath),
                 MimeType = VALUES(MimeType),
                 FileSizeBytes = VALUES(FileSizeBytes),
                 RecognitionStatus = VALUES(RecognitionStatus),
                 RecognitionLabels = VALUES(RecognitionLabels),
+                ExtractedName = VALUES(ExtractedName),
+                IssuedDate = VALUES(IssuedDate),
+                EffectiveDate = VALUES(EffectiveDate),
+                ExpirationDate = VALUES(ExpirationDate),
+                Vin = VALUES(Vin),
+                VehicleColor = VALUES(VehicleColor),
                 UploadedAt = CURRENT_TIMESTAMP
             """,
             (
@@ -2295,8 +2504,17 @@ def update_driver_documents(account_id: int, documents: list[dict[str, Any]]) ->
                 document.get("file_size_bytes"),
                 document.get("recognition_status") or "pending",
                 document.get("recognition_labels"),
+                _document_detail_value(document, "license_full_name"),
+                _document_detail_value(document, "license_issued"),
+                _document_detail_value(document, "insurance_effective"),
+                _document_detail_value(document, "license_expires", "insurance_expires"),
+                _document_detail_value(document, "vehicle_vin"),
+                _document_detail_value(document, "vehicle_color"),
             ),
         )
+
+    _update_driver_verification_from_documents(account_id, documents)
+    _update_driver_car_from_documents(account_id, documents)
 
     _execute(
         """
