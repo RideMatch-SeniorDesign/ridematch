@@ -369,6 +369,342 @@ def _normalize_document_text(value: str | None) -> str:
     return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
 
 
+def _document_text_lines(value: str | None) -> list[str]:
+    return [line.strip() for line in str(value or "").splitlines() if line.strip()]
+
+
+def _clean_document_value(value: str | None, *, max_length: int = 100) -> str | None:
+    cleaned = re.sub(r"\s+", " ", str(value or "").strip())
+    cleaned = cleaned.strip(" :#-.,;")
+    if not cleaned:
+        return None
+    return cleaned[:max_length]
+
+
+def _parse_document_date(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    candidates = [
+        r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b",
+        r"\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b",
+        r"\b([A-Z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\b",
+    ]
+    month_names = {
+        "JAN": 1, "JANUARY": 1,
+        "FEB": 2, "FEBRUARY": 2,
+        "MAR": 3, "MARCH": 3,
+        "APR": 4, "APRIL": 4,
+        "MAY": 5,
+        "JUN": 6, "JUNE": 6,
+        "JUL": 7, "JULY": 7,
+        "AUG": 8, "AUGUST": 8,
+        "SEP": 9, "SEPT": 9, "SEPTEMBER": 9,
+        "OCT": 10, "OCTOBER": 10,
+        "NOV": 11, "NOVEMBER": 11,
+        "DEC": 12, "DECEMBER": 12,
+    }
+
+    for pattern in candidates:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            parts = match.groups()
+            if parts[0].isalpha():
+                month = month_names.get(parts[0].upper().rstrip("."))
+                if not month:
+                    continue
+                day = int(parts[1])
+                year = int(parts[2])
+            elif len(parts[0]) == 4:
+                year = int(parts[0])
+                month = int(parts[1])
+                day = int(parts[2])
+            else:
+                month = int(parts[0])
+                day = int(parts[1])
+                year = int(parts[2])
+                if year < 100:
+                    year += 2000 if year < 50 else 1900
+            return date(year, month, day).isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _find_labeled_document_value(lines: list[str], labels: tuple[str, ...], value_pattern: str) -> str | None:
+    label_pattern = "|".join(re.escape(label) for label in sorted(labels, key=len, reverse=True))
+    same_line_pattern = re.compile(
+        rf"\b(?:{label_pattern})\b\s*(?:NO\.?|NUMBER|NUM|#|:)?\s*[:#-]?\s*({value_pattern})",
+        re.IGNORECASE,
+    )
+    value_only_pattern = re.compile(rf"^\s*({value_pattern})\s*$", re.IGNORECASE)
+
+    for index, line in enumerate(lines):
+        match = same_line_pattern.search(line)
+        if match:
+            return _clean_document_value(match.group(1), max_length=50)
+        if re.search(rf"\b(?:{label_pattern})\b", line, re.IGNORECASE) and index + 1 < len(lines):
+            next_match = value_only_pattern.search(lines[index + 1])
+            if next_match:
+                return _clean_document_value(next_match.group(1), max_length=50)
+    return None
+
+
+def _find_labeled_document_date(lines: list[str], labels: tuple[str, ...]) -> str | None:
+    label_pattern = "|".join(re.escape(label) for label in sorted(labels, key=len, reverse=True))
+    for index, line in enumerate(lines):
+        if not re.search(rf"\b(?:{label_pattern})\b", line, re.IGNORECASE):
+            continue
+        parsed = _parse_document_date(line)
+        if parsed:
+            return parsed
+        if index + 1 < len(lines):
+            parsed = _parse_document_date(lines[index + 1])
+            if parsed:
+                return parsed
+    return None
+
+
+def _clean_person_name(value: str | None) -> str | None:
+    cleaned = re.sub(r"[^A-Za-z ,.'-]+", " ", str(value or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.'-")
+    if not cleaned or len(cleaned) < 2:
+        return None
+    blocked_words = {
+        "DRIVER", "LICENSE", "IDENTIFICATION", "CARD", "IOWA", "STATE", "USA",
+        "CLASS", "ENDORSEMENTS", "RESTRICTIONS", "SEX", "EYES", "HEIGHT", "DOB",
+        "EXP", "ISS", "DLN", "DONOR", "VETERAN", "ADDRESS",
+    }
+    words = [word for word in re.split(r"\s+", cleaned.upper()) if word]
+    if any(word in blocked_words for word in words):
+        return None
+    return cleaned.title()[:150]
+
+
+def _name_value_after_numbered_label(lines: list[str], label_number: str) -> str | None:
+    same_line_pattern = re.compile(rf"^\s*{re.escape(label_number)}[A-Z]?\s+(.+)$", re.IGNORECASE)
+    label_only_pattern = re.compile(rf"^\s*{re.escape(label_number)}[A-Z]?\s*$", re.IGNORECASE)
+    for index, line in enumerate(lines):
+        same_line = same_line_pattern.match(line)
+        if same_line:
+            name = _clean_person_name(same_line.group(1))
+            if name:
+                return name
+        if label_only_pattern.match(line) and index + 1 < len(lines):
+            name = _clean_person_name(lines[index + 1])
+            if name:
+                return name
+    return None
+
+
+def _extract_license_full_name(lines: list[str]) -> str | None:
+    family_name = _find_labeled_document_value(
+        lines,
+        ("1 FAMILY NAME", "FAMILY NAME", "LAST NAME", "SURNAME", "LN", "LNAME"),
+        r"[A-Z][A-Z '-]{1,50}",
+    )
+    given_name = _find_labeled_document_value(
+        lines,
+        ("2 GIVEN NAMES", "GIVEN NAMES", "FIRST NAME", "GIVEN NAME", "FN", "FNAME"),
+        r"[A-Z][A-Z '-]{1,60}",
+    )
+    if family_name and given_name:
+        return _clean_person_name(f"{given_name} {family_name}")
+
+    numbered_family_name = _name_value_after_numbered_label(lines, "1")
+    numbered_given_name = _name_value_after_numbered_label(lines, "2")
+    if numbered_family_name and numbered_given_name:
+        return _clean_person_name(f"{numbered_given_name} {numbered_family_name}")
+
+    full_name = _find_labeled_document_value(
+        lines,
+        ("FULL NAME", "DRIVER NAME", "NAME"),
+        r"[A-Z][A-Z ',.-]{3,100}",
+    )
+    if full_name:
+        return _clean_person_name(full_name)
+
+    for line in lines[:8]:
+        match = re.match(r"^\s*([A-Z][A-Z '-]{1,50}),\s*([A-Z][A-Z '-]{1,60})\s*$", line, re.IGNORECASE)
+        if match:
+            return _clean_person_name(f"{match.group(2)} {match.group(1)}")
+
+    return None
+
+
+def _extract_license_details(text: str) -> dict[str, str]:
+    lines = _document_text_lines(text)
+    joined = "\n".join(lines)
+    details: dict[str, str] = {}
+
+    license_number = _find_labeled_document_value(
+        lines,
+        (
+            "4D DLN", "4D", "DLN", "DLIC", "LIC NO", "LIC NUMBER",
+            "LICENSE NO", "LICENSE NUMBER", "DRIVER LICENSE NUMBER",
+            "CUSTOMER IDENTIFIER", "ID NO", "DL", "LIC", "ID",
+        ),
+        r"[A-Z0-9][A-Z0-9 -]{3,24}",
+    )
+    if license_number:
+        details["license_number"] = re.sub(r"\s+", "", license_number.upper())[:50]
+
+    full_name = _extract_license_full_name(lines)
+    if full_name:
+        details["license_full_name"] = full_name
+
+    state = _find_labeled_document_value(lines, ("STATE", "ISS", "ISSUING STATE"), r"[A-Z]{2}")
+    if state and state.upper() in US_STATE_OPTIONS:
+        details["license_state"] = state.upper()
+    else:
+        for possible_state in US_STATE_OPTIONS:
+            if re.search(rf"\b{possible_state}\b", joined, re.IGNORECASE):
+                details["license_state"] = possible_state
+                break
+        if "license_state" not in details:
+            state_names = {
+                "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR",
+                "CALIFORNIA": "CA", "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE",
+                "FLORIDA": "FL", "GEORGIA": "GA", "HAWAII": "HI", "IDAHO": "ID",
+                "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA", "KANSAS": "KS",
+                "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD",
+                "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN",
+                "MISSISSIPPI": "MS", "MISSOURI": "MO", "MONTANA": "MT", "NEBRASKA": "NE",
+                "NEVADA": "NV", "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ",
+                "NEW MEXICO": "NM", "NEW YORK": "NY", "NORTH CAROLINA": "NC",
+                "NORTH DAKOTA": "ND", "OHIO": "OH", "OKLAHOMA": "OK", "OREGON": "OR",
+                "PENNSYLVANIA": "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC",
+                "SOUTH DAKOTA": "SD", "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT",
+                "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA",
+                "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY",
+            }
+            for state_name, abbreviation in state_names.items():
+                if re.search(rf"\b{re.escape(state_name)}\b", joined, re.IGNORECASE):
+                    details["license_state"] = abbreviation
+                    break
+
+    expires = _find_labeled_document_date(
+        lines,
+        ("4B EXP", "4B", "EXPIRATION DATE", "EXP DATE", "EXPIRATION", "EXPIRES", "EXPIRY", "EXP"),
+    )
+    if expires:
+        details["license_expires"] = expires
+
+    issued = _find_labeled_document_date(lines, ("4A ISS", "4A", "ISSUED DATE", "ISSUED", "ISS"))
+    if issued:
+        details["license_issued"] = issued
+
+    date_of_birth = _find_labeled_document_date(lines, ("DOB", "BIRTH", "DATE OF BIRTH"))
+    if date_of_birth:
+        details["date_of_birth"] = date_of_birth
+
+    return details
+
+
+def _extract_insurance_details(text: str) -> dict[str, str]:
+    lines = _document_text_lines(text)
+    joined = "\n".join(lines)
+    details: dict[str, str] = {}
+
+    known_providers = (
+        "State Farm", "GEICO", "Progressive", "Allstate", "Farmers", "Liberty Mutual",
+        "Nationwide", "USAA", "Travelers", "American Family", "Erie", "Auto-Owners",
+        "The Hartford", "MetLife", "Mercury", "Safeco", "Root", "Esurance",
+    )
+    for provider in known_providers:
+        if re.search(rf"\b{re.escape(provider)}\b", joined, re.IGNORECASE):
+            details["insurance_provider"] = provider
+            break
+
+    if "insurance_provider" not in details:
+        provider = _find_labeled_document_value(
+            lines,
+            ("INSURER", "COMPANY", "PROVIDER", "INSURANCE COMPANY", "CARRIER"),
+            r"[A-Z][A-Z0-9 &.'-]{2,60}",
+        )
+        if provider:
+            details["insurance_provider"] = provider.title()[:100]
+
+    policy = _find_labeled_document_value(
+        lines,
+        ("POLICY", "POLICY NO", "POLICY NUMBER", "POLICY #", "POL"),
+        r"[A-Z0-9][A-Z0-9 -]{4,30}",
+    )
+    if policy:
+        details["insurance_policy"] = re.sub(r"\s+", "", policy.upper())[:50]
+
+    effective = _find_labeled_document_date(lines, ("EFFECTIVE", "EFF", "FROM"))
+    if effective:
+        details["insurance_effective"] = effective
+
+    expires = _find_labeled_document_date(lines, ("EXPIRES", "EXPIRATION", "EXP", "TO"))
+    if expires:
+        details["insurance_expires"] = expires
+
+    vin = _find_labeled_document_value(lines, ("VIN", "VEHICLE ID", "VEHICLE IDENTIFICATION"), r"[A-HJ-NPR-Z0-9]{11,17}")
+    if vin:
+        details["vehicle_vin"] = vin.upper()
+
+    plate = _find_labeled_document_value(lines, ("PLATE", "LICENSE PLATE", "TAG"), r"[A-Z0-9 -]{2,12}")
+    if plate:
+        details["license_plate"] = re.sub(r"\s+", "", plate.upper())[:20]
+
+    known_makes = (
+        "Acura", "Audi", "BMW", "Buick", "Cadillac", "Chevrolet", "Chevy", "Chrysler",
+        "Dodge", "Ford", "Genesis", "GMC", "Honda", "Hyundai", "Infiniti", "Jaguar",
+        "Jeep", "Kia", "Lexus", "Lincoln", "Mazda", "Mercedes", "Mercedes-Benz",
+        "Mitsubishi", "Nissan", "Ram", "Subaru", "Tesla", "Toyota", "Volkswagen", "Volvo",
+    )
+    for line in lines:
+        for make in known_makes:
+            match = re.search(rf"\b{re.escape(make)}\b\s*([A-Z0-9][A-Z0-9 -]{{1,30}})?", line, re.IGNORECASE)
+            if not match:
+                continue
+            normalized_make = "Chevrolet" if make.lower() == "chevy" else make
+            details["vehicle_make"] = normalized_make
+            model = _clean_document_value(match.group(1), max_length=50)
+            if model:
+                details["vehicle_model"] = model.title()
+            break
+        if details.get("vehicle_make"):
+            break
+
+    color = _find_labeled_document_value(lines, ("COLOR", "VEHICLE COLOR"), r"[A-Z]{3,20}")
+    if color:
+        details["vehicle_color"] = color.title()
+
+    return details
+
+
+def _format_extracted_document_labels(base_label: str, details: dict[str, str]) -> str:
+    label_map = {
+        "license_state": "License State",
+        "license_full_name": "Name on License",
+        "license_number": "License Number",
+        "license_issued": "License Issued",
+        "license_expires": "License Expires",
+        "date_of_birth": "DOB",
+        "insurance_provider": "Insurance Provider",
+        "insurance_policy": "Policy",
+        "insurance_effective": "Effective",
+        "insurance_expires": "Insurance Expires",
+        "vehicle_vin": "VIN",
+        "license_plate": "Plate",
+        "vehicle_make": "Vehicle Make",
+        "vehicle_model": "Vehicle Model",
+        "vehicle_color": "Vehicle Color",
+    }
+    parts = [base_label]
+    for key, label in label_map.items():
+        value = details.get(key)
+        if value:
+            parts.append(f"{label}: {value}")
+    return "\n".join(parts)[:500]
+
+
 def _detect_driver_document_type(data: bytes) -> str | None:
     image_type = _detect_profile_photo_type(data)
     if image_type in ALLOWED_DRIVER_DOCUMENT_TYPES:
@@ -432,7 +768,12 @@ def _validate_insurance_document_text(text: str) -> str | None:
     return None
 
 
-def _store_driver_document_payload(document_type: str, data: bytes, labels: str) -> dict[str, object]:
+def _store_driver_document_payload(
+    document_type: str,
+    data: bytes,
+    labels: str,
+    extracted_details: dict[str, str] | None = None,
+) -> dict[str, object]:
     DOCUMENT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     image_type = _detect_driver_document_type(data) or "jpeg"
     ext = "jpg" if image_type == "jpeg" else image_type
@@ -446,6 +787,7 @@ def _store_driver_document_payload(document_type: str, data: bytes, labels: str)
         "file_size_bytes": len(data),
         "recognition_status": "approved",
         "recognition_labels": labels,
+        "extracted_details": extracted_details or {},
     }
 
 
@@ -464,7 +806,9 @@ def _validate_and_store_license_document() -> tuple[dict[str, object] | None, st
     if license_error:
         return None, license_error
 
-    return _store_driver_document_payload("license", license_data or b"", "license_text_matched"), None
+    details = _extract_license_details(license_text)
+    labels = _format_extracted_document_labels("license_text_matched", details)
+    return _store_driver_document_payload("license", license_data or b"", labels, details), None
 
 
 def _validate_and_store_insurance_document() -> tuple[dict[str, object] | None, str | None]:
@@ -482,7 +826,9 @@ def _validate_and_store_insurance_document() -> tuple[dict[str, object] | None, 
     if insurance_error:
         return None, insurance_error
 
-    return _store_driver_document_payload("insurance", insurance_data or b"", "insurance_text_matched"), None
+    details = _extract_insurance_details(insurance_text)
+    labels = _format_extracted_document_labels("insurance_text_matched", details)
+    return _store_driver_document_payload("insurance", insurance_data or b"", labels, details), None
 
 
 def _validate_and_store_driver_documents() -> tuple[list[dict[str, object]] | None, str | None]:
@@ -496,6 +842,19 @@ def _validate_and_store_driver_documents() -> tuple[list[dict[str, object]] | No
         return None, insurance_error or "Proof of vehicle insurance upload is required."
 
     return [license_payload, insurance_payload], None
+
+
+def _merge_driver_document_details(documents: list[dict[str, object]] | None) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for document in documents or []:
+        details = document.get("extracted_details")
+        if not isinstance(details, dict):
+            continue
+        for key, value in details.items():
+            cleaned = _clean_document_value(str(value), max_length=100)
+            if cleaned:
+                merged[str(key)] = cleaned
+    return merged
 
 
 def _delete_stored_driver_documents(documents: list[dict[str, object]] | None) -> None:
@@ -606,6 +965,7 @@ def api_driver_signup():
     document_payloads, document_error = _validate_and_store_driver_documents()
     if document_error:
         return jsonify({"success": False, "error": document_error}), 400
+    document_details = _merge_driver_document_details(document_payloads)
 
     photo_payload, photo_error = _validate_and_store_driver_profile_photo(required=True)
     if photo_error or not photo_payload:
@@ -623,12 +983,12 @@ def api_driver_signup():
             first_name=first_name,
             last_name=last_name,
             preferences=", ".join(normalized_preferences),
-            date_of_birth=date_of_birth or None,
-            license_state=None,
-            license_number=None,
-            license_expires=None,
-            insurance_provider=None,
-            insurance_policy=None,
+            date_of_birth=document_details.get("date_of_birth") or date_of_birth or None,
+            license_state=document_details.get("license_state"),
+            license_number=document_details.get("license_number"),
+            license_expires=document_details.get("license_expires"),
+            insurance_provider=document_details.get("insurance_provider"),
+            insurance_policy=document_details.get("insurance_policy"),
             profile_photo=photo_payload,
             documents=document_payloads,
         )
