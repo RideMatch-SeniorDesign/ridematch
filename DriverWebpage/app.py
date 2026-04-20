@@ -12,6 +12,8 @@ from datetime import timedelta
 from pathlib import Path
 
 from math import radians, sin, cos, sqrt, atan2
+from collections import defaultdict
+from threading import Lock
 
 import boto3
 from dotenv import load_dotenv
@@ -63,6 +65,108 @@ US_STATE_OPTIONS = [
     "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
     "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
 ]
+
+# chat storage mem
+chat_messages_by_trip: dict[str, list[dict]] = defaultdict(list)
+chat_store_lock = Lock()
+MAX_MESSAGES_PER_TRIP = 100
+
+def _trip_chat_room(trip_id: int | str) -> str:
+    return f"trip_chat:{trip_id}"
+
+def _normalize_chat_message(message: dict) -> dict:
+    return {
+        "trip_id": int(message["trip_id"]),
+        "message_id": str(message["message_id"]),
+        "sender_role": str(message["sender_role"]),
+        "sender_id": int(message["sender_id"]),
+        "content": str(message["content"]),
+        "timestamp": str(message["timestamp"])
+    }
+
+def _user_access_trip_chat(*, trip_id: int, role: str, account_id: int) -> bool:
+    try:
+        from Database.admin_queries import fetch_active_rider_trip, fetch_active_driver_trip
+        if role == "rider":
+            trip = fetch_active_rider_trip(account_id)
+            return bool(trip and int(trip.get("trip_id") or 0) == trip_id)
+
+        if role == "driver":
+            trip = fetch_active_driver_trip(account_id)
+            return bool(trip and int(trip.get("trip_id") or 0) == trip_id)
+        
+        return False
+    except Exception as exc:
+        app.logger.warning("Error checking trip chat access for %s %s on trip %s: %s", role, account_id, trip_id, exc)
+        return False
+    
+@socketio.on("join_trip_chat")
+def socket_join_trip_chat(data):
+    payload = data if isinstance(data, dict) else {}
+
+    role = str(payload.get("role") or "").strip().lower()
+    account_id_raw = str(payload.get("account_id") or "").strip()
+    trip_id_raw = str(payload.get("trip_id") or "").strip()
+
+    if role not in {"rider", "driver"} or not account_id_raw.isdigit() or not trip_id_raw.isdigit():
+        emit("chat_error", {"error": "Invalid chat subscription payload."})
+        return
+    
+    account_id = int(account_id_raw)
+    trip_id = int(trip_id_raw)
+
+    if not _user_access_trip_chat(trip_id=trip_id, role=role, account_id=account_id):
+        emit("chat_error", {"error": "Access denied to this trip chat."})
+        return
+    
+    room = _trip_chat_room(trip_id)
+    join_room(room)
+
+    with chat_store_lock:
+        history = list(chat_messages_by_trip[str(trip_id)])
+
+    emit("chat_history", {"trip_id": trip_id, "messages": history})
+
+@socketio.on("send_chat_message")
+def socket_send_chat_message(data):
+    payload = data if isinstance(data, dict) else {}
+
+    role = str(payload.get("role") or "").strip().lower()
+    account_id_raw = str(payload.get("account_id") or "").strip()
+    trip_id_raw = str(payload.get("trip_id") or "").strip()
+    content = str(payload.get("content") or "").strip()
+
+    if role not in {"rider", "driver"} or not account_id_raw.isdigit() or not trip_id_raw.isdigit() or not content:
+        emit("chat_error", {"error": "Invalid chat message payload."})
+        return
+    
+    if len(content) > 1000:
+        emit("chat_error", {"error": "Chat message exceeds maximum length."})
+        return
+    
+    account_id = int(account_id_raw)
+    trip_id = int(trip_id_raw)
+
+    if not _user_access_trip_chat(trip_id=trip_id, role=role, account_id=account_id):
+        emit("chat_error", {"error": "Access denied to this trip chat."})
+        return
+    
+    message = _normalize_chat_message({
+        "trip_id": trip_id,
+        "message_id": f"{trip_id}-{account_id}-{int(time.time() * 1000)}",
+        "sender_role": role,
+        "sender_id": account_id,
+        "content": content,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    })
+
+    with chat_store_lock:
+        bucket = chat_messages_by_trip[str(trip_id)]
+        bucket.append(message)
+        if len(bucket) > MAX_MESSAGES_PER_TRIP:
+            del bucket[:-MAX_MESSAGES_PER_TRIP]
+    
+    socketio.emit("new_chat_message", message, room=_trip_chat_room(trip_id))
 
 
 def _emit_trip_update(event_name: str, trip: dict | None) -> None:
