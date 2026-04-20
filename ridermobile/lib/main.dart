@@ -1280,6 +1280,12 @@ class _RideTabState extends State<RideTab> {
   final _pickup = TextEditingController();
   final _dropoff = TextEditingController();
   final _notes = TextEditingController();
+
+  final TextEditingController _chatController = TextEditingController();
+  final ScrollController _chatScrollController = ScrollController();
+  List<Map<String, dynamic>> _chatMessages = [];
+  int? _joinedChatTripId;
+
   Timer? _poll;
   Timer? _pickupSuggestTimer;
   Timer? _dropoffSuggestTimer;
@@ -1304,13 +1310,62 @@ class _RideTabState extends State<RideTab> {
   LatLng? _driverPoint;
   final Set<int> _autoShownReviewTripIds = <int>{};
 
+  void _joinTripChatIfNeeded() {
+    final socket = _socket;
+    final tripId = int.tryParse((_trip?["trip_id"] ?? "").toString());
+    final riderId = _id(widget.user);
+
+    if (socket == null || tripId == null) {
+      _joinedChatTripId = null;
+      return;
+    }
+
+    if (_joinedChatTripId == tripId) {
+      return;
+    }
+
+    socket.emit("join_trip_chat", {
+      "role": "rider",
+      "account_id": riderId,
+      "trip_id": tripId,
+    });
+
+    _joinedChatTripId = tripId;
+  }
+
+  void _scrollChatToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_chatScrollController.hasClients) return;
+      _chatScrollController.jumpTo(_chatScrollController.position.maxScrollExtent);
+    });
+  }
+
+  void _sendChatMessage() {
+    final socket = _socket;
+    final tripId = int.tryParse((_trip?["trip_id"] ?? "").toString());
+    final text = _chatController.text.trim();
+
+    if (socket == null || tripId == null || text.isEmpty) {
+      return;
+    }
+
+    socket.emit("send_trip_chat_message", {
+      "role": "rider",
+      "account_id": _id(widget.user),
+      "trip_id": tripId,
+      "text": text,
+    });
+
+    _chatController.clear();
+  }
+
   @override
   void initState() {
     super.initState();
     _pickup.addListener(_onPickupTextChanged);
     _dropoff.addListener(_onDropoffTextChanged);
-    _load();
     _connectRealTime();
+    _load();
     _poll = Timer.periodic(const Duration(seconds: 7), (_) => _load());
   }
 
@@ -1324,6 +1379,8 @@ class _RideTabState extends State<RideTab> {
     _pickup.dispose();
     _dropoff.dispose();
     _notes.dispose();
+    _chatController.dispose();
+    _chatScrollController.dispose();
     _socket?.dispose();
     super.dispose();
   }
@@ -1342,6 +1399,10 @@ class _RideTabState extends State<RideTab> {
         "role": "rider",
         "account_id": _id(widget.user).toString(),
       });
+
+      if (_trip != null) {
+        _joinTripChatIfNeeded();
+      }
     });
 
     socket.on("trip_updated", (_) async {
@@ -1376,6 +1437,48 @@ class _RideTabState extends State<RideTab> {
         SnackBar(content: Text("$title\n$message")),
       );
     });
+
+    socket.on("trip_chat_history", (data) {
+      if (!mounted) return;
+      final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final items = (map["messages"] as List? ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
+      setState(() {
+        _chatMessages = items;
+      });
+      _scrollChatToBottom();
+    });
+
+    socket.on("trip_chat_message", (data) {
+      if (!mounted) return;
+      final msg = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final incomingTripId = int.tryParse((msg["trip_id"] ?? "").toString());
+      final currentTripId = int.tryParse((_trip?["trip_id"] ?? "").toString());
+
+      if (incomingTripId == null || currentTripId == null || incomingTripId != currentTripId) {
+        return;
+      }
+
+      setState(() {
+        _chatMessages = [..._chatMessages, msg];
+      });
+      _scrollChatToBottom();
+    });
+
+    socket.on("trip_chat_error", (data) {
+      if (!mounted) return;
+      final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final error = (map["error"] ?? "Chat error").toString();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    });
+
+    //helpers
+
 
     socket.connect();
     _socket = socket;
@@ -1589,6 +1692,84 @@ class _RideTabState extends State<RideTab> {
     );
   }
 
+  Widget _buildChatPanel() {
+    final myId = _id(widget.user);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D2137),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "Driver Chat",
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 220,
+            child: ListView.builder(
+              controller: _chatScrollController,
+              itemCount: _chatMessages.length,
+              itemBuilder: (context, index) {
+                final msg = _chatMessages[index];
+                final mine = (msg["sender_role"] ?? "") == "rider" &&
+                    int.tryParse((msg["sender_id"] ?? "").toString()) == myId;
+
+                return Align(
+                  alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    constraints: const BoxConstraints(maxWidth: 260),
+                    decoration: BoxDecoration(
+                      color: mine
+                          ? const Color(0xFF7EB3FF).withValues(alpha: 0.25)
+                          : Colors.white.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      (msg["text"] ?? "").toString(),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _chatController,
+                  style: const TextStyle(color: Colors.white),
+                  cursorColor: Colors.white,
+                  decoration: _riderShellInputDecoration(label: "Type a message"),
+                  onSubmitted: (_) => _sendChatMessage(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                onPressed: _sendChatMessage,
+                icon: const Icon(Icons.send_rounded),
+                color: Colors.white,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _load() async {
     try {
       final res = await _api.fetchActiveTrip(riderId: _id(widget.user));
@@ -1604,8 +1785,14 @@ class _RideTabState extends State<RideTab> {
         if (_trip != null) {
           _matchCandidates = [];
           _showMatchDeckOnly = false;
+        } else {
+          _chatMessages = [];
+          _joinedChatTripId = null;
         }
       });
+      if (_trip != null) {
+        _joinTripChatIfNeeded();
+      }
       if (hadTrip && nextTrip == null) {
         await _promptPostRideReviewIfPending();
       }
@@ -1998,6 +2185,10 @@ class _RideTabState extends State<RideTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (_trip != null) ...[
+                  const SizedBox(height: 14),
+                  _buildChatPanel(),
+                ],
                 Row(
                   children: [
                     Icon(Icons.map_outlined, color: Colors.white.withValues(alpha: 0.9), size: 22),

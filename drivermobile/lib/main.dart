@@ -2446,6 +2446,11 @@ class _StartDriveTabState extends State<StartDriveTab> {
   bool _isAvailable = false;
   String _message = "";
   bool _messageIsError = false;
+
+  final TextEditingController _chatController = TextEditingController();
+  final ScrollController _chatScrollController = ScrollController();
+  List<Map<String, dynamic>> _chatMessages = [];
+
   Timer? _refreshTimer;
   Timer? _locationTimer;
   io.Socket? _socket;
@@ -2460,6 +2465,42 @@ class _StartDriveTabState extends State<StartDriveTab> {
   final Map<String, LatLng> _geocodeCache = <String, LatLng>{};
   int _routeRefreshToken = 0;
   bool _mapReady = false;
+
+  void _joinTripChatIfNeeded() {
+    final socket = _socket;
+    final accountId = _extractAccountId();
+    final tripId = int.tryParse((_trip?["trip_id"] ?? "").toString());
+
+    if (socket == null || accountId == null || tripId == null) {
+      return;
+    }
+
+    socket.emit("join_trip_chat", {
+      "role": "driver",
+      "account_id": accountId,
+      "trip_id": tripId,
+    });
+  }
+
+  void _sendChatMessage() {
+    final socket = _socket;
+    final accountId = _extractAccountId();
+    final tripId = int.tryParse((_trip?["trip_id"] ?? "").toString());
+    final text = _chatController.text.trim();
+
+    if (socket == null || accountId == null || tripId == null || text.isEmpty) {
+      return;
+    }
+
+    socket.emit("send_trip_chat_message", {
+      "role": "driver",
+      "account_id": accountId,
+      "trip_id": tripId,
+      "text": text,
+    });
+
+    _chatController.clear();
+  }
 
   @override
   void initState() {
@@ -2718,6 +2759,43 @@ class _StartDriveTabState extends State<StartDriveTab> {
 
       _loadDispatch(showLoader: false);
     });
+
+    socket.on("trip_chat_history", (data) {
+      if (!mounted) return;
+      final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final items = (map["messages"] as List? ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
+      setState(() {
+        _chatMessages = items;
+      });
+    });
+
+    socket.on("trip_chat_message", (data) {
+      if (!mounted) return;
+      final msg = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final incomingTripId = int.tryParse((msg["trip_id"] ?? "").toString());
+      final currentTripId = int.tryParse((_trip?["trip_id"] ?? "").toString());
+
+      if (incomingTripId == null || currentTripId == null || incomingTripId != currentTripId) {
+        return;
+      }
+
+      setState(() {
+        _chatMessages = [..._chatMessages, msg];
+      });
+    });
+
+    socket.on("trip_chat_error", (data) {
+      if (!mounted) return;
+      final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final error = (map["error"] ?? "Chat error").toString();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    });
     
     socket.connect();
     _socket = socket;
@@ -2743,6 +2821,14 @@ class _StartDriveTabState extends State<StartDriveTab> {
       _submitting = true;
       _message = "";
       _messageIsError = false;
+
+      if (_trip != null) {
+        _joinTripChatIfNeeded();
+      } else {
+        setState(() {
+          _chatMessages = [];
+        });
+      }
     });
 
     try {
