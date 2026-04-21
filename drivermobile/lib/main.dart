@@ -2502,6 +2502,80 @@ class _StartDriveTabState extends State<StartDriveTab> {
     _chatController.clear();
   }
 
+  Widget _buildChatPanel() {
+    return _ShellCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "Rider Chat",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 200,
+            child: _chatMessages.isEmpty
+                ? Center(
+                    child: Text(
+                      "No messages yet.",
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _chatScrollController,
+                    itemCount: _chatMessages.length,
+                    itemBuilder: (context, index) {
+                      final msg = _chatMessages[index];
+                      final isMine = (msg["sender_role"] ?? "") == "driver";
+
+                      return Align(
+                        alignment:
+                            isMine ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: isMine
+                                ? const Color(0xFF7EB3FF).withValues(alpha: 0.30)
+                                : Colors.white.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            (msg["text"] ?? "").toString(),
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _chatController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _shellInputDecoration(label: "Message rider"),
+                  onSubmitted: (_) => _sendChatMessage(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                onPressed: _sendChatMessage,
+                icon: const Icon(Icons.send, color: Colors.white),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2521,6 +2595,8 @@ class _StartDriveTabState extends State<StartDriveTab> {
 
   @override
   void dispose() {
+    _chatController.dispose();
+    _chatScrollController.dispose();
     _socket?.dispose();
     _refreshTimer?.cancel();
     _locationTimer?.cancel();
@@ -2601,6 +2677,15 @@ class _StartDriveTabState extends State<StartDriveTab> {
         _isAvailable = response["is_available"] == true;
         _loading = false;
       });
+
+      if (_trip != null) {
+        _joinTripChatIfNeeded();
+      } else {
+        setState(() {
+          _chatMessages = [];
+        });
+      }
+
       await _refreshNavigationPreview();
       WidgetsBinding.instance.addPostFrameCallback((_) => _recenterMapToRoute());
     } catch (exc) {
@@ -2740,6 +2825,10 @@ class _StartDriveTabState extends State<StartDriveTab> {
         "role": "driver",
         "account_id": accountId,
       });
+
+      if (_trip != null) {
+        _joinTripChatIfNeeded();
+      }
     });
     socket.on("trip_updated", (_) {
       if (mounted && !_submitting) {
@@ -2822,14 +2911,14 @@ class _StartDriveTabState extends State<StartDriveTab> {
       _message = "";
       _messageIsError = false;
 
-      if (_trip != null) {
-        _joinTripChatIfNeeded();
-      } else {
-        setState(() {
-          _chatMessages = [];
-        });
+      if (_trip == null) {
+        _chatMessages = [];
       }
     });
+
+    if (_trip != null) {
+      _joinTripChatIfNeeded();
+    }
 
     try {
       late Map<String, dynamic> response;
@@ -3649,6 +3738,9 @@ class _StartDriveTabState extends State<StartDriveTab> {
                           ),
                         ),
                       ],
+
+                      const SizedBox(height: 14),
+                      _buildChatPanel(),
                     ],
                   ),
               ],
@@ -4602,6 +4694,3 @@ class _StatusPill extends StatelessWidget {
     );
   }
 }
-
-
-
