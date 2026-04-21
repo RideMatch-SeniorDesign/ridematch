@@ -1349,11 +1349,11 @@ class _RideTabState extends State<RideTab> {
       return;
     }
 
-    socket.emit("send_trip_chat_message", {
+    socket.emit("send_chat_message", {
       "role": "rider",
       "account_id": _id(widget.user),
       "trip_id": tripId,
-      "text": text,
+      "content": text,
     });
 
     _chatController.clear();
@@ -1438,7 +1438,7 @@ class _RideTabState extends State<RideTab> {
       );
     });
 
-    socket.on("trip_chat_history", (data) {
+    socket.on("chat_history", (data) {
       if (!mounted) return;
       final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       final items = (map["messages"] as List? ?? const [])
@@ -1451,7 +1451,7 @@ class _RideTabState extends State<RideTab> {
       _scrollChatToBottom();
     });
 
-    socket.on("trip_chat_message", (data) {
+    socket.on("new_chat_message", (data) {
       if (!mounted) return;
       final msg = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       final incomingTripId = int.tryParse((msg["trip_id"] ?? "").toString());
@@ -1467,7 +1467,7 @@ class _RideTabState extends State<RideTab> {
       _scrollChatToBottom();
     });
 
-    socket.on("trip_chat_error", (data) {
+    socket.on("chat_error", (data) {
       if (!mounted) return;
       final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       final error = (map["error"] ?? "Chat error").toString();
@@ -1737,7 +1737,7 @@ class _RideTabState extends State<RideTab> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      (msg["text"] ?? "").toString(),
+                      (msg["content"] ?? "").toString(),
                       style: const TextStyle(color: Colors.white),
                     ),
                   ),

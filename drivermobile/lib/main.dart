@@ -2492,11 +2492,11 @@ class _StartDriveTabState extends State<StartDriveTab> {
       return;
     }
 
-    socket.emit("send_trip_chat_message", {
+    socket.emit("send_chat_message", {
       "role": "driver",
       "account_id": accountId,
       "trip_id": tripId,
-      "text": text,
+      "content": text,
     });
 
     _chatController.clear();
@@ -2545,7 +2545,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
-                            (msg["text"] ?? "").toString(),
+                            (msg["content"] ?? "").toString(),
                             style: const TextStyle(color: Colors.white),
                           ),
                         ),
@@ -2849,7 +2849,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
       _loadDispatch(showLoader: false);
     });
 
-    socket.on("trip_chat_history", (data) {
+    socket.on("chat_history", (data) {
       if (!mounted) return;
       final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       final items = (map["messages"] as List? ?? const [])
@@ -2861,7 +2861,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
       });
     });
 
-    socket.on("trip_chat_message", (data) {
+    socket.on("new_chat_message", (data) {
       if (!mounted) return;
       final msg = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       final incomingTripId = int.tryParse((msg["trip_id"] ?? "").toString());
@@ -2876,7 +2876,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
       });
     });
 
-    socket.on("trip_chat_error", (data) {
+    socket.on("chat_error", (data) {
       if (!mounted) return;
       final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       final error = (map["error"] ?? "Chat error").toString();
