@@ -176,12 +176,13 @@ VALUES
 (3, 1, 'completed', 'Iowa City', 'Tiffin', 17.35, 5, 5);
 
 -- derive trip finance components for analytics
+SET SQL_SAFE_UPDATES = 0;
 UPDATE `trip`
 SET
     `PlatformFee` = CASE WHEN `Status` = 'completed' THEN ROUND(`FinalCost` * 0.10, 2) ELSE 0.00 END,
     `TaxAmount` = CASE WHEN `Status` = 'completed' THEN ROUND(`FinalCost` * 0.07, 2) ELSE 0.00 END,
     `TipAmount` = CASE WHEN `Status` = 'completed' THEN ROUND(`FinalCost` * 0.08, 2) ELSE 0.00 END;
-
+SET SQL_SAFE_UPDATES = 1;
 -- create rider reviews for drivers
 INSERT INTO `driver_review` (`DriverID`, `RiderID`, `TripID`, `Rating`, `Comment`)
 VALUES

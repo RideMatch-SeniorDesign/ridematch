@@ -41,37 +41,22 @@ CREATE TABLE `admin_action` (
 CREATE TABLE `rider` (
 	`AccountID` int NOT NULL,
     `Preferences` varchar(100),
-    `Rating` int DEFAULT 5,
+    `Rating` decimal(3,2) DEFAULT 5.00,
+    `RtCount` int DEFAULT 1,
     `RidingSince` date DEFAULT (curdate()),
     `Status` varchar(50),
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Rider_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );
 
--- PAYMENT TABLE
-CREATE TABLE `payment` (
-	`PaymentID` int AUTO_INCREMENT,
-    `TripID` int,
-    `RiderID` int NOT NULL,
-    `PaymentType` varchar(50) NOT NULL DEFAULT 'stripe',
-    `Amount` decimal(10,2) NOT NULL DEFAULT 0.00,
-    `Currency` varchar(10) NOT NULL DEFAULT 'usd',
-    `Status` varchar(50) NOT NULL DEFAULT 'pending',
-    `StripePaymentIntentID` varchar(255),
-    `StripeClientSecret` varchar(255),
-    `CreatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    `UpdatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `PaidAt` timestamp NULL DEFAULT NULL,
-    PRIMARY KEY (`PaymentID`),
-    CONSTRAINT `FK_RiderID_payment` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
-    CONSTRAINT `FK_TripID_payment` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
-);
+
 
 -- DRIVER TABLE
 CREATE TABLE `driver` (
 	`AccountID` int NOT NULL,
     `Preferences` varchar(100),
-    `Rating` int DEFAULT 5,
+    `Rating` decimal(3,2) DEFAULT 5.00,
+    `RtCount` int DEFAULT 1,
     `Status` varchar(50) DEFAULT 'pending',
     `DateSubmitted` date DEFAULT (curdate()),
     `DateApproved` date DEFAULT NULL,
@@ -180,6 +165,24 @@ CREATE TABLE `trip` (
     CONSTRAINT `FK_DriverID_trip` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`)
 );
 
+-- PAYMENT TABLE
+CREATE TABLE `payment` (
+	`PaymentID` int AUTO_INCREMENT,
+    `TripID` int,
+    `RiderID` int NOT NULL,
+    `PaymentType` varchar(50) NOT NULL DEFAULT 'stripe',
+    `Amount` decimal(10,2) NOT NULL DEFAULT 0.00,
+    `Currency` varchar(10) NOT NULL DEFAULT 'usd',
+    `Status` varchar(50) NOT NULL DEFAULT 'pending',
+    `StripePaymentIntentID` varchar(255),
+    `StripeClientSecret` varchar(255),
+    `CreatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `UpdatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `PaidAt` timestamp NULL DEFAULT NULL,
+    PRIMARY KEY (`PaymentID`),
+    CONSTRAINT `FK_RiderID_payment` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),
+    CONSTRAINT `FK_TripID_payment` FOREIGN KEY (`TripID`) REFERENCES `trip` (`TripID`)
+);
 -- DRIVER_REVIEW TABLE
 CREATE TABLE `driver_review` (
     `ReviewID` int AUTO_INCREMENT,
@@ -211,6 +214,32 @@ CREATE TABLE `rider_review` (
 );
 
 -- Triggers --
+
+DELIMITER $$
+CREATE TRIGGER `update_driver_rating` AFTER INSERT ON `rider_review`
+FOR EACH ROW
+    BEGIN
+        IF NEW.Rating IS NOT NULL THEN
+            UPDATE `driver` d
+            SET d.Rating = ((d.Rating * d.RtCount) + NEW.Rating) / (d.RtCount + 1),
+                d.RtCount = d.RtCount + 1
+            WHERE d.AccountID = NEW.DriverID;
+        END IF;
+    END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE TRIGGER `update_rider_rating` AFTER INSERT ON `driver_review`
+FOR EACH ROW
+    BEGIN
+        IF NEW.Rating IS NOT NULL THEN
+            UPDATE `rider` r
+            SET r.Rating = ((r.Rating * r.RtCount) + NEW.Rating) / (r.RtCount + 1),
+                r.RtCount = r.RtCount + 1
+            WHERE r.AccountID = NEW.RiderID;
+        END IF;
+    END$$
+DELIMITER ;
 
 -- Views --
 
