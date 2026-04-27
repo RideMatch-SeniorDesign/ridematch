@@ -737,7 +737,7 @@ def api_rider_trip_payment_intent(trip_id: int):
         intent = stripe.PaymentIntent.create(
             amount=int(round(amount * 100)),
             currency="usd",
-            automatic_payment_methods={"enabled": True},
+            payment_method_types=["card"],
             metadata={
                 "trip_id": str(trip_id),
                 "rider_id": str(rider_id),

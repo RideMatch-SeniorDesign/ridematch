@@ -835,7 +835,7 @@ class DashboardTab extends StatefulWidget {
 class _DashboardTabState extends State<DashboardTab> {
   final _api = ApiClient();
   bool _loading = true;
-  bool _paymentBusy = false;
+  int? _paymentBusyTripId;
   String _error = "";
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _trips = [];
@@ -899,10 +899,10 @@ class _DashboardTabState extends State<DashboardTab> {
 
   Future<void> _payForTrip(Map<String, dynamic> trip) async {
     final tripId = _int(trip["trip_id"]);
-    if (tripId == null || _paymentBusy) {
+    if (tripId == null || _paymentBusyTripId != null) {
       return;
     }
-    setState(() => _paymentBusy = true);
+    setState(() => _paymentBusyTripId = tripId);
     try {
       final riderId = _id(widget.user);
       final stripeConfig = await _api.fetchStripeConfig();
@@ -915,7 +915,11 @@ class _DashboardTabState extends State<DashboardTab> {
       }
 
       Stripe.publishableKey = publishableKey;
-      await Stripe.instance.applySettings();
+      Stripe.urlScheme = "ridermobile";
+      await Stripe.instance.applySettings().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException("Stripe settings timed out."),
+      );
 
       final paymentIntent = await _api.createTripPaymentIntent(
         tripId: tripId,
@@ -944,9 +948,17 @@ class _DashboardTabState extends State<DashboardTab> {
           paymentIntentClientSecret: clientSecret,
           merchantDisplayName: "RideMatch",
           style: ThemeMode.dark,
+          paymentMethodOrder: const ["card"],
+          returnURL: "ridermobile://stripe-redirect",
         ),
+      ).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => throw TimeoutException("Stripe payment sheet setup timed out."),
       );
-      await Stripe.instance.presentPaymentSheet();
+      await Stripe.instance.presentPaymentSheet().timeout(
+        const Duration(seconds: 60),
+        onTimeout: () => throw TimeoutException("Stripe payment sheet did not open."),
+      );
 
       if (!mounted) {
         return;
@@ -973,7 +985,7 @@ class _DashboardTabState extends State<DashboardTab> {
       );
     } finally {
       if (mounted) {
-        setState(() => _paymentBusy = false);
+        setState(() => _paymentBusyTripId = null);
       }
     }
   }
@@ -1014,13 +1026,13 @@ class _DashboardTabState extends State<DashboardTab> {
         actions: [
           if (_tripNeedsPayment(trip))
             TextButton(
-              onPressed: _paymentBusy
+              onPressed: _paymentBusyTripId != null
                   ? null
                   : () {
                       Navigator.pop(ctx);
                       _payForTrip(trip);
                     },
-              child: Text(_paymentBusy ? "Processing..." : "Pay now"),
+              child: Text(_paymentBusyTripId == _int(trip["trip_id"]) ? "Processing..." : "Pay now"),
             ),
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
         ],
@@ -1179,7 +1191,7 @@ class _DashboardTabState extends State<DashboardTab> {
                             onInfo: () => _showTripInfo(trip),
                             onReview: () => _openReviewForTrip(trip),
                             onPay: _tripNeedsPayment(trip) ? () => _payForTrip(trip) : null,
-                            paymentBusy: _paymentBusy,
+                            paymentBusy: _paymentBusyTripId == _int(trip["trip_id"]),
                           )),
                   ],
                 ),
@@ -1234,7 +1246,10 @@ class _DashboardTripRow extends StatelessWidget {
               Text("Payment: $paymentStatus", style: const TextStyle(fontSize: 12, color: Color(0xFF7EB3FF))),
             ],
             const SizedBox(height: 8),
-            Row(
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 IconButton.filledTonal(
                   onPressed: onInfo,
@@ -1242,7 +1257,6 @@ class _DashboardTripRow extends StatelessWidget {
                   style: IconButton.styleFrom(foregroundColor: Colors.white, backgroundColor: Colors.white.withValues(alpha: 0.12)),
                   tooltip: "Fare & tip info",
                 ),
-                const SizedBox(width: 4),
                 if (onPay != null)
                   TextButton.icon(
                     onPressed: paymentBusy ? null : onPay,
@@ -1250,7 +1264,6 @@ class _DashboardTripRow extends StatelessWidget {
                     label: Text(paymentBusy ? "Processing..." : "Pay now"),
                     style: TextButton.styleFrom(foregroundColor: const Color(0xFF5EEAD4)),
                   ),
-                if (onPay != null) const SizedBox(width: 4),
                 if (completed)
                   TextButton.icon(
                     onPressed: onReview,
@@ -2089,7 +2102,11 @@ class _RideTabState extends State<RideTab> {
       }
 
       Stripe.publishableKey = publishableKey;
-      await Stripe.instance.applySettings();
+      Stripe.urlScheme = "ridermobile";
+      await Stripe.instance.applySettings().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException("Stripe settings timed out."),
+      );
 
       final paymentIntent = await _api.createTripPaymentIntent(
         tripId: tripId,
@@ -2109,9 +2126,17 @@ class _RideTabState extends State<RideTab> {
           paymentIntentClientSecret: clientSecret,
           merchantDisplayName: "RideMatch",
           style: ThemeMode.dark,
+          paymentMethodOrder: const ["card"],
+          returnURL: "ridermobile://stripe-redirect",
         ),
+      ).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => throw TimeoutException("Stripe payment sheet setup timed out."),
       );
-      await Stripe.instance.presentPaymentSheet();
+      await Stripe.instance.presentPaymentSheet().timeout(
+        const Duration(seconds: 60),
+        onTimeout: () => throw TimeoutException("Stripe payment sheet did not open."),
+      );
 
       if (!mounted) {
         return;
