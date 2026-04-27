@@ -1400,10 +1400,11 @@ class _RideTabState extends State<RideTab> {
 
   void _connectRealTime() {
     final socket = io.io(
-      "http://10.0.2.2:8002",
+      "http://$_kRiderApiHost:8002",
       <String, dynamic>{
-        "transports": ["websocket"],
+        "transports": ["websocket", "polling"],
         "autoConnect": false,
+        "reconnection": true,
       },
     );
 

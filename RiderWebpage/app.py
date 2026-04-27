@@ -474,18 +474,26 @@ def api_rider_match_choice():
             estimated_distance_miles=estimated_distance_miles,
             estimated_duration_minutes=estimated_duration_minutes,
         )
-        publish_trip_event("trip_created", trip)
-        #notify driver server of the new ride request so it can trigger a notification if the driver is connected
-        notify_driver_server(
-            "ride_request_received",
-            {
-                "target_role": "driver",
-                "account_id": driver_id,
-                "title": "New ride request",
-                "message": f"Pickup: {start_loc} • Dropoff: {end_loc}",
-                "trip": trip,
-            },
-        )
+        try:
+            publish_trip_event("trip_created", trip)
+        except Exception as exc:
+            app.logger.warning("Trip %s was created, but realtime publish failed: %s", trip.get("trip_id"), exc)
+
+        # Notify the driver server if it is running, but do not fail the rider's
+        # match after the trip has already been created.
+        try:
+            notify_driver_server(
+                "ride_request_received",
+                {
+                    "target_role": "driver",
+                    "account_id": driver_id,
+                    "title": "New ride request",
+                    "message": f"Pickup: {start_loc} • Dropoff: {end_loc}",
+                    "trip": trip,
+                },
+            )
+        except Exception as exc:
+            app.logger.warning("Trip %s was created, but driver notification failed: %s", trip.get("trip_id"), exc)
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 409
     except Exception as exc:
@@ -518,7 +526,7 @@ def notify_driver_server(event_name: str, payload: dict) -> None:
     driver_server_base = os.environ.get("DRIVER_SERVER_URL", "http://127.0.0.1:8002")
     internal_key = os.environ.get("INTERNAL_API_KEY", "change-this-key")
 
-    requests.post(
+    response = requests.post(
         f"{driver_server_base}/internal/notify",
         json={
             "event": event_name,
@@ -527,6 +535,7 @@ def notify_driver_server(event_name: str, payload: dict) -> None:
         headers={"X-Internal-Key": internal_key},
         timeout=3,
     )
+    response.raise_for_status()
 
 
 @app.route("/api/rider/trip/<int:trip_id>/cancel", methods=["POST"])
