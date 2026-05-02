@@ -2940,29 +2940,14 @@ class _StartDriveTabState extends State<StartDriveTab> {
       setState(() {
         _trip = updatedTrip is Map ? Map<String, dynamic>.from(updatedTrip) : null;
         _message = action == "accept"
-            ? "Ride accepted."
+            ? "Ride accepted. Open Maps when you are ready."
             : action == "start"
-                ? "Rider picked up. Opening destination in Google Maps."
+                ? "Rider picked up. Open Maps when you are ready."
                 : "Trip completed.";
         _messageIsError = false;
       });
       await _refreshNavigationPreview();
       WidgetsBinding.instance.addPostFrameCallback((_) => _recenterMapToRoute());
-      if (action == "accept" && _trip != null) {
-        await _openGoogleMapsDirections(
-          destinationAddress: (_trip!["start_loc"] ?? "").toString(),
-          destinationLatLng: _targetLatLng,
-          emptyDestinationMessage: "Ride accepted, but the rider pickup location is missing.",
-          launchFailureMessage: "Ride accepted, but Google Maps could not open directions to the rider.",
-        );
-      } else if (action == "start" && _trip != null) {
-        await _openGoogleMapsDirections(
-          destinationAddress: (_trip!["end_loc"] ?? "").toString(),
-          destinationLatLng: _targetLatLng,
-          emptyDestinationMessage: "Trip started, but the dropoff destination is missing.",
-          launchFailureMessage: "Trip started, but Google Maps could not open directions to the destination.",
-        );
-      }
       if (action == "complete") {
         final completedTrip = updatedTrip is Map<String, dynamic> ? Map<String, dynamic>.from(updatedTrip) : null;
         await _loadDispatch();

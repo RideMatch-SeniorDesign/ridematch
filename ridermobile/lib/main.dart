@@ -1048,6 +1048,12 @@ class _DashboardTabState extends State<DashboardTab> {
       );
       return;
     }
+    if (!_tripPaymentSucceeded(trip)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Pay for this trip before adding a tip or review.")),
+      );
+      return;
+    }
     if (trip["rider_rate"] != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("You already left a rating for this trip.")),
@@ -1400,10 +1406,11 @@ class _RideTabState extends State<RideTab> {
 
   void _connectRealTime() {
     final socket = io.io(
-      "http://10.0.2.2:8002",
+      "http://$_kRiderApiHost:8002",
       <String, dynamic>{
-        "transports": ["websocket"],
+        "transports": ["websocket", "polling"],
         "autoConnect": false,
+        "reconnection": true,
       },
     );
 
@@ -1792,6 +1799,7 @@ class _RideTabState extends State<RideTab> {
       final trip = res["trip"];
       final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
       final hadTrip = _trip != null;
+      final completedTripId = _int(_trip?["trip_id"]);
       setState(() {
         _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
@@ -1806,13 +1814,13 @@ class _RideTabState extends State<RideTab> {
       if (_trip != null) {
         _joinTripChatIfNeeded();
       }
-      if (hadTrip && nextTrip == null) {
-        await _promptPostRideReviewIfPending();
+      if (hadTrip && nextTrip == null && completedTripId != null) {
+        await _promptPostRideReviewIfPending(onlyTripId: completedTripId);
       }
     } catch (_) {}
   }
 
-  Future<void> _promptPostRideReviewIfPending() async {
+  Future<void> _promptPostRideReviewIfPending({int? onlyTripId}) async {
     try {
       final res = await _api.fetchPendingReviews(riderId: _id(widget.user));
       if (!mounted || res["success"] != true) {
@@ -1826,6 +1834,12 @@ class _RideTabState extends State<RideTab> {
         final trip = Map<String, dynamic>.from(raw);
         final tid = _int(trip["trip_id"]);
         if (tid == null) {
+          continue;
+        }
+        if (onlyTripId != null && tid != onlyTripId) {
+          continue;
+        }
+        if (!_tripPaymentSucceeded(trip)) {
           continue;
         }
         if (_autoShownReviewTripIds.contains(tid)) {
@@ -3173,13 +3187,21 @@ class _RatingTabState extends State<RatingTab> {
                             borderRadius: BorderRadius.circular(12),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
-                              onTap: () => showRiderTripReviewSheet(
-                                context,
-                                api: _api,
-                                riderId: _id(widget.user),
-                                trip: trip,
-                                onSubmitted: _load,
-                              ),
+                              onTap: () {
+                                if (!_tripPaymentSucceeded(trip)) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text("Pay for this trip before adding a tip or review.")),
+                                  );
+                                  return;
+                                }
+                                showRiderTripReviewSheet(
+                                  context,
+                                  api: _api,
+                                  riderId: _id(widget.user),
+                                  trip: trip,
+                                  onSubmitted: _load,
+                                );
+                              },
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: Row(
@@ -3273,13 +3295,21 @@ class _RatingTabState extends State<RatingTab> {
                                     )
                                   else
                                     FilledButton(
-                                      onPressed: () => showRiderTripReviewSheet(
-                                        context,
-                                        api: _api,
-                                        riderId: _id(widget.user),
-                                        trip: trip,
-                                        onSubmitted: _load,
-                                      ),
+                                      onPressed: () {
+                                        if (!_tripPaymentSucceeded(trip)) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text("Pay for this trip before adding a tip or review.")),
+                                          );
+                                          return;
+                                        }
+                                        showRiderTripReviewSheet(
+                                          context,
+                                          api: _api,
+                                          riderId: _id(widget.user),
+                                          trip: trip,
+                                          onSubmitted: _load,
+                                        );
+                                      },
                                       style: FilledButton.styleFrom(
                                         backgroundColor: Colors.white,
                                         foregroundColor: _kAuthDeepBlue,
@@ -4124,4 +4154,8 @@ String _paymentStatusLabel(dynamic value) {
     default:
       return "Unpaid";
   }
+}
+
+bool _tripPaymentSucceeded(Map<String, dynamic> trip) {
+  return (trip["payment_status"] ?? "").toString().trim().toLowerCase() == "succeeded";
 }
