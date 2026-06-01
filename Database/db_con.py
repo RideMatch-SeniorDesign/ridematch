@@ -13,6 +13,13 @@ db_config = {
     "database": os.getenv("DB_NAME"),
 }
 
+db_port = os.getenv("DB_PORT")
+if db_port:
+    db_config["port"] = int(db_port)
+
+if os.getenv("DB_SSL_MODE", "").upper() == "REQUIRED":
+    db_config["ssl_disabled"] = False
+
 connection_pool = pooling.MySQLConnectionPool(
     pool_name="ride_match_pool",
     pool_size=5,
