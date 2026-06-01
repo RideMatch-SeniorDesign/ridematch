@@ -4,12 +4,13 @@ const _apiHost = String.fromEnvironment(
   "API_HOST",
   defaultValue: "10.0.2.2",
 );
+const _apiBaseUrl = String.fromEnvironment("API_BASE_URL");
 
 class ApiClient {
   ApiClient()
       : _dio = Dio(
           BaseOptions(
-            baseUrl: "http://$_apiHost:8003",
+            baseUrl: _apiBaseUrl.isNotEmpty ? _apiBaseUrl : "http://$_apiHost:8003",
             connectTimeout: const Duration(seconds: 12),
             receiveTimeout: const Duration(seconds: 12),
             headers: {"Content-Type": "application/json"},
