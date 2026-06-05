@@ -1317,6 +1317,7 @@ class _RideTabState extends State<RideTab> {
   bool _suppressDropoffSuggest = false;
   Map<String, dynamic>? _trip;
   List<Map<String, dynamic>> _matchCandidates = [];
+  List<Map<String, dynamic>> _matchDeckSeed = [];
   String _message = "";
   bool _busy = false;
   bool _loadingMatches = false;
@@ -1328,6 +1329,28 @@ class _RideTabState extends State<RideTab> {
   double? _estimatedDurationMinutes;
   LatLng? _driverPoint;
   final Set<int> _autoShownReviewTripIds = <int>{};
+
+  void _cancelMatchDeck() {
+    setState(() {
+      _matchCandidates = [];
+      _matchDeckSeed = [];
+      _showMatchDeckOnly = false;
+      _message = "Ride request canceled.";
+    });
+  }
+
+  void _recirculateMatchDeck() {
+    if (_matchDeckSeed.isEmpty) {
+      return;
+    }
+    setState(() {
+      _matchCandidates = _matchDeckSeed
+          .map((candidate) => Map<String, dynamic>.from(candidate))
+          .toList();
+      _showMatchDeckOnly = true;
+      _message = "Drivers recirculated. Swipe through them again.";
+    });
+  }
 
   void _joinTripChatIfNeeded() {
     final socket = _socket;
@@ -1505,9 +1528,10 @@ class _RideTabState extends State<RideTab> {
   }
 
   void _onPickupTextChanged() {
-    if (_trip == null && _matchCandidates.isNotEmpty) {
+    if (_trip == null && (_matchCandidates.isNotEmpty || _matchDeckSeed.isNotEmpty)) {
       setState(() {
         _matchCandidates = [];
+        _matchDeckSeed = [];
         _showMatchDeckOnly = false;
       });
     }
@@ -1523,9 +1547,10 @@ class _RideTabState extends State<RideTab> {
   }
 
   void _onDropoffTextChanged() {
-    if (_trip == null && _matchCandidates.isNotEmpty) {
+    if (_trip == null && (_matchCandidates.isNotEmpty || _matchDeckSeed.isNotEmpty)) {
       setState(() {
         _matchCandidates = [];
+        _matchDeckSeed = [];
         _showMatchDeckOnly = false;
       });
     }
@@ -1661,6 +1686,7 @@ class _RideTabState extends State<RideTab> {
       }
       if (_trip == null) {
         _matchCandidates = [];
+        _matchDeckSeed = [];
         _showMatchDeckOnly = false;
       }
     });
@@ -1805,6 +1831,7 @@ class _RideTabState extends State<RideTab> {
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
         if (_trip != null) {
           _matchCandidates = [];
+          _matchDeckSeed = [];
           _showMatchDeckOnly = false;
         } else {
           _chatMessages = [];
@@ -1884,6 +1911,7 @@ class _RideTabState extends State<RideTab> {
         _pickupPoint = LatLng(position.latitude, position.longitude);
         if (_trip == null) {
           _matchCandidates = [];
+          _matchDeckSeed = [];
           _showMatchDeckOnly = false;
         }
       });
@@ -1973,6 +2001,9 @@ class _RideTabState extends State<RideTab> {
         _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
         _matchCandidates = nextTrip == null ? nextCandidates : [];
+        _matchDeckSeed = nextTrip == null
+            ? nextCandidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList()
+            : [];
         _showMatchDeckOnly = nextTrip == null && nextCandidates.isNotEmpty;
         if (res["success"] == true) {
           if (nextTrip != null) {
@@ -2034,6 +2065,7 @@ class _RideTabState extends State<RideTab> {
           _trip = nextTrip;
           _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
           _matchCandidates = [];
+          _matchDeckSeed = [];
           _showMatchDeckOnly = false;
           _message = nextTrip != null
               ? "Ride request sent to ${(candidate["name"] ?? "your driver").toString()}."
@@ -2045,10 +2077,10 @@ class _RideTabState extends State<RideTab> {
         final remainingCandidates = _matchCandidates.skip(1).toList();
         final hasMoreCandidates = remainingCandidates.isNotEmpty;
         _matchCandidates = remainingCandidates;
-        _showMatchDeckOnly = hasMoreCandidates;
+        _showMatchDeckOnly = true;
         _message = hasMoreCandidates
             ? "Passed. Swipe on the next driver."
-            : "No more drivers in this deck right now.";
+            : "End of drivers reached.";
       });
       return true;
     } catch (exc) {
@@ -2076,6 +2108,7 @@ class _RideTabState extends State<RideTab> {
         if (res["success"] == true) {
           _trip = null;
           _driverPoint = null;
+          _matchDeckSeed = [];
           _showMatchDeckOnly = false;
         }
       });
@@ -2208,12 +2241,19 @@ class _RideTabState extends State<RideTab> {
     ];
     final welcomeFirst = (widget.user["first_name"] ?? "").toString().trim();
     final rideHeroTitle = welcomeFirst.isEmpty ? "Request a ride" : "Welcome, $welcomeFirst";
-    final messageIsError = !(_message.startsWith("Ride request sent") ||
-        _message == "Ride canceled." ||
-        _message.startsWith("Passed.") ||
-        _message.startsWith("Swipe right") ||
-        _message == "You already have an active ride.");
+    final messageIsError = !(
+      _message.startsWith("Ride request sent") ||
+          _message == "Ride canceled." ||
+          _message == "Ride request canceled." ||
+          _message.startsWith("Passed.") ||
+          _message.startsWith("Swipe right") ||
+          _message.startsWith("Drivers recirculated") ||
+          _message == "End of drivers reached." ||
+          _message == "You already have an active ride."
+    );
     final isBrowsingMatches = _trip == null && _showMatchDeckOnly && _matchCandidates.isNotEmpty;
+    final isMatchDeckEnded =
+        _trip == null && _showMatchDeckOnly && _matchCandidates.isEmpty && _matchDeckSeed.isNotEmpty;
     return _PageShell(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -2224,23 +2264,19 @@ class _RideTabState extends State<RideTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (_trip != null) ...[
-                  const SizedBox(height: 14),
-                  _buildChatPanel(),
-                ],
                 Row(
                   children: [
                     Icon(Icons.map_outlined, color: Colors.white.withValues(alpha: 0.9), size: 22),
                     const SizedBox(width: 8),
                     Text(
-                      isBrowsingMatches ? "Browse drivers" : rideHeroTitle,
+                      isBrowsingMatches || isMatchDeckEnded ? "Browse drivers" : rideHeroTitle,
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  isBrowsingMatches
+                  isBrowsingMatches || isMatchDeckEnded
                       ? "Swipe through the available drivers for this ride request."
                       : _trip == null
                       ? "Set pickup and destination, then browse available drivers with a swipe deck."
@@ -2248,7 +2284,7 @@ class _RideTabState extends State<RideTab> {
                   style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.65), height: 1.35),
                 ),
                 const SizedBox(height: 14),
-                if (!isBrowsingMatches) ...[
+                if (!isBrowsingMatches && !isMatchDeckEnded) ...[
                   SizedBox(
                     height: 240,
                     child: ClipRRect(
@@ -2267,7 +2303,7 @@ class _RideTabState extends State<RideTab> {
                   ),
                   const SizedBox(height: 14),
                 ],
-                if (_trip == null && !isBrowsingMatches) ...[
+                if (_trip == null && !isBrowsingMatches && !isMatchDeckEnded) ...[
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -2597,6 +2633,68 @@ class _RideTabState extends State<RideTab> {
                       ),
                     ],
                   ),
+                ] else if (isMatchDeckEnded) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.flag_rounded, color: Colors.white, size: 22),
+                            SizedBox(width: 8),
+                            Text(
+                              "End of drivers reached",
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          "You passed every driver in this deck. You can cancel this ride request or bring the same drivers back around.",
+                          style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.68), height: 1.35),
+                        ),
+                        const SizedBox(height: 14),
+                        Column(
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: _busy ? null : _recirculateMatchDeck,
+                                icon: const Icon(Icons.replay_rounded),
+                                label: const Text("Recirculate drivers"),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: _kAuthDeepBlue,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: _busy ? null : _cancelMatchDeck,
+                                icon: const Icon(Icons.close_rounded),
+                                label: const Text("Cancel request"),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ] else ...[
                   _RiderRow("Status", _title(_trip?["status"])),
                   _RiderRow("Driver", (_trip?["driver_name"] ?? "Pending assignment").toString()),
@@ -2634,6 +2732,8 @@ class _RideTabState extends State<RideTab> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 14),
+                  _buildChatPanel(),
                 ],
               ],
             ),
