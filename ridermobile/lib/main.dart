@@ -1307,6 +1307,7 @@ class _RideTabState extends State<RideTab> {
   int? _joinedChatTripId;
 
   Timer? _poll;
+  Timer? _offerCountdownTimer;
   Timer? _pickupSuggestTimer;
   Timer? _dropoffSuggestTimer;
   StreamSubscription<Position>? _locationSubscription;
@@ -1462,12 +1463,18 @@ class _RideTabState extends State<RideTab> {
     _connectRealTime();
     _load();
     _poll = Timer.periodic(const Duration(seconds: 7), (_) => _load());
+    _offerCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && (_trip?["status"] ?? "").toString() == "requested") {
+        setState(() {});
+      }
+    });
     _startLocationUpdates();
   }
 
   @override
   void dispose() {
     _poll?.cancel();
+    _offerCountdownTimer?.cancel();
     _pickupSuggestTimer?.cancel();
     _dropoffSuggestTimer?.cancel();
     _locationSubscription?.cancel();
@@ -1927,7 +1934,7 @@ class _RideTabState extends State<RideTab> {
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
         if (hadTrip && previousDriverId != null && nextDriverId != null && previousDriverId != nextDriverId &&
             (_trip?["status"] ?? "").toString() == "requested") {
-          _message = "Finding your next best match… ${_trip?["driver_name"] ?? "A driver"} has 20 seconds to respond.";
+          _message = "Finding your next best match… ${_trip?["driver_name"] ?? "A driver"} has ${_offerSecondsRemaining()} seconds to respond.";
         }
         if (_trip != null) {
           _matchCandidates = [];
@@ -1956,12 +1963,30 @@ class _RideTabState extends State<RideTab> {
     } catch (_) {}
   }
 
-  String _offerCountdown() {
-    final expiresAt = DateTime.tryParse((_trip?["offer_expires_at"] ?? "").toString())?.toLocal();
-    if (expiresAt == null) {
-      return "Waiting for a response";
+  int _offerSecondsRemaining() {
+    final trip = _trip;
+    if (trip == null) {
+      return 0;
     }
-    final seconds = expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 999);
+    final serverSeconds = int.tryParse((trip["offer_seconds_remaining"] ?? "").toString());
+    if (serverSeconds != null) {
+      final receivedAt = DateTime.tryParse((trip["offer_received_at"] ?? "").toString());
+      if (receivedAt != null) {
+        return (serverSeconds - DateTime.now().difference(receivedAt).inSeconds).clamp(0, serverSeconds);
+      }
+      trip["offer_received_at"] = DateTime.now().toIso8601String();
+      return serverSeconds;
+    }
+
+    final expiresAt = DateTime.tryParse((trip["offer_expires_at"] ?? "").toString());
+    return expiresAt == null ? 0 : expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 60);
+  }
+
+  String _offerCountdown() {
+    final seconds = _offerSecondsRemaining();
+    if (seconds <= 0) {
+      return "Finding your next best match…";
+    }
     return "Driver has ${seconds}s to respond";
   }
 
