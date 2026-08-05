@@ -31,6 +31,8 @@ _RIDE_TYPE_MULTIPLIERS = {
     "premium": 1.60,
 }
 
+TRIP_OFFER_TIMEOUT_SECONDS = 20
+
 
 def _normalize_payout_schedule(value: str | None) -> str:
     key = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
@@ -370,11 +372,36 @@ def _ensure_rider_match_swipe_table() -> None:
     )
 
 
+def _ensure_trip_offer_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS trip_offer (
+            OfferID INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            TripID INT NOT NULL,
+            DriverID INT NOT NULL,
+            Status VARCHAR(16) NOT NULL DEFAULT 'offered',
+            OfferedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            ExpiresAt DATETIME NOT NULL,
+            RespondedAt DATETIME NULL,
+            CONSTRAINT fk_trip_offer_trip
+                FOREIGN KEY (TripID) REFERENCES trip(TripID)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_trip_offer_driver
+                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
+                ON DELETE CASCADE,
+            INDEX idx_trip_offer_active (TripID, Status, ExpiresAt),
+            INDEX idx_trip_offer_driver (DriverID, Status, ExpiresAt)
+        )
+        """
+    )
+
+
 def _ensure_dispatch_query_tables() -> None:
     """Tables joined by _dispatch_trip_select() must exist before any dispatch query."""
     _ensure_driver_live_location_table()
     _ensure_trip_pricing_columns()
     _ensure_payment_table()
+    _ensure_trip_offer_table()
 
 
 def _split_preference_csv(value: str | None) -> set[str]:
@@ -1544,14 +1571,93 @@ def _dispatch_trip_select() -> str:
             d.Status AS driver_status,
             dl.Latitude AS driver_latitude,
             dl.Longitude AS driver_longitude,
-            dl.UpdatedAt AS driver_location_updated_at
+            dl.UpdatedAt AS driver_location_updated_at,
+            offer.OfferID AS offer_id,
+            offer.Status AS offer_status,
+            DATE_FORMAT(offer.OfferedAt, '%Y-%m-%dT%H:%i:%s') AS offer_offered_at,
+            DATE_FORMAT(offer.ExpiresAt, '%Y-%m-%dT%H:%i:%s') AS offer_expires_at
         FROM trip t
         JOIN account dacc ON dacc.AccountID = t.DriverID
         JOIN account racc ON racc.AccountID = t.RiderID
         LEFT JOIN driver d ON d.AccountID = t.DriverID
         LEFT JOIN driver_live_location dl ON dl.DriverID = t.DriverID
         LEFT JOIN payment p ON p.TripID = t.TripID
+        LEFT JOIN trip_offer offer
+            ON offer.OfferID = (
+                SELECT latest_offer.OfferID
+                FROM trip_offer latest_offer
+                WHERE latest_offer.TripID = t.TripID
+                ORDER BY latest_offer.OfferID DESC
+                LIMIT 1
+            )
     """
+
+
+def _create_trip_offer(*, trip_id: int, driver_id: int) -> None:
+    _ensure_trip_offer_table()
+    _execute(
+        """
+        INSERT INTO trip_offer (TripID, DriverID, Status, ExpiresAt)
+        VALUES (%s, %s, 'offered', DATE_ADD(NOW(), INTERVAL %s SECOND))
+        """,
+        (trip_id, driver_id, TRIP_OFFER_TIMEOUT_SECONDS),
+    )
+
+
+def _assign_next_trip_offer(trip_id: int) -> dict[str, Any] | None:
+    trip = fetch_trip_by_id(trip_id)
+    if not trip or str(trip.get("status") or "").lower() != "requested":
+        return trip
+
+    offered_rows = _fetch_all("SELECT DriverID AS driver_id FROM trip_offer WHERE TripID = %s", (trip_id,))
+    attempted_driver_ids = {int(row["driver_id"]) for row in offered_rows}
+    candidates = fetch_driver_match_candidates(
+        rider_id=int(trip["rider_id"]),
+        start_loc=str(trip.get("start_loc") or ""),
+        end_loc=str(trip.get("end_loc") or ""),
+        limit=50,
+    )
+    next_driver = next(
+        (candidate for candidate in candidates if int(candidate.get("account_id") or 0) not in attempted_driver_ids),
+        None,
+    )
+    if not next_driver:
+        _execute(
+            "UPDATE trip SET Status = 'canceled' WHERE TripID = %s AND Status = 'requested'",
+            (trip_id,),
+        )
+        return fetch_trip_by_id(trip_id)
+
+    driver_id = int(next_driver["account_id"])
+    updated = _execute(
+        "UPDATE trip SET DriverID = %s WHERE TripID = %s AND Status = 'requested'",
+        (driver_id, trip_id),
+    )
+    if updated <= 0:
+        return fetch_trip_by_id(trip_id)
+    _create_trip_offer(trip_id=trip_id, driver_id=driver_id)
+    return fetch_trip_by_id(trip_id)
+
+
+def _expire_trip_offer_if_needed(trip_id: int) -> dict[str, Any] | None:
+    _ensure_trip_offer_table()
+    rows = _execute(
+        """
+        UPDATE trip_offer
+        SET Status = 'expired', RespondedAt = NOW()
+        WHERE TripID = %s
+          AND Status = 'offered'
+          AND ExpiresAt <= NOW()
+        """,
+        (trip_id,),
+    )
+    if rows > 0:
+        _execute(
+            "UPDATE trip SET Status = 'canceled' WHERE TripID = %s AND Status = 'requested'",
+            (trip_id,),
+        )
+        return fetch_trip_by_id(trip_id)
+    return fetch_trip_by_id(trip_id)
 
 
 def fetch_active_rider_trip(account_id: int) -> dict[str, Any] | None:
@@ -1568,7 +1674,15 @@ def fetch_active_rider_trip(account_id: int) -> dict[str, Any] | None:
         """,
         (account_id,),
     )
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    trip = rows[0]
+    if str(trip.get("status") or "").lower() == "requested":
+        refreshed = _expire_trip_offer_if_needed(int(trip["trip_id"]))
+        if not refreshed or str(refreshed.get("status") or "").lower() not in {"requested", "accepted", "in_progress"}:
+            return None
+        return refreshed
+    return trip
 
 
 def fetch_active_driver_trip(account_id: int) -> dict[str, Any] | None:
@@ -1585,7 +1699,15 @@ def fetch_active_driver_trip(account_id: int) -> dict[str, Any] | None:
         """,
         (account_id,),
     )
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    trip = rows[0]
+    if str(trip.get("status") or "").lower() == "requested":
+        refreshed = _expire_trip_offer_if_needed(int(trip["trip_id"]))
+        if not refreshed or int(refreshed.get("driver_id") or 0) != account_id:
+            return None
+        return refreshed
+    return trip
 
 
 def _pick_best_driver_for_request() -> int | None:
@@ -1842,7 +1964,8 @@ def _create_trip_with_driver(
     )
     if not created_trip:
         raise ValueError("Ride request was created but could not be loaded.")
-    return created_trip[0]
+    _create_trip_offer(trip_id=trip_id, driver_id=driver_id)
+    return fetch_trip_by_id(trip_id) or created_trip[0]
 
 
 def fetch_driver_match_candidates(
@@ -2060,6 +2183,23 @@ def update_trip_status_for_driver(
     next_status: str,
     final_cost: float | None = None,
 ) -> dict[str, Any] | None:
+    if next_status == "accepted":
+        refreshed = _expire_trip_offer_if_needed(trip_id)
+        if not refreshed or int(refreshed.get("driver_id") or 0) != driver_id:
+            return None
+        offer_rows = _execute(
+            """
+            UPDATE trip_offer
+            SET Status = 'accepted', RespondedAt = NOW()
+            WHERE TripID = %s
+              AND DriverID = %s
+              AND Status = 'offered'
+              AND ExpiresAt > NOW()
+            """,
+            (trip_id, driver_id),
+        )
+        if offer_rows <= 0:
+            return None
     status_map = {
         "accepted": ("requested",),
         "in_progress": ("accepted",),
@@ -2105,6 +2245,33 @@ def update_trip_status_for_driver(
     if rows <= 0:
         return None
     return fetch_active_driver_trip(driver_id) if next_status != "completed" else fetch_trip_by_id(trip_id)
+
+
+def decline_trip_offer(*, trip_id: int, driver_id: int) -> dict[str, Any] | None:
+    _ensure_trip_offer_table()
+    rows = _execute(
+        """
+        UPDATE trip_offer
+        SET Status = 'declined', RespondedAt = NOW()
+        WHERE TripID = %s
+          AND DriverID = %s
+          AND Status = 'offered'
+          AND ExpiresAt > NOW()
+        """,
+        (trip_id, driver_id),
+    )
+    if rows <= 0:
+        if next_status == "accepted":
+            _execute(
+                """
+                UPDATE trip_offer
+                SET Status = 'offered', RespondedAt = NULL
+                WHERE TripID = %s AND DriverID = %s AND Status = 'accepted'
+                """,
+                (trip_id, driver_id),
+            )
+        return None
+    return _assign_next_trip_offer(trip_id)
 
 
 def complete_trip_for_rider(*, trip_id: int, rider_id: int) -> dict[str, Any] | None:

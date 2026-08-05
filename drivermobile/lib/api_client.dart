@@ -462,6 +462,17 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  Future<Map<String, dynamic>> declineTrip({
+    required int tripId,
+    required int driverId,
+  }) async {
+    final response = await _dio.post(
+      "/api/driver/trip/$tripId/decline",
+      data: <String, dynamic>{"driver_id": driverId},
+    );
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
   Future<Map<String, dynamic>> startTrip({
     required int tripId,
     required int driverId,

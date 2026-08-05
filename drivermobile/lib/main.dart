@@ -2924,6 +2924,8 @@ class _StartDriveTabState extends State<StartDriveTab> {
       late Map<String, dynamic> response;
       if (action == "accept") {
         response = await _api.acceptTrip(tripId: tripId, driverId: accountId);
+      } else if (action == "decline") {
+        response = await _api.declineTrip(tripId: tripId, driverId: accountId);
       } else if (action == "start") {
         response = await _api.startTrip(tripId: tripId, driverId: accountId);
       } else {
@@ -2939,7 +2941,9 @@ class _StartDriveTabState extends State<StartDriveTab> {
       final updatedTrip = response["trip"];
       setState(() {
         _trip = updatedTrip is Map ? Map<String, dynamic>.from(updatedTrip) : null;
-        _message = action == "accept"
+        _message = action == "decline"
+            ? "Ride declined. The rider is being offered another driver."
+            : action == "accept"
             ? "Ride accepted. Open Maps when you are ready."
             : action == "start"
                 ? "Rider picked up. Open Maps when you are ready."
@@ -2990,6 +2994,15 @@ class _StartDriveTabState extends State<StartDriveTab> {
     }
     final text = (value ?? "").toString().trim();
     return double.tryParse(text);
+  }
+
+  String _offerCountdown(Map<String, dynamic> trip) {
+    final expiresAt = DateTime.tryParse((trip["offer_expires_at"] ?? "").toString())?.toLocal();
+    if (expiresAt == null) {
+      return "Respond now";
+    }
+    final seconds = expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 999);
+    return "${seconds}s remaining";
   }
 
   LatLng? _tripDriverLatLng() {
@@ -3526,6 +3539,8 @@ class _StartDriveTabState extends State<StartDriveTab> {
                     children: [
                       _DispatchDetailRow(label: "Trip #", value: "${trip["trip_id"]}"),
                       _DispatchDetailRow(label: "Status", value: status.replaceAll("_", " ")),
+                      if (status == "requested")
+                        _DispatchDetailRow(label: "Response window", value: _offerCountdown(trip)),
                       _DispatchDetailRow(label: "Rider", value: (trip["rider_name"] ?? "Unknown").toString()),
                       _DispatchDetailRow(label: "Pickup", value: (trip["start_loc"] ?? "").toString()),
                       _DispatchDetailRow(label: "Dropoff", value: (trip["end_loc"] ?? "").toString()),
@@ -3675,18 +3690,35 @@ class _StartDriveTabState extends State<StartDriveTab> {
                         const SizedBox(height: 12),
                       ],
                       if (status == "requested")
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: _submitting ? null : () => _runTripAction("accept"),
-                            icon: const Icon(Icons.check_circle_outline),
-                            label: const Text("Accept Ride and Navigate to Rider"),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: _kAuthDeepBlue,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _submitting ? null : () => _runTripAction("decline"),
+                                icon: const Icon(Icons.close_rounded),
+                                label: const Text("Decline"),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 2,
+                              child: FilledButton.icon(
+                                onPressed: _submitting ? null : () => _runTripAction("accept"),
+                                icon: const Icon(Icons.check_circle_outline),
+                                label: const Text("Accept Ride"),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: _kAuthDeepBlue,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       if (status == "accepted") ...[
                         SizedBox(

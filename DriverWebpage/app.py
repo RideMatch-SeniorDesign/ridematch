@@ -1627,6 +1627,27 @@ def api_driver_accept_trip(trip_id: int):
     return jsonify({"success": True, "trip": trip}), 200
 
 
+@app.route("/api/driver/trip/<int:trip_id>/decline", methods=["POST"])
+def api_driver_decline_trip(trip_id: int):
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+
+    try:
+        from Database.admin_queries import decline_trip_offer
+
+        next_trip = decline_trip_offer(trip_id=trip_id, driver_id=driver_id)
+    except Exception as exc:
+        app.logger.warning("Driver decline trip failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not decline trip right now."}), 500
+
+    if not next_trip:
+        return jsonify({"success": False, "error": "Trip is no longer available to decline."}), 409
+    _emit_trip_update("trip_offer_declined", next_trip)
+    return jsonify({"success": True, "trip": next_trip}), 200
+
+
 @app.route("/api/driver/trip/<int:trip_id>/start", methods=["POST"])
 def api_driver_start_trip(trip_id: int):
     payload = request.get_json(silent=True) or {}

@@ -1318,6 +1318,7 @@ class _RideTabState extends State<RideTab> {
   Map<String, dynamic>? _trip;
   List<Map<String, dynamic>> _matchCandidates = [];
   List<Map<String, dynamic>> _matchDeckSeed = [];
+  List<Map<String, dynamic>> _postOfferCandidates = [];
   String _message = "";
   bool _busy = false;
   bool _loadingMatches = false;
@@ -1826,9 +1827,16 @@ class _RideTabState extends State<RideTab> {
       final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
       final hadTrip = _trip != null;
       final completedTripId = _int(_trip?["trip_id"]);
+      final previousStatus = (_trip?["status"] ?? "").toString();
+      final previousDriverId = _int(_trip?["driver_id"]);
+      final nextDriverId = _int(nextTrip?["driver_id"]);
       setState(() {
         _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
+        if (hadTrip && previousDriverId != null && nextDriverId != null && previousDriverId != nextDriverId &&
+            (_trip?["status"] ?? "").toString() == "requested") {
+          _message = "Finding your next best match… ${_trip?["driver_name"] ?? "A driver"} has 20 seconds to respond.";
+        }
         if (_trip != null) {
           _matchCandidates = [];
           _matchDeckSeed = [];
@@ -1842,9 +1850,27 @@ class _RideTabState extends State<RideTab> {
         _joinTripChatIfNeeded();
       }
       if (hadTrip && nextTrip == null && completedTripId != null) {
+        if (previousStatus == "requested" && _postOfferCandidates.isNotEmpty && mounted) {
+          setState(() {
+            _matchCandidates = _postOfferCandidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
+            _matchDeckSeed = _postOfferCandidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
+            _postOfferCandidates = [];
+            _showMatchDeckOnly = true;
+            _message = "Your driver did not respond. Choose another available driver.";
+          });
+        }
         await _promptPostRideReviewIfPending(onlyTripId: completedTripId);
       }
     } catch (_) {}
+  }
+
+  String _offerCountdown() {
+    final expiresAt = DateTime.tryParse((_trip?["offer_expires_at"] ?? "").toString())?.toLocal();
+    if (expiresAt == null) {
+      return "Waiting for a response";
+    }
+    final seconds = expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 999);
+    return "Driver has ${seconds}s to respond";
   }
 
   Future<void> _promptPostRideReviewIfPending({int? onlyTripId}) async {
@@ -2004,6 +2030,7 @@ class _RideTabState extends State<RideTab> {
         _matchDeckSeed = nextTrip == null
             ? nextCandidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList()
             : [];
+        _postOfferCandidates = [];
         _showMatchDeckOnly = nextTrip == null && nextCandidates.isNotEmpty;
         if (res["success"] == true) {
           if (nextTrip != null) {
@@ -2061,11 +2088,13 @@ class _RideTabState extends State<RideTab> {
       if (direction == "right") {
         final trip = res["trip"];
         final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
+        final remainingCandidates = _matchCandidates.skip(1).map((candidate) => Map<String, dynamic>.from(candidate)).toList();
         setState(() {
           _trip = nextTrip;
           _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
           _matchCandidates = [];
           _matchDeckSeed = [];
+          _postOfferCandidates = remainingCandidates;
           _showMatchDeckOnly = false;
           _message = nextTrip != null
               ? "Ride request sent to ${(candidate["name"] ?? "your driver").toString()}."
@@ -2243,6 +2272,8 @@ class _RideTabState extends State<RideTab> {
     final rideHeroTitle = welcomeFirst.isEmpty ? "Request a ride" : "Welcome, $welcomeFirst";
     final messageIsError = !(
       _message.startsWith("Ride request sent") ||
+          _message.startsWith("Finding your next best match") ||
+          _message.startsWith("Your driver did not respond") ||
           _message == "Ride canceled." ||
           _message == "Ride request canceled." ||
           _message.startsWith("Passed.") ||
@@ -2698,6 +2729,8 @@ class _RideTabState extends State<RideTab> {
                 ] else ...[
                   _RiderRow("Status", _title(_trip?["status"])),
                   _RiderRow("Driver", (_trip?["driver_name"] ?? "Pending assignment").toString()),
+                  if ((_trip?["status"] ?? "").toString() == "requested")
+                    _RiderRow("Match status", _offerCountdown()),
                   _RiderRow("Pickup", (_trip?["start_loc"] ?? "N/A").toString()),
                   _RiderRow("Dropoff", (_trip?["end_loc"] ?? "N/A").toString()),
                   _RiderRow("Driver location", (_trip?["driver_location_updated_at"] ?? "Waiting for driver location").toString()),
