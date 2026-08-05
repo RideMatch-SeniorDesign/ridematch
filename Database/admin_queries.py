@@ -31,7 +31,7 @@ _RIDE_TYPE_MULTIPLIERS = {
     "premium": 1.60,
 }
 
-TRIP_OFFER_TIMEOUT_SECONDS = 20
+TRIP_OFFER_TIMEOUT_SECONDS = 60
 _trip_offer_table_ready = False
 
 
