@@ -487,6 +487,8 @@ def app(monkeypatch, fake_repo):
     monkeypatch.setattr(app_module, "ADMIN_PASSWORD", "ridematch123")
     monkeypatch.setattr(app_module, "ADMIN_ACCOUNTS_JSON", "")
     monkeypatch.setattr(app_module, "ADMIN_TOTP_SECRET", "")
+    monkeypatch.setattr(app_module, "ADMIN_MFA_ENCRYPTION_KEY", "")
+    monkeypatch.setattr(app_module, "ADMIN_2FA_ENROLLMENT_OPEN", False)
     monkeypatch.setattr(app_module, "ADMIN_FARE_SHARE", 0.25)
     monkeypatch.setattr(app_module, "DRIVER_FARE_SHARE", 0.75)
     monkeypatch.setattr(app_module, "DRIVER_PAYOUT_SCHEDULE", "weekly")

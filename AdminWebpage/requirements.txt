@@ -3,3 +3,4 @@ mysql-connector-python
 python-dotenv
 pyotp
 qrcode[pil]
+cryptography

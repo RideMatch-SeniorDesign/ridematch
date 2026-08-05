@@ -33,6 +33,7 @@ _RIDE_TYPE_MULTIPLIERS = {
 
 TRIP_OFFER_TIMEOUT_SECONDS = 60
 _trip_offer_table_ready = False
+_admin_mfa_table_ready = False
 
 
 def _normalize_payout_schedule(value: str | None) -> str:
@@ -402,6 +403,47 @@ def _ensure_trip_offer_table() -> None:
         if not _column_exists("trip_offer", column_name):
             _execute(f"ALTER TABLE trip_offer ADD COLUMN {column_name} {column_type}")
     _trip_offer_table_ready = True
+
+
+def _ensure_admin_mfa_table() -> None:
+    global _admin_mfa_table_ready
+    if _admin_mfa_table_ready:
+        return
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_mfa (
+            Username VARCHAR(128) NOT NULL PRIMARY KEY,
+            EncryptedTotpSecret TEXT NOT NULL,
+            EnrolledAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP
+        )
+        """
+    )
+    _admin_mfa_table_ready = True
+
+
+def fetch_admin_mfa_secret(username: str) -> str | None:
+    _ensure_admin_mfa_table()
+    rows = _fetch_all(
+        "SELECT EncryptedTotpSecret AS encrypted_totp_secret FROM admin_mfa WHERE Username = %s LIMIT 1",
+        (username,),
+    )
+    if not rows:
+        return None
+    return str(rows[0].get("encrypted_totp_secret") or "").strip() or None
+
+
+def save_admin_mfa_secret(username: str, encrypted_totp_secret: str) -> bool:
+    _ensure_admin_mfa_table()
+    rows = _execute(
+        """
+        INSERT INTO admin_mfa (Username, EncryptedTotpSecret)
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE EncryptedTotpSecret = VALUES(EncryptedTotpSecret)
+        """,
+        (username, encrypted_totp_secret),
+    )
+    return rows >= 0
 
 
 def _ensure_dispatch_query_tables() -> None:

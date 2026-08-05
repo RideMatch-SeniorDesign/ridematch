@@ -5,12 +5,16 @@ import sys
 import time
 import hmac
 import json
+from base64 import b64encode
+from io import BytesIO
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
 import pyotp
+import qrcode
+from cryptography.fernet import Fernet, InvalidToken
 from werkzeug.security import check_password_hash
 
 import smtplib
@@ -49,6 +53,8 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_TEST_PASSWORD", "ridematch123")
 ADMIN_ACCOUNTS_JSON = os.environ.get("ADMIN_ACCOUNTS_JSON", "").strip()
 ADMIN_TOTP_SECRET = os.environ.get("ADMIN_TOTP_SECRET", "").strip()
 ADMIN_TOTP_ISSUER = os.environ.get("ADMIN_TOTP_ISSUER", "RideMatch Admin").strip() or "RideMatch Admin"
+ADMIN_MFA_ENCRYPTION_KEY = os.environ.get("ADMIN_MFA_ENCRYPTION_KEY", "").strip()
+ADMIN_2FA_ENROLLMENT_OPEN = os.environ.get("ADMIN_2FA_ENROLLMENT_OPEN", "false").strip().lower() in {"1", "true", "yes"}
 MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "5"))
 LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))
 TOTP_PENDING_SECONDS = int(os.environ.get("ADMIN_TOTP_PENDING_SECONDS", "300"))
@@ -90,7 +96,7 @@ def _admin_accounts() -> dict[str, dict[str, str]]:
                 continue
             password_hash = str(details.get("password_hash") or "").strip()
             totp_secret = str(details.get("totp_secret") or "").strip()
-            if password_hash and totp_secret:
+            if password_hash:
                 accounts[username] = {"password_hash": password_hash, "totp_secret": totp_secret}
         return accounts
     return {
@@ -116,6 +122,52 @@ def _authenticate_admin(username: str, password: str) -> dict[str, str] | None:
     return account if hmac.compare_digest(stored_password, password) else None
 
 
+def _mfa_cipher() -> Fernet | None:
+    if not ADMIN_MFA_ENCRYPTION_KEY:
+        return None
+    try:
+        return Fernet(ADMIN_MFA_ENCRYPTION_KEY.encode("utf-8"))
+    except (TypeError, ValueError):
+        app.logger.error("ADMIN_MFA_ENCRYPTION_KEY is invalid.")
+        return None
+
+
+def _stored_totp_secret(username: str, account: dict[str, str]) -> str | None:
+    configured_secret = account.get("totp_secret", "").strip()
+    if configured_secret:
+        return configured_secret
+    if not ADMIN_ACCOUNTS_JSON:
+        return None
+    cipher = _mfa_cipher()
+    if cipher is None:
+        return None
+    try:
+        from Database.admin_queries import fetch_admin_mfa_secret
+
+        encrypted_secret = fetch_admin_mfa_secret(username)
+        return cipher.decrypt(encrypted_secret.encode("utf-8")).decode("utf-8") if encrypted_secret else None
+    except (InvalidToken, UnicodeDecodeError) as exc:
+        app.logger.warning("Could not decrypt TOTP secret for %s: %s", username, exc)
+        return None
+    except Exception as exc:
+        app.logger.warning("Could not load TOTP secret for %s: %s", username, exc)
+        return None
+
+
+def _save_totp_secret(username: str, secret: str) -> bool:
+    cipher = _mfa_cipher()
+    if cipher is None:
+        return False
+    try:
+        from Database.admin_queries import save_admin_mfa_secret
+
+        encrypted_secret = cipher.encrypt(secret.encode("utf-8")).decode("utf-8")
+        return save_admin_mfa_secret(username, encrypted_secret)
+    except Exception as exc:
+        app.logger.warning("Could not save TOTP secret for %s: %s", username, exc)
+        return False
+
+
 def _complete_admin_login(username: str) -> None:
     session.clear()
     session.permanent = True
@@ -127,6 +179,8 @@ def _clear_pending_two_factor() -> None:
     session.pop("pending_2fa_username", None)
     session.pop("pending_2fa_expires_at", None)
     session.pop("pending_2fa_attempts", None)
+    session.pop("pending_2fa_mode", None)
+    session.pop("pending_2fa_secret", None)
 
 
 def _set_admin_password(new_password: str) -> tuple[bool, str | None]:
@@ -956,12 +1010,24 @@ def login():
                 )
         else:
             account = _admin_accounts().get(username)
-            if account and account.get("totp_secret"):
+            totp_secret = _stored_totp_secret(username, account) if account else None
+            if totp_secret:
                 session.clear()
                 session["pending_2fa_username"] = username
                 session["pending_2fa_expires_at"] = now + TOTP_PENDING_SECONDS
                 session["pending_2fa_attempts"] = 0
+                session["pending_2fa_mode"] = "verify"
                 return redirect(url_for("verify_two_factor"))
+            if ADMIN_ACCOUNTS_JSON:
+                if ADMIN_2FA_ENROLLMENT_OPEN and _mfa_cipher() is not None:
+                    session.clear()
+                    session["pending_2fa_username"] = username
+                    session["pending_2fa_expires_at"] = now + TOTP_PENDING_SECONDS
+                    session["pending_2fa_attempts"] = 0
+                    session["pending_2fa_mode"] = "enroll"
+                    return redirect(url_for("setup_two_factor"))
+                error = "Two-factor authentication is not enrolled for this account."
+                return render_template("login.html", error=error, lockout_seconds_remaining=0)
             _complete_admin_login(username)
             session.pop("failed_login_attempts", None)
             session.pop("login_lockout_until", None)
@@ -981,14 +1047,15 @@ def verify_two_factor():
     pending_username = session.get("pending_2fa_username")
     pending_expires_at = float(session.get("pending_2fa_expires_at") or 0)
     account = _admin_accounts().get(str(pending_username or ""))
-    if not account or not account.get("totp_secret") or pending_expires_at <= time.time():
+    totp_secret = _stored_totp_secret(str(pending_username or ""), account) if account else None
+    if session.get("pending_2fa_mode") != "verify" or not totp_secret or pending_expires_at <= time.time():
         _clear_pending_two_factor()
         return redirect(url_for("login"))
 
     error = None
     if request.method == "POST":
         code = "".join(request.form.get("code", "").split())
-        totp = pyotp.TOTP(account["totp_secret"], issuer=ADMIN_TOTP_ISSUER)
+        totp = pyotp.TOTP(totp_secret, issuer=ADMIN_TOTP_ISSUER)
         if len(code) == 6 and code.isdigit() and totp.verify(code, valid_window=1):
             _complete_admin_login(str(pending_username))
             return redirect(url_for("home"))
@@ -1001,6 +1068,46 @@ def verify_two_factor():
         error = "Invalid authentication code."
 
     return render_template("verify_2fa.html", error=error)
+
+
+@app.route("/setup-2fa", methods=["GET", "POST"])
+def setup_two_factor():
+    if _is_logged_in():
+        return redirect(url_for("home"))
+
+    username = str(session.get("pending_2fa_username") or "")
+    pending_expires_at = float(session.get("pending_2fa_expires_at") or 0)
+    if (
+        not ADMIN_2FA_ENROLLMENT_OPEN
+        or session.get("pending_2fa_mode") != "enroll"
+        or username not in _admin_accounts()
+        or pending_expires_at <= time.time()
+        or _mfa_cipher() is None
+    ):
+        _clear_pending_two_factor()
+        return redirect(url_for("login"))
+
+    secret = str(session.get("pending_2fa_secret") or "")
+    if not secret:
+        secret = pyotp.random_base32()
+        session["pending_2fa_secret"] = secret
+    uri = pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name=ADMIN_TOTP_ISSUER)
+    qr_buffer = BytesIO()
+    qrcode.make(uri).save(qr_buffer, format="PNG")
+    qr_code = b64encode(qr_buffer.getvalue()).decode("ascii")
+
+    error = None
+    if request.method == "POST":
+        code = "".join(request.form.get("code", "").split())
+        if len(code) == 6 and code.isdigit() and pyotp.TOTP(secret).verify(code, valid_window=1):
+            if _save_totp_secret(username, secret):
+                _complete_admin_login(username)
+                return redirect(url_for("home"))
+            error = "Could not save two-factor authentication. Try again."
+        else:
+            error = "Invalid authentication code."
+
+    return render_template("setup_2fa.html", error=error, qr_code=qr_code)
 
 
 @app.route("/home")

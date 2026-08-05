@@ -3,6 +3,7 @@ import pyotp
 import json
 
 import app as app_module
+from cryptography.fernet import Fernet
 from werkzeug.security import generate_password_hash
 
 
@@ -113,6 +114,44 @@ def test_multi_admin_password_changes_are_managed_by_configuration(logged_in_cli
     )
 
     assert "Admin passwords are managed through the configured admin accounts." in response.get_data(as_text=True)
+
+
+def test_admin_can_enroll_totp_through_the_website(client, monkeypatch):
+    saved_secret = {}
+    accounts = {"ella": {"password_hash": generate_password_hash("ella-password")}}
+    monkeypatch.setattr(app_module, "ADMIN_ACCOUNTS_JSON", json.dumps(accounts))
+    monkeypatch.setattr(app_module, "ADMIN_MFA_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(app_module, "ADMIN_2FA_ENROLLMENT_OPEN", True)
+    monkeypatch.setattr(app_module, "_stored_totp_secret", lambda username, account: None)
+    monkeypatch.setattr(
+        app_module,
+        "_save_totp_secret",
+        lambda username, secret: saved_secret.update({"username": username, "secret": secret}) is None,
+    )
+
+    response = client.post(
+        "/login",
+        data={"username": "ella", "password": "ella-password"},
+        follow_redirects=False,
+    )
+
+    assert response.headers["Location"].endswith("/setup-2fa")
+    with client.session_transaction() as session:
+        secret = session["pending_2fa_secret"] if "pending_2fa_secret" in session else None
+
+    response = client.get("/setup-2fa")
+    assert response.status_code == 200
+    with client.session_transaction() as session:
+        secret = session["pending_2fa_secret"]
+
+    response = client.post(
+        "/setup-2fa",
+        data={"code": pyotp.TOTP(secret).now()},
+        follow_redirects=False,
+    )
+
+    assert response.headers["Location"].endswith("/home")
+    assert saved_secret == {"username": "ella", "secret": secret}
 
 
 @pytest.mark.parametrize(

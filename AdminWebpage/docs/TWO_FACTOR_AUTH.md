@@ -1,28 +1,44 @@
 # Admin Two-Factor Authentication
 
-The admin page supports separate password and TOTP credentials for each administrator. Configure the owner, Andre, and Ella as individual accounts.
+The admin site enrolls a separate authenticator app for each administrator. Configure the owner, Andre, and Ella as individual accounts.
 
-## Enroll the Admin Authenticator
+## Prepare the Accounts
 
-Run this command locally, then scan the generated PNG using an authenticator app:
+Run these commands locally and give each person a different password when prompted:
 
 ```powershell
 py -3 -m pip install -r AdminWebpage/requirements.txt
-py -3 scripts/generate_admin_totp.py --username owner --output owner-totp-qr.png
-py -3 scripts/generate_admin_totp.py --username andre --output andre-totp-qr.png
-py -3 scripts/generate_admin_totp.py --username ella --output ella-totp-qr.png
+py -3 scripts/generate_admin_account.py --username owner
+py -3 scripts/generate_admin_account.py --username andre
+py -3 scripts/generate_admin_account.py --username ella
 ```
 
-Each command prints one JSON account entry. Combine the three entries into one `ADMIN_ACCOUNTS_JSON` value in the Admin Render service, for example:
+Each command prints one JSON entry. Combine the entries into `ADMIN_ACCOUNTS_JSON` for the Admin Render service:
 
 ```json
 {
-  "owner": {"password_hash": "...", "totp_secret": "..."},
-  "andre": {"password_hash": "...", "totp_secret": "..."},
-  "ella": {"password_hash": "...", "totp_secret": "..."}
+  "owner": {"password_hash": "..."},
+  "andre": {"password_hash": "..."},
+  "ella": {"password_hash": "..."}
 }
 ```
 
-Also set `ADMIN_TOTP_ISSUER=RideMatch Admin` and `SESSION_COOKIE_SECURE=true` in production.
+Generate an encryption key locally:
 
-Do not commit the generated QR image or the TOTP secret. Store a recovery copy of the secret in your approved password manager.
+```powershell
+py -3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Add these Render environment variables before the enrollment deployment:
+
+```text
+ADMIN_ACCOUNTS_JSON=<combined JSON>
+ADMIN_MFA_ENCRYPTION_KEY=<generated key>
+ADMIN_TOTP_ISSUER=RideMatch Admin
+ADMIN_2FA_ENROLLMENT_OPEN=true
+SESSION_COOKIE_SECURE=true
+```
+
+After deployment, each person signs in to the website using their own password, scans the QR code shown on the setup page, and confirms the six-digit code. Once all three accounts are enrolled, set `ADMIN_2FA_ENROLLMENT_OPEN=false` and deploy again.
+
+Do not commit passwords, encryption keys, QR images, or TOTP secrets. Store recovery copies in your approved password manager.

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Set Up 2FA | RideMatch Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body class="auth-body">
+    <main class="auth-card">
+      <div class="brand">RideMatch Admin</div>
+      <h1>Set up two-factor authentication</h1>
+      <p>Scan this QR code with your authenticator app, then enter the six-digit code to finish.</p>
+      <img src="data:image/png;base64,{{ qr_code }}" alt="Authenticator setup QR code" />
+      {% if error %}
+      <div class="error" role="alert">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="{{ url_for('setup_two_factor') }}">
+        <label for="code">Authentication code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus />
+        <button type="submit">Enable 2FA</button>
+      </form>
+    </main>
+  </body>
+</html>

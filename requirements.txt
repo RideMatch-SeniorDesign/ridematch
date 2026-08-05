@@ -4,6 +4,7 @@ boto3
 mysql-connector-python
 python-dotenv
 pyotp
+cryptography
 python-socketio[client]
 requests
 stripe
