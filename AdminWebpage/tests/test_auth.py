@@ -1,4 +1,7 @@
 import pytest
+import pyotp
+
+import app as app_module
 
 
 def test_login_page_renders_with_expected_fields(client):
@@ -34,6 +37,34 @@ def test_login_with_good_credentials_sets_session_and_redirects(client, login):
     with client.session_transaction() as session:
         assert session["logged_in"] is True
         assert session["username"] == "admin"
+
+
+def test_login_requires_totp_when_configured(client, monkeypatch):
+    secret = pyotp.random_base32()
+    monkeypatch.setattr(app_module, "ADMIN_TOTP_SECRET", secret)
+
+    response = client.post(
+        "/login",
+        data={"username": "admin", "password": "ridematch123"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/verify-2fa")
+    with client.session_transaction() as session:
+        assert "logged_in" not in session
+        assert session["pending_2fa_username"] == "admin"
+
+    response = client.post(
+        "/verify-2fa",
+        data={"code": pyotp.TOTP(secret).now()},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/home")
+    with client.session_transaction() as session:
+        assert session["logged_in"] is True
 
 
 @pytest.mark.parametrize(

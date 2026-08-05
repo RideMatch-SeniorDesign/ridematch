@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
+import pyotp
 
 import smtplib
 from email.message import EmailMessage
@@ -42,11 +43,18 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 ADMIN_USERNAME = os.environ.get("ADMIN_TEST_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_TEST_PASSWORD", "ridematch123")
+ADMIN_TOTP_SECRET = os.environ.get("ADMIN_TOTP_SECRET", "").strip()
+ADMIN_TOTP_ISSUER = os.environ.get("ADMIN_TOTP_ISSUER", "RideMatch Admin").strip() or "RideMatch Admin"
 MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "5"))
 LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))
-SESSION_DAYS = int(os.environ.get("ADMIN_SESSION_DAYS", "365"))
+TOTP_PENDING_SECONDS = int(os.environ.get("ADMIN_TOTP_PENDING_SECONDS", "300"))
+MAX_TOTP_ATTEMPTS = int(os.environ.get("MAX_TOTP_ATTEMPTS", "5"))
+SESSION_DAYS = int(os.environ.get("ADMIN_SESSION_DAYS", "1"))
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
-app.config["SESSION_REFRESH_EACH_REQUEST"] = True
+app.config["SESSION_REFRESH_EACH_REQUEST"] = False
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes"}
 
 ONGOING_TRIP_STATUSES = {"requested", "accepted", "in_progress"}
 DEFAULT_ADMIN_FARE_SHARE = 0.25
@@ -61,6 +69,23 @@ PAYOUT_SCHEDULE_LABELS = {
 
 def _is_logged_in() -> bool:
     return bool(session.get("logged_in"))
+
+
+def _two_factor_enabled() -> bool:
+    return bool(ADMIN_TOTP_SECRET)
+
+
+def _complete_admin_login() -> None:
+    session.clear()
+    session.permanent = True
+    session["logged_in"] = True
+    session["username"] = ADMIN_USERNAME
+
+
+def _clear_pending_two_factor() -> None:
+    session.pop("pending_2fa_username", None)
+    session.pop("pending_2fa_expires_at", None)
+    session.pop("pending_2fa_attempts", None)
 
 
 def _set_admin_password(new_password: str) -> tuple[bool, str | None]:
@@ -865,8 +890,6 @@ def login():
             return render_template(
                 "login.html",
                 error=error,
-                admin_username=ADMIN_USERNAME,
-                admin_password=ADMIN_PASSWORD,
                 lockout_seconds_remaining=lockout_seconds_remaining,
             )
 
@@ -891,9 +914,13 @@ def login():
                     f"{attempts_left} attempt(s) remaining."
                 )
         else:
-            session.permanent = True
-            session["logged_in"] = True
-            session["username"] = ADMIN_USERNAME
+            if _two_factor_enabled():
+                session.clear()
+                session["pending_2fa_username"] = ADMIN_USERNAME
+                session["pending_2fa_expires_at"] = now + TOTP_PENDING_SECONDS
+                session["pending_2fa_attempts"] = 0
+                return redirect(url_for("verify_two_factor"))
+            _complete_admin_login()
             session.pop("failed_login_attempts", None)
             session.pop("login_lockout_until", None)
             return redirect(url_for("home"))
@@ -901,10 +928,39 @@ def login():
     return render_template(
         "login.html",
         error=error,
-        admin_username=ADMIN_USERNAME,
-        admin_password=ADMIN_PASSWORD,
         lockout_seconds_remaining=lockout_seconds_remaining,
     )
+
+
+@app.route("/verify-2fa", methods=["GET", "POST"])
+def verify_two_factor():
+    if _is_logged_in():
+        return redirect(url_for("home"))
+    if not _two_factor_enabled():
+        return redirect(url_for("login"))
+
+    pending_username = session.get("pending_2fa_username")
+    pending_expires_at = float(session.get("pending_2fa_expires_at") or 0)
+    if pending_username != ADMIN_USERNAME or pending_expires_at <= time.time():
+        _clear_pending_two_factor()
+        return redirect(url_for("login"))
+
+    error = None
+    if request.method == "POST":
+        code = "".join(request.form.get("code", "").split())
+        totp = pyotp.TOTP(ADMIN_TOTP_SECRET, issuer=ADMIN_TOTP_ISSUER)
+        if len(code) == 6 and code.isdigit() and totp.verify(code, valid_window=1):
+            _complete_admin_login()
+            return redirect(url_for("home"))
+
+        attempts = int(session.get("pending_2fa_attempts", 0)) + 1
+        if attempts >= MAX_TOTP_ATTEMPTS:
+            _clear_pending_two_factor()
+            return redirect(url_for("login"))
+        session["pending_2fa_attempts"] = attempts
+        error = "Invalid authentication code."
+
+    return render_template("verify_2fa.html", error=error)
 
 
 @app.route("/home")

@@ -3,6 +3,7 @@ Flask-SocketIO
 boto3
 mysql-connector-python
 python-dotenv
+pyotp
 python-socketio[client]
 requests
 stripe
