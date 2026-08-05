@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import sys
 import time
+import hmac
+import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
 from dotenv import load_dotenv, set_key
 import pyotp
+from werkzeug.security import check_password_hash
 
 import smtplib
 from email.message import EmailMessage
@@ -43,6 +46,7 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 ADMIN_USERNAME = os.environ.get("ADMIN_TEST_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_TEST_PASSWORD", "ridematch123")
+ADMIN_ACCOUNTS_JSON = os.environ.get("ADMIN_ACCOUNTS_JSON", "").strip()
 ADMIN_TOTP_SECRET = os.environ.get("ADMIN_TOTP_SECRET", "").strip()
 ADMIN_TOTP_ISSUER = os.environ.get("ADMIN_TOTP_ISSUER", "RideMatch Admin").strip() or "RideMatch Admin"
 MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "5"))
@@ -71,15 +75,52 @@ def _is_logged_in() -> bool:
     return bool(session.get("logged_in"))
 
 
-def _two_factor_enabled() -> bool:
-    return bool(ADMIN_TOTP_SECRET)
+def _admin_accounts() -> dict[str, dict[str, str]]:
+    if ADMIN_ACCOUNTS_JSON:
+        try:
+            configured_accounts = json.loads(ADMIN_ACCOUNTS_JSON)
+        except json.JSONDecodeError:
+            app.logger.error("ADMIN_ACCOUNTS_JSON is not valid JSON.")
+            return {}
+        if not isinstance(configured_accounts, dict):
+            return {}
+        accounts: dict[str, dict[str, str]] = {}
+        for username, details in configured_accounts.items():
+            if not isinstance(username, str) or not isinstance(details, dict):
+                continue
+            password_hash = str(details.get("password_hash") or "").strip()
+            totp_secret = str(details.get("totp_secret") or "").strip()
+            if password_hash and totp_secret:
+                accounts[username] = {"password_hash": password_hash, "totp_secret": totp_secret}
+        return accounts
+    return {
+        ADMIN_USERNAME: {
+            "password": ADMIN_PASSWORD,
+            "totp_secret": ADMIN_TOTP_SECRET,
+        }
+    }
 
 
-def _complete_admin_login() -> None:
+def _authenticate_admin(username: str, password: str) -> dict[str, str] | None:
+    account = _admin_accounts().get(username)
+    if not account:
+        return None
+    password_hash = account.get("password_hash")
+    if password_hash:
+        try:
+            return account if check_password_hash(password_hash, password) else None
+        except ValueError:
+            app.logger.warning("Admin password hash is invalid for %s.", username)
+            return None
+    stored_password = account.get("password", "")
+    return account if hmac.compare_digest(stored_password, password) else None
+
+
+def _complete_admin_login(username: str) -> None:
     session.clear()
     session.permanent = True
     session["logged_in"] = True
-    session["username"] = ADMIN_USERNAME
+    session["username"] = username
 
 
 def _clear_pending_two_factor() -> None:
@@ -898,7 +939,7 @@ def login():
 
         if not username or not password:
             error = "Please enter both a username and password."
-        elif username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        elif not _authenticate_admin(username, password):
             failed_attempts = int(session.get("failed_login_attempts", 0)) + 1
             session["failed_login_attempts"] = failed_attempts
 
@@ -914,13 +955,14 @@ def login():
                     f"{attempts_left} attempt(s) remaining."
                 )
         else:
-            if _two_factor_enabled():
+            account = _admin_accounts().get(username)
+            if account and account.get("totp_secret"):
                 session.clear()
-                session["pending_2fa_username"] = ADMIN_USERNAME
+                session["pending_2fa_username"] = username
                 session["pending_2fa_expires_at"] = now + TOTP_PENDING_SECONDS
                 session["pending_2fa_attempts"] = 0
                 return redirect(url_for("verify_two_factor"))
-            _complete_admin_login()
+            _complete_admin_login(username)
             session.pop("failed_login_attempts", None)
             session.pop("login_lockout_until", None)
             return redirect(url_for("home"))
@@ -936,21 +978,19 @@ def login():
 def verify_two_factor():
     if _is_logged_in():
         return redirect(url_for("home"))
-    if not _two_factor_enabled():
-        return redirect(url_for("login"))
-
     pending_username = session.get("pending_2fa_username")
     pending_expires_at = float(session.get("pending_2fa_expires_at") or 0)
-    if pending_username != ADMIN_USERNAME or pending_expires_at <= time.time():
+    account = _admin_accounts().get(str(pending_username or ""))
+    if not account or not account.get("totp_secret") or pending_expires_at <= time.time():
         _clear_pending_two_factor()
         return redirect(url_for("login"))
 
     error = None
     if request.method == "POST":
         code = "".join(request.form.get("code", "").split())
-        totp = pyotp.TOTP(ADMIN_TOTP_SECRET, issuer=ADMIN_TOTP_ISSUER)
+        totp = pyotp.TOTP(account["totp_secret"], issuer=ADMIN_TOTP_ISSUER)
         if len(code) == 6 and code.isdigit() and totp.verify(code, valid_window=1):
-            _complete_admin_login()
+            _complete_admin_login(str(pending_username))
             return redirect(url_for("home"))
 
         attempts = int(session.get("pending_2fa_attempts", 0)) + 1
@@ -1363,7 +1403,9 @@ def settings():
             new_password = request.form.get("new_password", "").strip()
             confirm_password = request.form.get("confirm_password", "").strip()
 
-            if not current_password or not new_password or not confirm_password:
+            if ADMIN_ACCOUNTS_JSON:
+                settings_error = "Admin passwords are managed through the configured admin accounts."
+            elif not current_password or not new_password or not confirm_password:
                 settings_error = "All password fields are required."
             elif current_password != ADMIN_PASSWORD:
                 settings_error = "Current password is incorrect."

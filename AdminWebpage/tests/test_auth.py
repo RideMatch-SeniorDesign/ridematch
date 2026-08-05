@@ -1,7 +1,9 @@
 import pytest
 import pyotp
+import json
 
 import app as app_module
+from werkzeug.security import generate_password_hash
 
 
 def test_login_page_renders_with_expected_fields(client):
@@ -65,6 +67,52 @@ def test_login_requires_totp_when_configured(client, monkeypatch):
     assert response.headers["Location"].endswith("/home")
     with client.session_transaction() as session:
         assert session["logged_in"] is True
+
+
+def test_each_configured_admin_uses_their_own_totp_secret(client, monkeypatch):
+    secrets = {name: pyotp.random_base32() for name in ("owner", "andre", "ella")}
+    accounts = {
+        name: {
+            "password_hash": generate_password_hash(f"{name}-password"),
+            "totp_secret": secret,
+        }
+        for name, secret in secrets.items()
+    }
+    monkeypatch.setattr(app_module, "ADMIN_ACCOUNTS_JSON", json.dumps(accounts))
+
+    response = client.post(
+        "/login",
+        data={"username": "andre", "password": "andre-password"},
+        follow_redirects=False,
+    )
+
+    assert response.headers["Location"].endswith("/verify-2fa")
+    response = client.post(
+        "/verify-2fa",
+        data={"code": pyotp.TOTP(secrets["andre"]).now()},
+        follow_redirects=False,
+    )
+
+    assert response.headers["Location"].endswith("/home")
+    with client.session_transaction() as session:
+        assert session["username"] == "andre"
+
+
+def test_multi_admin_password_changes_are_managed_by_configuration(logged_in_client, monkeypatch):
+    monkeypatch.setattr(app_module, "ADMIN_ACCOUNTS_JSON", '{"owner": {"password_hash": "hash", "totp_secret": "secret"}}')
+
+    response = logged_in_client.post(
+        "/settings",
+        data={
+            "form_name": "password",
+            "current_password": "old-password",
+            "new_password": "new-password",
+            "confirm_password": "new-password",
+        },
+        follow_redirects=True,
+    )
+
+    assert "Admin passwords are managed through the configured admin accounts." in response.get_data(as_text=True)
 
 
 @pytest.mark.parametrize(

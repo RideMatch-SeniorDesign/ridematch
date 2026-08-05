@@ -485,6 +485,7 @@ def fake_repo(
 def app(monkeypatch, fake_repo):
     monkeypatch.setattr(app_module, "ADMIN_USERNAME", "admin")
     monkeypatch.setattr(app_module, "ADMIN_PASSWORD", "ridematch123")
+    monkeypatch.setattr(app_module, "ADMIN_ACCOUNTS_JSON", "")
     monkeypatch.setattr(app_module, "ADMIN_TOTP_SECRET", "")
     monkeypatch.setattr(app_module, "ADMIN_FARE_SHARE", 0.25)
     monkeypatch.setattr(app_module, "DRIVER_FARE_SHARE", 0.75)
