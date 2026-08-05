@@ -1322,6 +1322,7 @@ class _RideTabState extends State<RideTab> {
   List<Map<String, dynamic>> _matchCandidates = [];
   List<Map<String, dynamic>> _matchDeckSeed = [];
   List<Map<String, dynamic>> _postOfferCandidates = [];
+  bool _fallbackPromptOpen = false;
   String _message = "";
   bool _busy = false;
   bool _loadingMatches = false;
@@ -1977,14 +1978,12 @@ class _RideTabState extends State<RideTab> {
         _joinTripChatIfNeeded();
       }
       if (hadTrip && nextTrip == null && completedTripId != null) {
-        if (previousStatus == "requested" && _postOfferCandidates.isNotEmpty && mounted) {
+        if (previousStatus == "requested" && _postOfferCandidates.isNotEmpty && !_fallbackPromptOpen && mounted) {
+          final fallbackCandidates = _postOfferCandidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
           setState(() {
-            _matchCandidates = _postOfferCandidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
-            _matchDeckSeed = _postOfferCandidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
             _postOfferCandidates = [];
-            _showMatchDeckOnly = true;
-            _message = "Your driver did not respond. Choose another available driver.";
           });
+          await _promptFallbackDriver(fallbackCandidates);
         }
         await _promptPostRideReviewIfPending(onlyTripId: completedTripId);
       }
@@ -2016,6 +2015,67 @@ class _RideTabState extends State<RideTab> {
       return "Finding your next best match…";
     }
     return "Driver has ${seconds}s to respond";
+  }
+
+  String _fallbackDriverEstimate(Map<String, dynamic> candidate) {
+    final minutes = int.tryParse((candidate["pickup_eta_minutes"] ?? "").toString());
+    final miles = double.tryParse((candidate["pickup_distance_miles"] ?? "").toString());
+    if (minutes != null && miles != null) {
+      return "about $minutes min away (${miles.toStringAsFixed(1)} mi to pickup)";
+    }
+    if (minutes != null) {
+      return "about $minutes min away";
+    }
+    if (miles != null) {
+      return "${miles.toStringAsFixed(1)} mi from pickup";
+    }
+    return "available now";
+  }
+
+  Future<void> _promptFallbackDriver(List<Map<String, dynamic>> candidates) async {
+    if (candidates.isEmpty || !mounted) {
+      return;
+    }
+    _fallbackPromptOpen = true;
+    final candidate = candidates.first;
+    final name = (candidate["name"] ?? "the next driver").toString();
+    final continueWithDriver = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF152A42),
+        title: const Text("Try the next driver?", style: TextStyle(color: Colors.white)),
+        content: Text(
+          "Your previous driver did not respond. $name is ${_fallbackDriverEstimate(candidate)}. Continue?",
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text("Browse drivers"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text("Continue"),
+          ),
+        ],
+      ),
+    );
+    _fallbackPromptOpen = false;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _matchCandidates = candidates.map((item) => Map<String, dynamic>.from(item)).toList();
+      _matchDeckSeed = candidates.map((item) => Map<String, dynamic>.from(item)).toList();
+      _showMatchDeckOnly = true;
+      _message = continueWithDriver == true
+          ? "Requesting $name…"
+          : "Your driver did not respond. Choose another available driver.";
+    });
+    if (continueWithDriver == true) {
+      await _submitSwipe("right");
+    }
   }
 
   Future<void> _promptPostRideReviewIfPending({int? onlyTripId}) async {
