@@ -40,7 +40,7 @@ CREATE TABLE `admin_action` (
 -- RIDER TABLE
 CREATE TABLE `rider` (
 	`AccountID` int NOT NULL,
-    `Preferences` varchar(100),
+    `Preferences` text,
     `Rating` decimal(3,2) DEFAULT 5.00,
     `RtCount` int DEFAULT 1,
     `RidingSince` date DEFAULT (curdate()),
@@ -54,7 +54,7 @@ CREATE TABLE `rider` (
 -- DRIVER TABLE
 CREATE TABLE `driver` (
 	`AccountID` int NOT NULL,
-    `Preferences` varchar(100),
+    `Preferences` text,
     `Rating` decimal(3,2) DEFAULT 5.00,
     `RtCount` int DEFAULT 1,
     `Status` varchar(50) DEFAULT 'pending',

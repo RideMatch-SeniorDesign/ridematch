@@ -272,6 +272,24 @@ def _column_exists(table_name: str, column_name: str) -> bool:
     return bool(rows)
 
 
+def _ensure_preference_storage() -> None:
+    """Allow categorized profiles to store more than the legacy 100 characters."""
+    for table_name in ("rider", "driver"):
+        rows = _fetch_all(
+            """
+            SELECT DATA_TYPE AS data_type
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = %s
+              AND column_name = 'Preferences'
+            LIMIT 1
+            """,
+            (table_name,),
+        )
+        if rows and str(rows[0].get("data_type") or "").lower() not in {"text", "mediumtext", "longtext"}:
+            _execute(f"ALTER TABLE {table_name} MODIFY Preferences TEXT NULL")
+
+
 def _ensure_driver_dispatch_state_table() -> None:
     _execute(
         """
@@ -370,6 +388,29 @@ def _ensure_rider_match_swipe_table() -> None:
                 FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
                 ON DELETE CASCADE,
             CONSTRAINT uq_rider_match_swipe UNIQUE (RiderID, DriverID)
+        )
+        """
+    )
+
+
+def _ensure_rider_driver_learning_table() -> None:
+    """Store aggregate choice signals without retaining sensitive trip details."""
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS rider_driver_learning (
+            RiderID INT NOT NULL,
+            DriverID INT NOT NULL,
+            RightChoices INT NOT NULL DEFAULT 0,
+            LeftChoices INT NOT NULL DEFAULT 0,
+            LastChoiceAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (RiderID, DriverID),
+            CONSTRAINT fk_rider_driver_learning_rider
+                FOREIGN KEY (RiderID) REFERENCES rider(AccountID)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_rider_driver_learning_driver
+                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
+                ON DELETE CASCADE
         )
         """
     )
@@ -1121,6 +1162,7 @@ def create_rider_signup(
     last_name: str,
     preferences: str,
 ) -> int:
+    _ensure_preference_storage()
     account_id = _insert_returning_id(
         """
         INSERT INTO account (UserName, Email, PhoneNum, Password, FirstName, LastName)
@@ -1165,6 +1207,7 @@ def create_driver_signup(
     profile_photo: dict[str, Any] | None = None,
     documents: list[dict[str, Any]] | None = None,
 ) -> int:
+    _ensure_preference_storage()
     account_id = _insert_returning_id(
         """
         INSERT INTO account (UserName, Email, PhoneNum, Password, FirstName, LastName)
@@ -2056,6 +2099,50 @@ def _create_trip_with_driver(
     return fetch_trip_by_id(trip_id) or created_trip[0]
 
 
+def _fetch_rider_driver_learning(rider_id: int) -> tuple[dict[int, dict[str, int]], dict[str, int]]:
+    _ensure_rider_driver_learning_table()
+    rows = _fetch_all(
+        """
+        SELECT
+            d.AccountID AS driver_id,
+            d.Preferences AS preferences,
+            COALESCE(learning.RightChoices, 0) AS right_choices,
+            COALESCE(learning.LeftChoices, 0) AS left_choices,
+            COUNT(DISTINCT CASE WHEN rider_trip.Status = 'completed' THEN rider_trip.TripID END) AS completed_rides,
+            COUNT(DISTINCT CASE
+                WHEN rider_trip.Status IN ('accepted', 'in_progress', 'completed') THEN rider_trip.TripID
+            END) AS matched_rides
+        FROM driver d
+        LEFT JOIN rider_driver_learning learning
+            ON learning.DriverID = d.AccountID
+           AND learning.RiderID = %s
+        LEFT JOIN trip rider_trip
+            ON rider_trip.DriverID = d.AccountID
+           AND rider_trip.RiderID = %s
+        GROUP BY d.AccountID, d.Preferences, learning.RightChoices, learning.LeftChoices
+        """,
+        (rider_id, rider_id),
+    )
+    driver_signals: dict[int, dict[str, int]] = {}
+    preference_weights: dict[str, int] = {}
+    for row in rows:
+        driver_id = int(row.get("driver_id") or 0)
+        right_choices = int(row.get("right_choices") or 0)
+        left_choices = int(row.get("left_choices") or 0)
+        completed_rides = int(row.get("completed_rides") or 0)
+        matched_rides = int(row.get("matched_rides") or 0)
+        driver_signals[driver_id] = {
+            "right_choices": right_choices,
+            "left_choices": left_choices,
+            "completed_rides": completed_rides,
+            "matched_rides": matched_rides,
+        }
+        trait_weight = (right_choices * 2) + (completed_rides * 3) - left_choices
+        for preference in _split_preference_csv(str(row.get("preferences") or "")):
+            preference_weights[preference] = preference_weights.get(preference, 0) + trait_weight
+    return driver_signals, preference_weights
+
+
 def fetch_driver_match_candidates(
     *,
     rider_id: int,
@@ -2071,6 +2158,7 @@ def fetch_driver_match_candidates(
     _ensure_trip_offer_table()
     _ensure_driver_live_location_table()
     _ensure_rider_match_swipe_table()
+    _ensure_rider_driver_learning_table()
     has_review = _table_exists("driver_review")
 
     rating_expr = "ROUND(COALESCE(AVG(dr.Rating), 0), 1)" if has_review else "0.0"
@@ -2087,6 +2175,16 @@ def fetch_driver_match_candidates(
             d.Preferences AS preferences,
             {rating_expr} AS rating,
             COUNT(DISTINCT completed.TripID) AS rides,
+            CASE
+                WHEN COALESCE(ds.IsAvailable, 0) = 0 THEN 'offline'
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM trip current_trip
+                    WHERE current_trip.DriverID = d.AccountID
+                      AND current_trip.Status IN ('accepted', 'in_progress')
+                ) THEN 'busy'
+                ELSE 'available'
+            END AS availability_status,
             dl.Latitude AS driver_latitude,
             dl.Longitude AS driver_longitude,
             dl.UpdatedAt AS driver_location_updated_at
@@ -2103,36 +2201,24 @@ def fetch_driver_match_candidates(
         {review_join}
         WHERE COALESCE(d.Status, '') = 'approved'
           AND ds.IsAvailable = 1
-          AND NOT EXISTS (
-              SELECT 1
-              FROM trip active_trip
-              WHERE active_trip.DriverID = d.AccountID
-                AND active_trip.Status IN ('accepted', 'in_progress')
-          )
-          AND (
-              SELECT COUNT(*)
-              FROM trip pending_trip
-              JOIN trip_offer pending_offer ON pending_offer.TripID = pending_trip.TripID
-              WHERE pending_trip.DriverID = d.AccountID
-                AND pending_trip.Status = 'requested'
-                AND pending_offer.DriverID = d.AccountID
-                AND pending_offer.Status = 'offered'
-                AND pending_offer.ExpiresAt > NOW()
-          ) < %s
         GROUP BY
             d.AccountID,
             a.FirstName,
             a.LastName,
-            d.Preferences
+            d.Preferences,
+            ds.IsAvailable
             {review_group_by}
-        ORDER BY {rating_expr} DESC, rides DESC, d.AccountID ASC
-        LIMIT %s
+        ORDER BY
+            FIELD(availability_status, 'available', 'busy', 'offline'),
+            {rating_expr} DESC,
+            rides DESC,
+            d.AccountID ASC
         """,
-        (MAX_DRIVER_SIMULTANEOUS_OFFERS, max(1, min(int(limit), 50))),
     )
 
     rider = fetch_portal_profile("rider", rider_id) or {}
     rider_preferences = _split_preference_csv(str(rider.get("preferences") or ""))
+    driver_signals, learned_preference_weights = _fetch_rider_driver_learning(rider_id)
     desired_ride_type = (ride_type or "standard").strip().lower() or "standard"
     normalized_start = start_loc.strip()
     normalized_end = end_loc.strip()
@@ -2142,10 +2228,33 @@ def fetch_driver_match_candidates(
     for row in rows:
         candidate = dict(row)
         driver_preferences = _split_preference_csv(str(candidate.get("preferences") or ""))
+        driver_preferences.difference_update(
+            {"highly rated", "experienced", "familiar driver", "fast pickup", "cheap ride"}
+        )
+        derived_preferences: set[str] = set()
+        if float(candidate.get("rating") or 0) > 4.0:
+            derived_preferences.add("highly rated")
+        if int(candidate.get("rides") or 0) >= 100:
+            derived_preferences.add("experienced")
+        signals = driver_signals.get(int(candidate.get("account_id") or 0), {})
+        if int(signals.get("matched_rides", 0)) > 0:
+            derived_preferences.add("familiar driver")
+        driver_preferences.update(derived_preferences)
         matching_preferences = sorted(rider_preferences.intersection(driver_preferences))
         compatibility_score = len(matching_preferences)
+        learned_trait_score = sum(max(0, learned_preference_weights.get(item, 0)) for item in driver_preferences)
+        learning_score = max(
+            0,
+            learned_trait_score
+            + (int(signals.get("right_choices", 0)) * 3)
+            + (int(signals.get("completed_rides", 0)) * 5)
+            - (int(signals.get("left_choices", 0)) * 2),
+        )
         candidate["matching_preferences"] = matching_preferences
         candidate["compatibility_score"] = compatibility_score
+        candidate["derived_preferences"] = sorted(derived_preferences)
+        candidate["preferences"] = ", ".join(sorted(driver_preferences))
+        candidate["learning_score"] = learning_score
         candidate["pickup_preview"] = normalized_start
         candidate["dropoff_preview"] = normalized_end
         candidate["ride_type"] = desired_ride_type
@@ -2154,13 +2263,15 @@ def fetch_driver_match_candidates(
 
     candidates.sort(
         key=lambda row: (
+            0 if str(row.get("availability_status") or "").lower() == "available" else 1,
+            -int(row.get("learning_score") or 0),
             -int(row.get("compatibility_score") or 0),
             -float(row.get("rating") or 0),
             -int(row.get("rides") or 0),
             int(row.get("account_id") or 0),
         )
     )
-    return candidates
+    return candidates[: max(1, min(int(limit), 50))]
 
 
 def record_rider_match_choice(
@@ -2177,6 +2288,7 @@ def record_rider_match_choice(
     if normalized_direction not in {"left", "right"}:
         return False
     _ensure_rider_match_swipe_table()
+    _ensure_rider_driver_learning_table()
     rows = _execute(
         """
         INSERT INTO rider_match_swipe (RiderID, DriverID, Direction, StartLoc, EndLoc, RideType, Notes)
@@ -2196,6 +2308,22 @@ def record_rider_match_choice(
             end_loc.strip(),
             (ride_type or "standard").strip() or "standard",
             (notes or "").strip() or None,
+        ),
+    )
+    _execute(
+        """
+        INSERT INTO rider_driver_learning (RiderID, DriverID, RightChoices, LeftChoices)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            RightChoices = RightChoices + VALUES(RightChoices),
+            LeftChoices = LeftChoices + VALUES(LeftChoices),
+            LastChoiceAt = CURRENT_TIMESTAMP
+        """,
+        (
+            rider_id,
+            driver_id,
+            1 if normalized_direction == "right" else 0,
+            1 if normalized_direction == "left" else 0,
         ),
     )
     return rows >= 0
@@ -2507,6 +2635,7 @@ def update_driver_live_location(account_id: int, latitude: float, longitude: flo
 
 def update_portal_profile(role: str, account_id: int, profile: dict[str, Any]) -> bool:
     role = (role or "").strip().lower()
+    _ensure_preference_storage()
     _execute(
         """
         UPDATE account

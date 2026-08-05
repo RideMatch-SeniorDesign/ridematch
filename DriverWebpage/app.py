@@ -46,17 +46,17 @@ DOCUMENT_UPLOAD_DIR = APP_PATH / "uploads" / "driver_documents"
 ALLOWED_PROFILE_PHOTO_TYPES = {"jpeg", "png", "webp"}
 ALLOWED_DRIVER_DOCUMENT_TYPES = {"jpeg", "png"}
 
-PREFERENCE_OPTIONS = [
-    "quiet ride",
-    "music okay",
-    "music low",
-    "conversation okay",
-    "no conversation",
-    "pet friendly",
-    "temperature cool",
-    "temperature warm",
-    "no highway",
-]
+PREFERENCE_CATEGORIES = {
+    "Ride Atmosphere": ["quiet ride", "rider chooses music", "music okay", "music low", "no phone calls", "windows open"],
+    "Temperature": ["warm", "cool"],
+    "Vehicle Environment": ["fragrance-free", "pets welcome", "food okay", "drinks okay", "extra-clean", "front seat okay"],
+    "Driving Style": ["avoid highways"],
+    "Social Compatibility": ["talkative", "quiet personality", "family-friendly", "senior-friendly", "business atmosphere"],
+    "Language Spoken": ["English", "Spanish", "Mandarin Chinese", "French", "Arabic", "Hindi", "Portuguese", "Bengali", "Russian", "Japanese", "Korean", "Vietnamese", "Tagalog", "American Sign Language"],
+    "Accessibility and Assistance": ["wheelchair-accessible", "walker/cane storage", "service animal", "assistance entering vehicle", "assistance with bags", "hearing-friendly communication"],
+    "Vehicle Capabilities": ["larger vehicle", "more luggage space"],
+}
+PREFERENCE_OPTIONS = [option for options in PREFERENCE_CATEGORIES.values() for option in options]
 
 US_STATE_OPTIONS = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -1064,7 +1064,7 @@ def api_driver_signup():
     if password != confirm_password:
         return jsonify({"success": False, "error": "Passwords do not match."}), 400
 
-    normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
+    normalized_preferences = [str(item).strip() for item in preferences if str(item).strip() in PREFERENCE_OPTIONS]
 
     document_payloads, document_error = _validate_and_store_driver_documents()
     if document_error:
@@ -1333,6 +1333,7 @@ def api_driver_profile_update(driver_id: int):
         normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
     else:
         normalized_preferences = _split_preferences(str(preferences))
+    normalized_preferences = [item for item in normalized_preferences if item in PREFERENCE_OPTIONS]
 
     try:
         from Database.admin_queries import fetch_portal_profile, update_portal_profile
@@ -1792,7 +1793,7 @@ def settings():
 
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
-        form_data["preferences"] = request.form.getlist("preferences")
+        form_data["preferences"] = [item for item in request.form.getlist("preferences") if item in PREFERENCE_OPTIONS]
         if any(not form_data[k] for k in ["first_name", "last_name", "email", "phone"]):
             error = "First name, last name, email, and phone are required."
         else:
@@ -1885,6 +1886,7 @@ def settings():
             warning=warning,
             error=error,
             preference_options=PREFERENCE_OPTIONS,
+            preference_categories=PREFERENCE_CATEGORIES,
             state_options=US_STATE_OPTIONS,
             current_photo_url=current_photo_url,
             current_license_document_url=current_license_document_url,
@@ -1923,7 +1925,7 @@ def signup():
 
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
-        form_data["preferences"] = request.form.getlist("preferences")
+        form_data["preferences"] = [item for item in request.form.getlist("preferences") if item in PREFERENCE_OPTIONS]
         password = _v("password")
         confirm_password = _v("confirm_password")
         photo_payload = None
@@ -1991,6 +1993,7 @@ def signup():
         error=error,
         success=success,
         preference_options=PREFERENCE_OPTIONS,
+        preference_categories=PREFERENCE_CATEGORIES,
         state_options=US_STATE_OPTIONS,
     )
 

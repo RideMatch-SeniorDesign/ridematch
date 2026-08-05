@@ -29,8 +29,10 @@
               <div class="pref-picker-row">
                 <select id="preference_picker">
                   <option value="">Choose a preference...</option>
-                  {% for option in preference_options %}
-                  <option value="{{ option }}">{{ option }}</option>
+                  {% for category, options in preference_categories.items() %}
+                  <optgroup label="{{ category }}">
+                  {% for option in options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
+                  </optgroup>
                   {% endfor %}
                 </select>
               </div>

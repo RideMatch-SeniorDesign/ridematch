@@ -29,17 +29,17 @@ SESSION_DAYS = int(os.environ.get("RIDER_SESSION_DAYS", os.environ.get("PORTAL_S
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_DAYS)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
-PREFERENCE_OPTIONS = [
-    "quiet ride",
-    "music okay",
-    "music low",
-    "conversation okay",
-    "no conversation",
-    "pet friendly",
-    "temperature cool",
-    "temperature warm",
-    "no highway",
-]
+PREFERENCE_CATEGORIES = {
+    "Ride Atmosphere": ["quiet ride", "rider chooses music", "music okay", "music low", "no phone calls", "windows open"],
+    "Temperature": ["warm", "cool"],
+    "Vehicle Environment": ["fragrance-free", "pets welcome", "food okay", "drinks okay", "extra-clean", "front seat okay"],
+    "Driving Style": ["avoid highways"],
+    "Social Compatibility": ["talkative", "quiet personality", "family-friendly", "senior-friendly", "business atmosphere"],
+    "Language Spoken": ["English", "Spanish", "Mandarin Chinese", "French", "Arabic", "Hindi", "Portuguese", "Bengali", "Russian", "Japanese", "Korean", "Vietnamese", "Tagalog", "American Sign Language"],
+    "Accessibility and Assistance": ["wheelchair-accessible", "walker/cane storage", "service animal", "assistance entering vehicle", "assistance with bags", "hearing-friendly communication"],
+    "Driver Preferences": ["highly rated", "experienced", "familiar driver", "larger vehicle", "more luggage space", "cheap ride"],
+}
+PREFERENCE_OPTIONS = [option for options in PREFERENCE_CATEGORIES.values() for option in options]
 
 
 def _optional_float(value):
@@ -1053,7 +1053,7 @@ def settings():
 
     return render_template(
         "rider_settings.html",
-        **_rider_nav_context("settings", form_data=form_data, success=success, error=error, preference_options=PREFERENCE_OPTIONS),
+        **_rider_nav_context("settings", form_data=form_data, success=success, error=error, preference_options=PREFERENCE_OPTIONS, preference_categories=PREFERENCE_CATEGORIES),
     )
 
 
@@ -1123,6 +1123,7 @@ def signup():
         error=error,
         success=success,
         preference_options=PREFERENCE_OPTIONS,
+        preference_categories=PREFERENCE_CATEGORIES,
     )
 
 

@@ -13,6 +13,18 @@ import "package:url_launcher/url_launcher.dart";
 
 import "api_client.dart";
 
+const Map<String, List<String>> _preferenceCategories = {
+  "Ride Atmosphere": ["quiet ride", "rider chooses music", "music okay", "music low", "no phone calls", "windows open"],
+  "Temperature": ["warm", "cool"],
+  "Vehicle Environment": ["fragrance-free", "pets welcome", "food okay", "drinks okay", "extra-clean", "front seat okay"],
+  "Driving Style": ["avoid highways"],
+  "Social Compatibility": ["talkative", "quiet personality", "family-friendly", "senior-friendly", "business atmosphere"],
+  "Language Spoken": ["English", "Spanish", "Mandarin Chinese", "French", "Arabic", "Hindi", "Portuguese", "Bengali", "Russian", "Japanese", "Korean", "Vietnamese", "Tagalog", "American Sign Language"],
+  "Accessibility and Assistance": ["wheelchair-accessible", "walker/cane storage", "service animal", "assistance entering vehicle", "assistance with bags", "hearing-friendly communication"],
+  "Vehicle Capabilities": ["larger vehicle", "more luggage space"],
+};
+final Set<String> _availablePreferenceOptions = _preferenceCategories.values.expand((options) => options).toSet();
+
 /// Deep blue shell (matches rider app auth + in-app chrome).
 const Color _kAuthDeepBlue = Color(0xFF0A1929);
 
@@ -144,23 +156,72 @@ bool _driverIsApproved(Map<String, dynamic> user) {
 IconData _preferenceIcon(String label) {
   switch (label) {
     case "quiet ride":
+    case "quiet personality":
       return Icons.volume_off_rounded;
+    case "talkative":
+      return Icons.forum_rounded;
+    case "rider chooses music":
+      return Icons.queue_music_rounded;
     case "music okay":
       return Icons.music_note_rounded;
     case "music low":
       return Icons.graphic_eq_rounded;
-    case "conversation okay":
-      return Icons.forum_rounded;
-    case "no conversation":
-      return Icons.do_not_disturb_on_outlined;
-    case "pet friendly":
-      return Icons.pets_rounded;
-    case "temperature cool":
+    case "no phone calls":
+      return Icons.phone_disabled_rounded;
+    case "windows open":
+    case "fragrance-free":
+      return Icons.air_rounded;
+    case "cool":
       return Icons.ac_unit_rounded;
-    case "temperature warm":
+    case "warm":
       return Icons.wb_sunny_rounded;
-    case "no highway":
+    case "pets welcome":
+    case "service animal":
+      return Icons.pets_rounded;
+    case "food okay":
+      return Icons.restaurant_rounded;
+    case "drinks okay":
+      return Icons.local_drink_rounded;
+    case "extra-clean":
+      return Icons.cleaning_services_rounded;
+    case "front seat okay":
+      return Icons.event_seat_rounded;
+    case "avoid highways":
       return Icons.alt_route_rounded;
+    case "family-friendly":
+      return Icons.family_restroom_rounded;
+    case "senior-friendly":
+      return Icons.elderly_rounded;
+    case "business atmosphere":
+      return Icons.work_rounded;
+    case "English":
+    case "Spanish":
+    case "Mandarin Chinese":
+    case "French":
+    case "Arabic":
+    case "Hindi":
+    case "Portuguese":
+    case "Bengali":
+    case "Russian":
+    case "Japanese":
+    case "Korean":
+    case "Vietnamese":
+    case "Tagalog":
+      return Icons.translate_rounded;
+    case "American Sign Language":
+      return Icons.sign_language_rounded;
+    case "wheelchair-accessible":
+      return Icons.accessible_rounded;
+    case "walker/cane storage":
+    case "assistance entering vehicle":
+      return Icons.accessible_forward_rounded;
+    case "assistance with bags":
+    case "more luggage space":
+      return Icons.luggage_rounded;
+    case "hearing-friendly communication":
+      return Icons.hearing_rounded;
+    case "larger vehicle":
+      return Icons.directions_car_filled_rounded;
     default:
       return Icons.tune_rounded;
   }
@@ -466,6 +527,31 @@ class DriverPendingApprovalPage extends StatelessWidget {
   }
 }
 
+class _CategorizedPreferenceSelector extends StatelessWidget {
+  const _CategorizedPreferenceSelector({required this.selected, required this.disabled, required this.onChanged});
+  final Set<String> selected;
+  final bool disabled;
+  final void Function(String preference, bool selected) onChanged;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: _preferenceCategories.entries.map((category) => Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(category.key, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, runSpacing: 8, children: category.value.map((item) => _signupPreferenceChip(
+          item: item,
+          selected: selected.contains(item),
+          disabled: disabled,
+          onSelected: (value) => onChanged(item, value),
+        )).toList()),
+      ]),
+    )).toList(),
+  );
+}
+
 class DriverSignupPage extends StatefulWidget {
   const DriverSignupPage({super.key});
 
@@ -490,18 +576,6 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
   bool _busy = false;
   String _message = "";
   final Set<String> _prefs = <String>{};
-
-  static const _prefOptions = [
-    "quiet ride",
-    "music okay",
-    "music low",
-    "conversation okay",
-    "no conversation",
-    "pet friendly",
-    "temperature cool",
-    "temperature warm",
-    "no highway",
-  ];
 
   @override
   void dispose() {
@@ -871,30 +945,10 @@ class _DriverSignupPageState extends State<DriverSignupPage> {
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 14),
                   ),
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _prefOptions
-                        .map(
-                          (item) {
-                            final selected = _prefs.contains(item);
-                            return _signupPreferenceChip(
-                              item: item,
-                              selected: selected,
-                              disabled: _busy,
-                              onSelected: (value) {
-                                setState(() {
-                                  if (value) {
-                                    _prefs.add(item);
-                                  } else {
-                                    _prefs.remove(item);
-                                  }
-                                });
-                              },
-                            );
-                          },
-                        )
-                        .toList(),
+                  _CategorizedPreferenceSelector(
+                    selected: _prefs,
+                    disabled: _busy,
+                    onChanged: (item, selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)),
                   ),
                   const SizedBox(height: 18),
                   FilledButton(
@@ -3922,6 +3976,62 @@ class _DispatchDetailRow extends StatelessWidget {
   }
 }
 
+class DriverPreferencesTab extends StatefulWidget {
+  const DriverPreferencesTab({super.key, required this.user, required this.onSaved});
+  final Map<String, dynamic> user;
+  final Future<void> Function(Map<String, dynamic>) onSaved;
+
+  @override
+  State<DriverPreferencesTab> createState() => _DriverPreferencesTabState();
+}
+
+class _DriverPreferencesTabState extends State<DriverPreferencesTab> {
+  final _api = ApiClient();
+  late Set<String> _selected = (widget.user["preferences"] ?? "").toString().split(",").map((item) => item.trim()).where(_availablePreferenceOptions.contains).toSet();
+  bool _busy = false;
+  String _message = "";
+
+  int get _driverId => int.tryParse((widget.user["account_id"] ?? "0").toString()) ?? 0;
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    try {
+      final response = await _api.updateDriverProfile(driverId: _driverId, payload: {
+        "first_name": widget.user["first_name"],
+        "last_name": widget.user["last_name"],
+        "email": widget.user["email"],
+        "phone": widget.user["phone"],
+        "preferences": _selected.toList(),
+      });
+      if (response["success"] == true && response["user"] is Map) {
+        final updated = Map<String, dynamic>.from(response["user"] as Map);
+        await widget.onSaved(updated);
+        setState(() => _message = "Preferences updated.");
+      } else {
+        setState(() => _message = response["error"]?.toString() ?? "Could not save preferences.");
+      }
+    } catch (error) {
+      setState(() => _message = "$error");
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+    children: [
+      if (_message.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_message, style: const TextStyle(color: Colors.white))),
+      _SectionCard(title: "Ride preferences", child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text("Choose the ride environment, driving style, and assistance options you can provide.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65))),
+        const SizedBox(height: 18),
+        _CategorizedPreferenceSelector(selected: _selected, disabled: _busy, onChanged: (item, selected) => setState(() => selected ? _selected.add(item) : _selected.remove(item))),
+        SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _save, icon: const Icon(Icons.save_outlined), label: Text(_busy ? "Saving..." : "Save preferences"))),
+      ])),
+    ],
+  );
+}
+
 class DriverProfileTab extends StatefulWidget {
   const DriverProfileTab({
     super.key,
@@ -3961,18 +4071,23 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
   bool _settingsMessageIsError = false;
   bool _busy = false;
   bool _pwBusy = false;
+  int _profileSection = 0;
 
-  static const _profilePrefOptions = [
-    "quiet ride",
-    "music okay",
-    "music low",
-    "conversation okay",
-    "no conversation",
-    "pet friendly",
-    "temperature cool",
-    "temperature warm",
-    "no highway",
-  ];
+  Widget _profileTabs() => Row(children: [
+    Expanded(child: FilledButton.tonalIcon(
+      onPressed: () => setState(() => _profileSection = 0),
+      icon: const Icon(Icons.person_outline),
+      label: const Text("Account"),
+      style: FilledButton.styleFrom(backgroundColor: _profileSection == 0 ? Colors.white24 : Colors.white10),
+    )),
+    const SizedBox(width: 10),
+    Expanded(child: FilledButton.tonalIcon(
+      onPressed: () => setState(() => _profileSection = 1),
+      icon: const Icon(Icons.tune_outlined),
+      label: const Text("Preferences"),
+      style: FilledButton.styleFrom(backgroundColor: _profileSection == 1 ? Colors.white24 : Colors.white10),
+    )),
+  ]);
 
   static Set<String> _prefsFromUserString(Map<String, dynamic> user) {
     return (user["preferences"] ?? "").toString().split(",").map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
@@ -4242,7 +4357,7 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
           "last_name": _last.text.trim(),
           "email": _email.text.trim(),
           "phone": _phone.text.trim(),
-          "preferences": _prefs.toList(),
+          "preferences": _user["preferences"] ?? "",
         },
       );
       if (!mounted) {
@@ -4374,11 +4489,32 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
     final licenseDocumentUrl = accountId == null ? null : "${_api.realtimeBaseUrl}/api/driver/document/$accountId/license?v=$_photoVersion";
     final insuranceDocumentUrl = accountId == null ? null : "${_api.realtimeBaseUrl}/api/driver/document/$accountId/insurance?v=$_photoVersion";
 
+    if (_profileSection == 1) {
+      return ColoredBox(
+        color: _kAuthDeepBlue,
+        child: Column(children: [
+          Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 4), child: _profileTabs()),
+          Expanded(child: DriverPreferencesTab(
+            user: _user,
+            onSaved: (updated) async {
+              setState(() {
+                _user = Map<String, dynamic>.from(updated);
+                _applyUserToFields(_user);
+              });
+              await widget.onUserUpdated(_user);
+            },
+          )),
+        ]),
+      );
+    }
+
     return ColoredBox(
       color: _kAuthDeepBlue,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          _profileTabs(),
+          const SizedBox(height: 14),
           _ShellCard(
             child: Row(
               children: [
@@ -4462,7 +4598,7 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
               ),
             ),
           _SectionCard(
-            title: "Account & preferences",
+            title: "Account",
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -4494,23 +4630,6 @@ class _DriverProfileTabState extends State<DriverProfileTab> {
                   style: const TextStyle(color: Colors.white),
                   cursorColor: Colors.white,
                   decoration: _shellInputDecoration(label: "Phone"),
-                ),
-                const SizedBox(height: 12),
-                Text("Preferences", style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _profilePrefOptions
-                      .map(
-                        (item) => _signupPreferenceChip(
-                          item: item,
-                          selected: _prefs.contains(item),
-                          disabled: _busy,
-                          onSelected: (selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)),
-                        ),
-                      )
-                      .toList(),
                 ),
                 const SizedBox(height: 14),
                 SizedBox(

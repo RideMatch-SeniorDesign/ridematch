@@ -13,6 +13,18 @@ import "package:socket_io_client/socket_io_client.dart" as io;
 
 import "api_client.dart";
 
+const Map<String, List<String>> _preferenceCategories = {
+  "Ride Atmosphere": ["quiet ride", "rider chooses music", "music okay", "music low", "no phone calls", "windows open"],
+  "Temperature": ["warm", "cool"],
+  "Vehicle Environment": ["fragrance-free", "pets welcome", "food okay", "drinks okay", "extra-clean", "front seat okay"],
+  "Driving Style": ["avoid highways"],
+  "Social Compatibility": ["talkative", "quiet personality", "family-friendly", "senior-friendly", "business atmosphere"],
+  "Language Spoken": ["English", "Spanish", "Mandarin Chinese", "French", "Arabic", "Hindi", "Portuguese", "Bengali", "Russian", "Japanese", "Korean", "Vietnamese", "Tagalog", "American Sign Language"],
+  "Accessibility and Assistance": ["wheelchair-accessible", "walker/cane storage", "service animal", "assistance entering vehicle", "assistance with bags", "hearing-friendly communication"],
+  "Driver Preferences": ["highly rated", "experienced", "familiar driver", "larger vehicle", "more luggage space", "cheap ride"],
+};
+final Set<String> _availablePreferenceOptions = _preferenceCategories.values.expand((options) => options).toSet();
+
 void main() => runApp(const RiderMobileApp());
 
 const _kRiderApiHost = String.fromEnvironment(
@@ -120,23 +132,80 @@ const Color _kAuthDeepBlue = Color(0xFF0A1929);
 IconData _preferenceIcon(String label) {
   switch (label) {
     case "quiet ride":
+    case "quiet personality":
       return Icons.volume_off_rounded;
+    case "talkative":
+      return Icons.forum_rounded;
+    case "rider chooses music":
+      return Icons.queue_music_rounded;
     case "music okay":
       return Icons.music_note_rounded;
     case "music low":
       return Icons.graphic_eq_rounded;
-    case "conversation okay":
-      return Icons.forum_rounded;
-    case "no conversation":
-      return Icons.do_not_disturb_on_outlined;
-    case "pet friendly":
-      return Icons.pets_rounded;
-    case "temperature cool":
+    case "no phone calls":
+      return Icons.phone_disabled_rounded;
+    case "windows open":
+    case "fragrance-free":
+      return Icons.air_rounded;
+    case "cool":
       return Icons.ac_unit_rounded;
-    case "temperature warm":
+    case "warm":
       return Icons.wb_sunny_rounded;
-    case "no highway":
+    case "pets welcome":
+    case "service animal":
+      return Icons.pets_rounded;
+    case "food okay":
+      return Icons.restaurant_rounded;
+    case "drinks okay":
+      return Icons.local_drink_rounded;
+    case "extra-clean":
+      return Icons.cleaning_services_rounded;
+    case "front seat okay":
+      return Icons.event_seat_rounded;
+    case "avoid highways":
       return Icons.alt_route_rounded;
+    case "family-friendly":
+      return Icons.family_restroom_rounded;
+    case "senior-friendly":
+      return Icons.elderly_rounded;
+    case "business atmosphere":
+      return Icons.work_rounded;
+    case "English":
+    case "Spanish":
+    case "Mandarin Chinese":
+    case "French":
+    case "Arabic":
+    case "Hindi":
+    case "Portuguese":
+    case "Bengali":
+    case "Russian":
+    case "Japanese":
+    case "Korean":
+    case "Vietnamese":
+    case "Tagalog":
+      return Icons.translate_rounded;
+    case "American Sign Language":
+      return Icons.sign_language_rounded;
+    case "wheelchair-accessible":
+      return Icons.accessible_rounded;
+    case "walker/cane storage":
+    case "assistance entering vehicle":
+      return Icons.accessible_forward_rounded;
+    case "assistance with bags":
+    case "more luggage space":
+      return Icons.luggage_rounded;
+    case "hearing-friendly communication":
+      return Icons.hearing_rounded;
+    case "highly rated":
+      return Icons.star_rounded;
+    case "experienced":
+      return Icons.workspace_premium_rounded;
+    case "familiar driver":
+      return Icons.person_pin_circle_rounded;
+    case "larger vehicle":
+      return Icons.directions_car_filled_rounded;
+    case "cheap ride":
+      return Icons.savings_rounded;
     default:
       return Icons.tune_rounded;
   }
@@ -484,6 +553,41 @@ class _LoginPageState extends State<LoginPage> {
   }
 }
 
+class _CategorizedPreferenceSelector extends StatelessWidget {
+  const _CategorizedPreferenceSelector({required this.selected, required this.disabled, required this.onChanged});
+
+  final Set<String> selected;
+  final bool disabled;
+  final void Function(String preference, bool selected) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: _preferenceCategories.entries.map((category) => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(category.key, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: category.value.map((item) => _signupPreferenceChip(
+                item: item,
+                selected: selected.contains(item),
+                disabled: disabled,
+                onSelected: (value) => onChanged(item, value),
+              )).toList(),
+            ),
+          ],
+        ),
+      )).toList(),
+    );
+  }
+}
+
 class RiderSignupPage extends StatefulWidget {
   const RiderSignupPage({super.key});
 
@@ -504,18 +608,6 @@ class _RiderSignupPageState extends State<RiderSignupPage> {
   bool _busy = false;
   String _message = "";
   final Set<String> _prefs = <String>{};
-
-  static const _prefOptions = [
-    "quiet ride",
-    "music okay",
-    "music low",
-    "conversation okay",
-    "no conversation",
-    "pet friendly",
-    "temperature cool",
-    "temperature warm",
-    "no highway",
-  ];
 
   @override
   void dispose() {
@@ -703,30 +795,10 @@ class _RiderSignupPageState extends State<RiderSignupPage> {
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 14),
                   ),
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _prefOptions
-                        .map(
-                          (item) {
-                            final selected = _prefs.contains(item);
-                            return _signupPreferenceChip(
-                              item: item,
-                              selected: selected,
-                              disabled: _busy,
-                              onSelected: (value) {
-                                setState(() {
-                                  if (value) {
-                                    _prefs.add(item);
-                                  } else {
-                                    _prefs.remove(item);
-                                  }
-                                });
-                              },
-                            );
-                          },
-                        )
-                        .toList(),
+                  _CategorizedPreferenceSelector(
+                    selected: _prefs,
+                    disabled: _busy,
+                    onChanged: (item, selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)),
                   ),
                   const SizedBox(height: 18),
                   FilledButton(
@@ -1389,6 +1461,7 @@ class _RideTabState extends State<RideTab> {
   List<Map<String, dynamic>> _rankMatchCandidates(List<Map<String, dynamic>> candidates) {
     double scoreFor(Map<String, dynamic> candidate) {
       final sharedTraits = int.tryParse((candidate["compatibility_score"] ?? "").toString()) ?? 0;
+      final learningScore = int.tryParse((candidate["learning_score"] ?? "").toString()) ?? 0;
       final rating = double.tryParse((candidate["rating"] ?? "").toString()) ?? 0;
       final distanceMiles = double.tryParse((candidate["pickup_distance_miles"] ?? "").toString());
 
@@ -1397,11 +1470,27 @@ class _RideTabState extends State<RideTab> {
       final distanceScore = distanceMiles == null
           ? 0.0
           : (1 - (distanceMiles.clamp(0, 15) / 15)) * 35;
-      return sharedTraitScore + ratingScore + distanceScore;
+      final learnedPreferenceScore = (learningScore.clamp(0, 20) / 20) * 35;
+      return sharedTraitScore + learnedPreferenceScore + ratingScore + distanceScore;
     }
 
     final rankedCandidates = candidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
     rankedCandidates.sort((first, second) {
+      int availabilityRank(Map<String, dynamic> candidate) {
+        switch ((candidate["availability_status"] ?? "offline").toString().toLowerCase()) {
+          case "available":
+            return 0;
+          case "busy":
+            return 1;
+          default:
+            return 2;
+        }
+      }
+
+      final availabilityComparison = availabilityRank(first).compareTo(availabilityRank(second));
+      if (availabilityComparison != 0) {
+        return availabilityComparison;
+      }
       final scoreComparison = scoreFor(second).compareTo(scoreFor(first));
       if (scoreComparison != 0) {
         return scoreComparison;
@@ -2505,6 +2594,8 @@ class _RideTabState extends State<RideTab> {
     final isBrowsingMatches = _trip == null && _showMatchDeckOnly && _matchCandidates.isNotEmpty;
     final isMatchDeckEnded =
         _trip == null && _showMatchDeckOnly && _matchCandidates.isEmpty && _matchDeckSeed.isNotEmpty;
+    final currentDriverIsAvailable = _matchCandidates.isNotEmpty &&
+        (_matchCandidates.first["availability_status"] ?? "offline").toString().toLowerCase() == "available";
     return _PageShell(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -2648,14 +2739,16 @@ class _RideTabState extends State<RideTab> {
                         const Icon(Icons.swipe_rounded, color: Colors.white, size: 20),
                         const SizedBox(width: 8),
                         Text(
-                          "${_matchCandidates.length} driver${_matchCandidates.length == 1 ? "" : "s"} ready",
+                          "${_matchCandidates.length} driver${_matchCandidates.length == 1 ? "" : "s"}",
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
                         ),
                       ],
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "Swipe left to pass, or swipe right to request this driver.",
+                      currentDriverIsAvailable
+                          ? "Swipe left to pass, or swipe right to request this driver."
+                          : "This driver cannot accept a ride right now. Swipe left to continue.",
                       style: TextStyle(fontSize: 12.5, color: Colors.white.withValues(alpha: 0.62)),
                     ),
                     const SizedBox(height: 14),
@@ -2672,7 +2765,11 @@ class _RideTabState extends State<RideTab> {
                       ),
                     Dismissible(
                       key: ValueKey("driver-card-${_matchCandidates.first["account_id"]}"),
-                      direction: _busy ? DismissDirection.none : DismissDirection.horizontal,
+                      direction: _busy
+                          ? DismissDirection.none
+                          : currentDriverIsAvailable
+                              ? DismissDirection.horizontal
+                              : DismissDirection.endToStart,
                       confirmDismiss: (direction) async {
                         if (direction == DismissDirection.startToEnd) {
                           await _submitSwipe("right");
@@ -2716,7 +2813,7 @@ class _RideTabState extends State<RideTab> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: FilledButton.icon(
-                            onPressed: _busy ? null : () => _submitSwipe("right"),
+                            onPressed: _busy || !currentDriverIsAvailable ? null : () => _submitSwipe("right"),
                             icon: const Icon(Icons.favorite_rounded),
                             label: const Text("Swipe right"),
                             style: FilledButton.styleFrom(
@@ -2805,14 +2902,16 @@ class _RideTabState extends State<RideTab> {
                       const Icon(Icons.swipe_rounded, color: Colors.white, size: 20),
                       const SizedBox(width: 8),
                       Text(
-                        "${_matchCandidates.length} driver${_matchCandidates.length == 1 ? "" : "s"} ready",
+                        "${_matchCandidates.length} driver${_matchCandidates.length == 1 ? "" : "s"}",
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
                       ),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    "Swipe left to pass, or swipe right to request this driver.",
+                    currentDriverIsAvailable
+                        ? "Swipe left to pass, or swipe right to request this driver."
+                        : "This driver cannot accept a ride right now. Swipe left to continue.",
                     style: TextStyle(fontSize: 12.5, color: Colors.white.withValues(alpha: 0.62)),
                   ),
                   const SizedBox(height: 14),
@@ -2829,7 +2928,11 @@ class _RideTabState extends State<RideTab> {
                     ),
                   Dismissible(
                     key: ValueKey("driver-card-${_matchCandidates.first["account_id"]}"),
-                    direction: _busy ? DismissDirection.none : DismissDirection.horizontal,
+                    direction: _busy
+                        ? DismissDirection.none
+                        : currentDriverIsAvailable
+                            ? DismissDirection.horizontal
+                            : DismissDirection.endToStart,
                     confirmDismiss: (direction) async {
                       if (direction == DismissDirection.startToEnd) {
                         await _submitSwipe("right");
@@ -2873,7 +2976,7 @@ class _RideTabState extends State<RideTab> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: _busy ? null : () => _submitSwipe("right"),
+                          onPressed: _busy || !currentDriverIsAvailable ? null : () => _submitSwipe("right"),
                           icon: const Icon(Icons.favorite_rounded),
                           label: const Text("Swipe right"),
                           style: FilledButton.styleFrom(
@@ -3056,9 +3159,20 @@ class _MatchCandidateCard extends StatelessWidget {
     final name = (candidate["name"] ?? "Driver").toString();
     final rating = double.tryParse("${candidate["rating"] ?? ""}") ?? 0;
     final rides = int.tryParse("${candidate["rides"] ?? ""}") ?? 0;
+    final learningScore = int.tryParse("${candidate["learning_score"] ?? ""}") ?? 0;
     final rideType = (candidate["ride_type"] ?? "standard").toString();
+    final availabilityStatus = (candidate["availability_status"] ?? "offline").toString().toLowerCase();
+    final availabilityLabel = availabilityStatus == "available"
+        ? "Available"
+        : availabilityStatus == "busy"
+            ? "Busy"
+            : "Offline";
+    final availabilityColor = availabilityStatus == "available"
+        ? const Color(0xFF22C55E)
+        : availabilityStatus == "busy"
+            ? const Color(0xFFF59E0B)
+            : const Color(0xFF94A3B8);
     final photoUrl = _resolveRiderApiUrl((candidate["photo_url"] ?? "").toString().trim());
-    final preferences = _splitListString(candidate["preferences"]);
     final fareEstimateMap = candidate["fare_estimate"] is Map
         ? Map<String, dynamic>.from(candidate["fare_estimate"] as Map)
         : <String, dynamic>{};
@@ -3123,6 +3237,25 @@ class _MatchCandidateCard extends StatelessWidget {
                   ],
                 ),
               ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: availabilityColor.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: availabilityColor.withValues(alpha: 0.55)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.circle, size: 9, color: availabilityColor),
+                    const SizedBox(width: 6),
+                    Text(
+                      availabilityLabel,
+                      style: TextStyle(color: availabilityColor, fontWeight: FontWeight.w800, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -3145,17 +3278,24 @@ class _MatchCandidateCard extends StatelessWidget {
                 icon: Icons.favorite_border_rounded,
                 label: "${candidate["compatibility_score"] ?? 0} shared prefs",
               ),
+              if (learningScore > 0 && matchingPreferences.isNotEmpty)
+                const _MatchStatPill(
+                  icon: Icons.auto_awesome_rounded,
+                  label: "Recommended for you",
+                ),
             ],
           ),
           const SizedBox(height: 16),
           Text(
-            "Shared vibe",
+            "Shared preferences",
             style: TextStyle(color: Colors.white.withValues(alpha: 0.58), fontSize: 12, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           if (matchingPreferences.isEmpty)
             Text(
-              "No saved preference overlap yet, but this driver is available now.",
+              availabilityStatus == "available"
+                  ? "No saved preference overlap yet, but this driver is available now."
+                  : "No saved preference overlap yet.",
               style: TextStyle(color: Colors.white.withValues(alpha: 0.72), fontSize: 13, height: 1.35),
             )
           else
@@ -3176,18 +3316,6 @@ class _MatchCandidateCard extends StatelessWidget {
                   )
                   .toList(),
             ),
-          if (preferences.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(
-              "Driver preferences",
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.58), fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              preferences.join(", "),
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.72), fontSize: 13, height: 1.35),
-            ),
-          ],
           const SizedBox(height: 16),
           Container(
             width: double.infinity,
@@ -3795,6 +3923,62 @@ class _RatingTabState extends State<RatingTab> {
   }
 }
 
+class RiderPreferencesTab extends StatefulWidget {
+  const RiderPreferencesTab({super.key, required this.user, required this.onSaved});
+  final Map<String, dynamic> user;
+  final Future<void> Function(Map<String, dynamic>) onSaved;
+
+  @override
+  State<RiderPreferencesTab> createState() => _RiderPreferencesTabState();
+}
+
+class _RiderPreferencesTabState extends State<RiderPreferencesTab> {
+  final _api = ApiClient();
+  late Set<String> _selected = (widget.user["preferences"] ?? "").toString().split(",").map((item) => item.trim()).where(_availablePreferenceOptions.contains).toSet();
+  bool _busy = false;
+  String _message = "";
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    try {
+      final response = await _api.updateProfile(riderId: _id(widget.user), payload: {
+        "first_name": widget.user["first_name"],
+        "last_name": widget.user["last_name"],
+        "email": widget.user["email"],
+        "phone": widget.user["phone"],
+        "preferences": _selected.toList(),
+      });
+      if (response["success"] == true && response["user"] is Map) {
+        final updated = Map<String, dynamic>.from(response["user"] as Map);
+        await widget.onSaved(updated);
+        setState(() => _message = "Preferences updated.");
+      } else {
+        setState(() => _message = response["error"]?.toString() ?? "Could not save preferences.");
+      }
+    } catch (error) {
+      setState(() => _message = "$error");
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      children: [
+        if (_message.isNotEmpty) ...[_Notice(_message, _message != "Preferences updated."), const SizedBox(height: 12)],
+        _RiderCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text("Your ride preferences", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          Text("Select everything that helps us find drivers who fit your ride style and needs.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65))),
+          const SizedBox(height: 18),
+          _CategorizedPreferenceSelector(selected: _selected, disabled: _busy, onChanged: (item, selected) => setState(() => selected ? _selected.add(item) : _selected.remove(item))),
+          SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _save, icon: const Icon(Icons.save_outlined), label: Text(_busy ? "Saving..." : "Save preferences"))),
+        ])),
+      ],
+  );
+}
+
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key, required this.user, required this.onSaved, required this.onLogout});
   final Map<String, dynamic> user;
@@ -3818,18 +4002,23 @@ class _ProfileTabState extends State<ProfileTab> {
   String _message = "";
   bool _busy = false;
   bool _pwBusy = false;
+  int _profileSection = 0;
 
-  static const _options = [
-    "quiet ride",
-    "music okay",
-    "music low",
-    "conversation okay",
-    "no conversation",
-    "pet friendly",
-    "temperature cool",
-    "temperature warm",
-    "no highway",
-  ];
+  Widget _profileTabs() => Row(children: [
+    Expanded(child: FilledButton.tonalIcon(
+      onPressed: () => setState(() => _profileSection = 0),
+      icon: const Icon(Icons.person_outline),
+      label: const Text("Account"),
+      style: FilledButton.styleFrom(backgroundColor: _profileSection == 0 ? Colors.white24 : Colors.white10),
+    )),
+    const SizedBox(width: 10),
+    Expanded(child: FilledButton.tonalIcon(
+      onPressed: () => setState(() => _profileSection = 1),
+      icon: const Icon(Icons.tune_outlined),
+      label: const Text("Preferences"),
+      style: FilledButton.styleFrom(backgroundColor: _profileSection == 1 ? Colors.white24 : Colors.white10),
+    )),
+  ]);
 
   Future<void> _save() async {
     setState(() => _busy = true);
@@ -3839,7 +4028,7 @@ class _ProfileTabState extends State<ProfileTab> {
         "last_name": _last.text.trim(),
         "email": _email.text.trim(),
         "phone": _phone.text.trim(),
-        "preferences": _prefs.toList(),
+        "preferences": widget.user["preferences"] ?? "",
       });
       if (res["success"] == true && res["user"] is Map) {
         final updated = Map<String, dynamic>.from(res["user"] as Map);
@@ -3915,10 +4104,18 @@ class _ProfileTabState extends State<ProfileTab> {
   @override
   Widget build(BuildContext context) {
     final displayName = "${widget.user["first_name"] ?? ""} ${widget.user["last_name"] ?? ""}".trim();
+    if (_profileSection == 1) {
+      return _PageShell(child: Column(children: [
+        Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 4), child: _profileTabs()),
+        Expanded(child: RiderPreferencesTab(user: widget.user, onSaved: widget.onSaved)),
+      ]));
+    }
     return _PageShell(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
+          _profileTabs(),
+          const SizedBox(height: 12),
           _RiderCard(
             child: Row(
               children: [
@@ -3989,23 +4186,6 @@ class _ProfileTabState extends State<ProfileTab> {
                   style: const TextStyle(color: Colors.white),
                   cursorColor: Colors.white,
                   decoration: _riderShellInputDecoration(label: "Phone"),
-                ),
-                const SizedBox(height: 12),
-                Text("Preferences", style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _options
-                      .map(
-                        (item) => _signupPreferenceChip(
-                          item: item,
-                          selected: _prefs.contains(item),
-                          disabled: _busy,
-                          onSelected: (selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)),
-                        ),
-                      )
-                      .toList(),
                 ),
                 const SizedBox(height: 14),
                 SizedBox(
