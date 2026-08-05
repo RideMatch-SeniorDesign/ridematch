@@ -1,6 +1,5 @@
 import "dart:async";
 import "dart:convert";
-import "dart:math" as math;
 import "dart:typed_data";
 
 import "package:dio/dio.dart";
@@ -1332,38 +1331,53 @@ class _RideTabState extends State<RideTab> {
   LatLng? _driverPoint;
   final Set<int> _autoShownReviewTripIds = <int>{};
 
-  List<Map<String, dynamic>> _withPickupEstimates(List<Map<String, dynamic>> candidates) {
+  Future<List<Map<String, dynamic>>> _withPickupRouteEstimates({
+    required String apiKey,
+    required List<Map<String, dynamic>> candidates,
+  }) async {
     final pickupPoint = _pickupPoint;
-    if (pickupPoint == null) {
+    if (apiKey.isEmpty || pickupPoint == null) {
       return candidates;
     }
 
-    return candidates.map((candidate) {
+    return Future.wait(candidates.map((candidate) async {
       final driverPoint = _point(candidate["driver_latitude"], candidate["driver_longitude"]);
       if (driverPoint == null) {
         return candidate;
       }
 
-      const milesPerRadian = 3958.8;
-      final latitudeDelta = _degreesToRadians(driverPoint.latitude - pickupPoint.latitude);
-      final longitudeDelta = _degreesToRadians(driverPoint.longitude - pickupPoint.longitude);
-      final distanceFactor = math.sin(latitudeDelta / 2) * math.sin(latitudeDelta / 2) +
-          math.cos(_degreesToRadians(pickupPoint.latitude)) *
-              math.cos(_degreesToRadians(driverPoint.latitude)) *
-              math.sin(longitudeDelta / 2) *
-              math.sin(longitudeDelta / 2);
-      final straightLineMiles = milesPerRadian * 2 * math.atan2(math.sqrt(distanceFactor), math.sqrt(1 - distanceFactor));
-      final estimatedRoadMiles = straightLineMiles * 1.2;
-
-      return <String, dynamic>{
-        ...candidate,
-        "pickup_distance_miles": estimatedRoadMiles,
-        "pickup_eta_minutes": math.max(1, (estimatedRoadMiles / 20 * 60).ceil()),
-      };
-    }).toList();
+      try {
+        final route = await _api.fetchRoute(
+          apiKey: apiKey,
+          startLatitude: driverPoint.latitude,
+          startLongitude: driverPoint.longitude,
+          endLatitude: pickupPoint.latitude,
+          endLongitude: pickupPoint.longitude,
+        );
+        final features = route["features"];
+        if (features is! List || features.isEmpty || features.first is! Map) {
+          return candidate;
+        }
+        final feature = Map<String, dynamic>.from(features.first as Map);
+        final properties = feature["properties"];
+        if (properties is! Map) {
+          return candidate;
+        }
+        final distanceMeters = double.tryParse((properties["distance"] ?? "").toString());
+        final durationSeconds = double.tryParse((properties["time"] ?? "").toString());
+        if (distanceMeters == null || durationSeconds == null) {
+          return candidate;
+        }
+        return <String, dynamic>{
+          ...candidate,
+          "pickup_distance_miles": distanceMeters / 1609.344,
+          "pickup_eta_minutes": (durationSeconds / 60).ceil(),
+        };
+      } catch (_) {
+        return candidate;
+      }
+    }));
   }
-
-  double _degreesToRadians(double degrees) => degrees * math.pi / 180;
 
   void _cancelMatchDeck() {
     setState(() {
@@ -2056,9 +2070,13 @@ class _RideTabState extends State<RideTab> {
       final trip = res["trip"];
       final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
       final rawCandidates = (res["candidates"] as List?) ?? const [];
-      final nextCandidates = _withPickupEstimates(
-        rawCandidates.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList(),
+      final nextCandidates = await _withPickupRouteEstimates(
+        apiKey: key,
+        candidates: rawCandidates.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList(),
       );
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
