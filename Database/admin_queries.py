@@ -32,6 +32,7 @@ _RIDE_TYPE_MULTIPLIERS = {
 }
 
 TRIP_OFFER_TIMEOUT_SECONDS = 20
+_trip_offer_table_ready = False
 
 
 def _normalize_payout_schedule(value: str | None) -> str:
@@ -373,6 +374,9 @@ def _ensure_rider_match_swipe_table() -> None:
 
 
 def _ensure_trip_offer_table() -> None:
+    global _trip_offer_table_ready
+    if _trip_offer_table_ready:
+        return
     _execute(
         """
         CREATE TABLE IF NOT EXISTS trip_offer (
@@ -397,6 +401,7 @@ def _ensure_trip_offer_table() -> None:
     for column_name, column_type in extra_columns.items():
         if not _column_exists("trip_offer", column_name):
             _execute(f"ALTER TABLE trip_offer ADD COLUMN {column_name} {column_type}")
+    _trip_offer_table_ready = True
 
 
 def _ensure_dispatch_query_tables() -> None:

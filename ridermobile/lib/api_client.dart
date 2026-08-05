@@ -11,8 +11,8 @@ class ApiClient {
       : _dio = Dio(
           BaseOptions(
             baseUrl: _apiBaseUrl.isNotEmpty ? _apiBaseUrl : "http://$_apiHost:8003",
-            connectTimeout: const Duration(seconds: 12),
-            receiveTimeout: const Duration(seconds: 12),
+            connectTimeout: const Duration(seconds: 30),
+            receiveTimeout: const Duration(seconds: 30),
             headers: {"Content-Type": "application/json"},
           ),
         );
