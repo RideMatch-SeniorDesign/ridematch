@@ -1,5 +1,6 @@
 import "dart:async";
 import "dart:convert";
+import "dart:math" as math;
 import "dart:typed_data";
 
 import "package:dio/dio.dart";
@@ -1331,6 +1332,39 @@ class _RideTabState extends State<RideTab> {
   LatLng? _driverPoint;
   final Set<int> _autoShownReviewTripIds = <int>{};
 
+  List<Map<String, dynamic>> _withPickupEstimates(List<Map<String, dynamic>> candidates) {
+    final pickupPoint = _pickupPoint;
+    if (pickupPoint == null) {
+      return candidates;
+    }
+
+    return candidates.map((candidate) {
+      final driverPoint = _point(candidate["driver_latitude"], candidate["driver_longitude"]);
+      if (driverPoint == null) {
+        return candidate;
+      }
+
+      const milesPerRadian = 3958.8;
+      final latitudeDelta = _degreesToRadians(driverPoint.latitude - pickupPoint.latitude);
+      final longitudeDelta = _degreesToRadians(driverPoint.longitude - pickupPoint.longitude);
+      final distanceFactor = math.sin(latitudeDelta / 2) * math.sin(latitudeDelta / 2) +
+          math.cos(_degreesToRadians(pickupPoint.latitude)) *
+              math.cos(_degreesToRadians(driverPoint.latitude)) *
+              math.sin(longitudeDelta / 2) *
+              math.sin(longitudeDelta / 2);
+      final straightLineMiles = milesPerRadian * 2 * math.atan2(math.sqrt(distanceFactor), math.sqrt(1 - distanceFactor));
+      final estimatedRoadMiles = straightLineMiles * 1.2;
+
+      return <String, dynamic>{
+        ...candidate,
+        "pickup_distance_miles": estimatedRoadMiles,
+        "pickup_eta_minutes": math.max(1, (estimatedRoadMiles / 20 * 60).ceil()),
+      };
+    }).toList();
+  }
+
+  double _degreesToRadians(double degrees) => degrees * math.pi / 180;
+
   void _cancelMatchDeck() {
     setState(() {
       _matchCandidates = [];
@@ -2022,7 +2056,9 @@ class _RideTabState extends State<RideTab> {
       final trip = res["trip"];
       final nextTrip = trip is Map ? Map<String, dynamic>.from(trip) : null;
       final rawCandidates = (res["candidates"] as List?) ?? const [];
-      final nextCandidates = rawCandidates.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      final nextCandidates = _withPickupEstimates(
+        rawCandidates.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList(),
+      );
       setState(() {
         _trip = nextTrip;
         _driverPoint = _point(_trip?["driver_latitude"], _trip?["driver_longitude"]);
@@ -2843,6 +2879,8 @@ class _MatchCandidateCard extends StatelessWidget {
         : <String, dynamic>{};
     final estimatedFareRaw = fareEstimateMap["estimated_cost"] ?? candidate["estimated_cost"];
     final estimatedFare = double.tryParse("$estimatedFareRaw");
+    final pickupDistanceMiles = double.tryParse("${candidate["pickup_distance_miles"] ?? ""}");
+    final pickupEtaMinutes = int.tryParse("${candidate["pickup_eta_minutes"] ?? ""}");
     final matchingPreferences = ((candidate["matching_preferences"] as List?) ?? const [])
         .map((item) => item.toString())
         .where((item) => item.trim().isNotEmpty)
@@ -2911,6 +2949,11 @@ class _MatchCandidateCard extends StatelessWidget {
                 icon: Icons.attach_money_rounded,
                 label: estimatedFare == null ? "Fare pending" : "\$${estimatedFare.toStringAsFixed(2)} est.",
               ),
+              if (pickupDistanceMiles != null && pickupEtaMinutes != null)
+                _MatchStatPill(
+                  icon: Icons.near_me_rounded,
+                  label: "${pickupDistanceMiles.toStringAsFixed(1)} mi · ~$pickupEtaMinutes min away",
+                ),
               _MatchStatPill(icon: Icons.star_rounded, label: rating <= 0 ? "New driver" : "${rating.toStringAsFixed(1)} rating"),
               _MatchStatPill(icon: Icons.route_rounded, label: "$rides rides"),
               _MatchStatPill(
