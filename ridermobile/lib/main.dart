@@ -1296,6 +1296,7 @@ class RideTab extends StatefulWidget {
 
 class _RideTabState extends State<RideTab> {
   final _api = ApiClient();
+  final MapController _mapController = MapController();
   final _pickup = TextEditingController();
   final _dropoff = TextEditingController();
   final _notes = TextEditingController();
@@ -1308,6 +1309,7 @@ class _RideTabState extends State<RideTab> {
   Timer? _poll;
   Timer? _pickupSuggestTimer;
   Timer? _dropoffSuggestTimer;
+  StreamSubscription<Position>? _locationSubscription;
   io.Socket? _socket;
   List<Map<String, dynamic>> _pickupSuggestions = [];
   List<Map<String, dynamic>> _dropoffSuggestions = [];
@@ -1329,6 +1331,8 @@ class _RideTabState extends State<RideTab> {
   double? _estimatedDistanceMiles;
   double? _estimatedDurationMinutes;
   LatLng? _driverPoint;
+  LatLng? _currentUserPoint;
+  bool _hasCenteredOnUserLocation = false;
   final Set<int> _autoShownReviewTripIds = <int>{};
 
   Future<List<Map<String, dynamic>>> _withPickupRouteEstimates({
@@ -1458,6 +1462,7 @@ class _RideTabState extends State<RideTab> {
     _connectRealTime();
     _load();
     _poll = Timer.periodic(const Duration(seconds: 7), (_) => _load());
+    _startLocationUpdates();
   }
 
   @override
@@ -1465,6 +1470,7 @@ class _RideTabState extends State<RideTab> {
     _poll?.cancel();
     _pickupSuggestTimer?.cancel();
     _dropoffSuggestTimer?.cancel();
+    _locationSubscription?.cancel();
     _pickup.removeListener(_onPickupTextChanged);
     _dropoff.removeListener(_onDropoffTextChanged);
     _pickup.dispose();
@@ -1474,6 +1480,44 @@ class _RideTabState extends State<RideTab> {
     _chatScrollController.dispose();
     _socket?.dispose();
     super.dispose();
+  }
+
+  Future<void> _startLocationUpdates() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      return;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      return;
+    }
+
+    await _locationSubscription?.cancel();
+    _locationSubscription = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      ),
+    ).listen((position) {
+      if (!mounted) {
+        return;
+      }
+      final userPoint = LatLng(position.latitude, position.longitude);
+      setState(() {
+        _currentUserPoint = userPoint;
+      });
+      if (!_hasCenteredOnUserLocation) {
+        _hasCenteredOnUserLocation = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _mapController.move(userPoint, 14);
+          }
+        });
+      }
+    });
   }
 
   void _connectRealTime() {
@@ -1972,6 +2016,7 @@ class _RideTabState extends State<RideTab> {
         throw Exception("Location permission denied.");
       }
       final position = await Geolocator.getCurrentPosition();
+      _startLocationUpdates();
       final maps = await _api.fetchMapsConfig();
       final key = (maps["geoapify_api_key"] ?? "").toString().trim();
       if (key.isEmpty) {
@@ -1983,6 +2028,7 @@ class _RideTabState extends State<RideTab> {
       setState(() {
         _pickup.text = formatted.isEmpty ? "${position.latitude}, ${position.longitude}" : formatted;
         _pickupPoint = LatLng(position.latitude, position.longitude);
+        _currentUserPoint = _pickupPoint;
         if (_trip == null) {
           _matchCandidates = [];
           _matchDeckSeed = [];
@@ -2300,6 +2346,13 @@ class _RideTabState extends State<RideTab> {
   @override
   Widget build(BuildContext context) {
     final markers = [
+      if (_currentUserPoint != null)
+        Marker(
+          point: _currentUserPoint!,
+          width: 42,
+          height: 42,
+          child: const Icon(Icons.person_pin_circle_rounded, color: Colors.white, size: 34),
+        ),
       if (_pickupPoint != null)
         Marker(
           point: _pickupPoint!,
@@ -2375,6 +2428,7 @@ class _RideTabState extends State<RideTab> {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(14),
                       child: FlutterMap(
+                        mapController: _mapController,
                         options: const MapOptions(initialCenter: LatLng(41.6611, -91.5302), initialZoom: 12),
                         children: [
                           TileLayer(
