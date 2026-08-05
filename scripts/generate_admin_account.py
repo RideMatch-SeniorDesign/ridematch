@@ -14,6 +14,10 @@ def main() -> None:
     args = parser.parse_args()
 
     password = args.password or getpass.getpass("Admin password: ")
+    if not args.password:
+        confirmation = getpass.getpass("Confirm admin password: ")
+        if password != confirmation:
+            raise SystemExit("Passwords do not match. No account entry was generated.")
     entry = {args.username: {"password_hash": generate_password_hash(password)}}
     print(json.dumps(entry))
 
