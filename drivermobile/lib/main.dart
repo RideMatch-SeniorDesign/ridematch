@@ -2442,8 +2442,10 @@ class _StartDriveTabState extends State<StartDriveTab> {
   final MapController _mapController = MapController();
   Map<String, dynamic>? _trip;
   bool _loading = true;
+  bool _loadingDispatch = false;
   bool _submitting = false;
   bool _isAvailable = false;
+  bool? _availabilitySetThisSession;
   String _message = "";
   bool _messageIsError = false;
 
@@ -2452,6 +2454,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
   List<Map<String, dynamic>> _chatMessages = [];
 
   Timer? _refreshTimer;
+  Timer? _offerCountdownTimer;
   Timer? _locationTimer;
   io.Socket? _socket;
   String _geoapifyApiKey = "";
@@ -2586,6 +2589,16 @@ class _StartDriveTabState extends State<StartDriveTab> {
         _loadDispatch(showLoader: false);
       }
     });
+    _offerCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _submitting || _trip == null) {
+        return;
+      }
+      if (_offerSecondsRemaining(_trip!) <= 0) {
+        _loadDispatch(showLoader: false);
+        return;
+      }
+      setState(() {});
+    });
     _locationTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (mounted && !_submitting) {
         _syncDriverLocation();
@@ -2599,6 +2612,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
     _chatScrollController.dispose();
     _socket?.dispose();
     _refreshTimer?.cancel();
+    _offerCountdownTimer?.cancel();
     _locationTimer?.cancel();
     super.dispose();
   }
@@ -2641,6 +2655,9 @@ class _StartDriveTabState extends State<StartDriveTab> {
   }
 
   Future<void> _loadDispatch({bool showLoader = true}) async {
+    if (_loadingDispatch) {
+      return;
+    }
     final accountId = _extractAccountId();
     if (accountId == null) {
       setState(() {
@@ -2657,6 +2674,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
       });
     }
 
+    _loadingDispatch = true;
     try {
       final response = await _api.fetchDriverDispatch(accountId: accountId);
       if (!mounted) {
@@ -2674,7 +2692,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
         _trip = response["trip"] is Map
             ? Map<String, dynamic>.from(response["trip"] as Map)
             : null;
-        _isAvailable = response["is_available"] == true;
+        _isAvailable = _availabilitySetThisSession ?? response["is_available"] == true;
         _loading = false;
       });
 
@@ -2697,6 +2715,8 @@ class _StartDriveTabState extends State<StartDriveTab> {
         _message = "Could not load dispatch: $exc";
         _messageIsError = true;
       });
+    } finally {
+      _loadingDispatch = false;
     }
   }
 
@@ -2722,6 +2742,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
       }
       setState(() {
         _isAvailable = response["is_available"] == true;
+        _availabilitySetThisSession = _isAvailable;
         _message = _isAvailable
             ? "You are now online for ride matching."
             : "You are now offline and will not receive new rides.";
@@ -2996,12 +3017,26 @@ class _StartDriveTabState extends State<StartDriveTab> {
     return double.tryParse(text);
   }
 
-  String _offerCountdown(Map<String, dynamic> trip) {
-    final expiresAt = DateTime.tryParse((trip["offer_expires_at"] ?? "").toString())?.toLocal();
-    if (expiresAt == null) {
-      return "Respond now";
+  int _offerSecondsRemaining(Map<String, dynamic> trip) {
+    final serverSeconds = int.tryParse((trip["offer_seconds_remaining"] ?? "").toString());
+    if (serverSeconds != null) {
+      final receivedAt = DateTime.tryParse((trip["offer_received_at"] ?? "").toString());
+      if (receivedAt != null) {
+        return (serverSeconds - DateTime.now().difference(receivedAt).inSeconds).clamp(0, serverSeconds);
+      }
+      trip["offer_received_at"] = DateTime.now().toIso8601String();
+      return serverSeconds;
     }
-    final seconds = expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 999);
+
+    final expiresAt = DateTime.tryParse((trip["offer_expires_at"] ?? "").toString());
+    return expiresAt == null ? 0 : expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 20);
+  }
+
+  String _offerCountdown(Map<String, dynamic> trip) {
+    final seconds = _offerSecondsRemaining(trip);
+    if (seconds <= 0) {
+      return "Offer expiring...";
+    }
     return "${seconds}s remaining";
   }
 

@@ -1583,7 +1583,11 @@ def _dispatch_trip_select() -> str:
             offer.OfferID AS offer_id,
             offer.Status AS offer_status,
             CAST(offer.OfferedAt AS CHAR) AS offer_offered_at,
-            CAST(offer.ExpiresAt AS CHAR) AS offer_expires_at
+            CAST(offer.ExpiresAt AS CHAR) AS offer_expires_at,
+            CASE
+                WHEN offer.ExpiresAt IS NULL THEN NULL
+                ELSE GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), offer.ExpiresAt))
+            END AS offer_seconds_remaining
         FROM trip t
         JOIN account dacc ON dacc.AccountID = t.DriverID
         JOIN account racc ON racc.AccountID = t.RiderID
