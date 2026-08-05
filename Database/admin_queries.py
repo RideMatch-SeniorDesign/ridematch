@@ -32,6 +32,7 @@ _RIDE_TYPE_MULTIPLIERS = {
 }
 
 TRIP_OFFER_TIMEOUT_SECONDS = 60
+MAX_DRIVER_SIMULTANEOUS_OFFERS = 3
 _trip_offer_table_ready = False
 _admin_mfa_table_ready = False
 
@@ -1739,9 +1740,9 @@ def fetch_active_rider_trip(account_id: int) -> dict[str, Any] | None:
     return trip
 
 
-def fetch_active_driver_trip(account_id: int) -> dict[str, Any] | None:
+def fetch_active_driver_trips(account_id: int) -> list[dict[str, Any]]:
     if not _table_exists("trip"):
-        return None
+        return []
     _ensure_dispatch_query_tables()
     rows = _fetch_all(
         f"""
@@ -1749,25 +1750,32 @@ def fetch_active_driver_trip(account_id: int) -> dict[str, Any] | None:
         WHERE t.DriverID = %s
           AND t.Status IN ('requested', 'accepted', 'in_progress')
         ORDER BY FIELD(t.Status, 'in_progress', 'accepted', 'requested'), t.TripID DESC
-        LIMIT 1
         """,
         (account_id,),
     )
-    if not rows:
-        return None
-    trip = rows[0]
-    if str(trip.get("status") or "").lower() == "requested":
+    active_trips: list[dict[str, Any]] = []
+    for trip in rows:
+        if str(trip.get("status") or "").lower() != "requested":
+            active_trips.append(trip)
+            continue
         refreshed = _expire_trip_offer_if_needed(int(trip["trip_id"]))
-        if not refreshed or int(refreshed.get("driver_id") or 0) != account_id:
-            return None
-        return refreshed
-    return trip
+        if refreshed and int(refreshed.get("driver_id") or 0) == account_id and str(
+            refreshed.get("status") or ""
+        ).lower() == "requested":
+            active_trips.append(refreshed)
+    return active_trips
+
+
+def fetch_active_driver_trip(account_id: int) -> dict[str, Any] | None:
+    active_trips = fetch_active_driver_trips(account_id)
+    return active_trips[0] if active_trips else None
 
 
 def _pick_best_driver_for_request() -> int | None:
     if not _table_exists("driver") or not _table_exists("trip"):
         return None
     _ensure_driver_dispatch_state_table()
+    _ensure_trip_offer_table()
     rows = _fetch_all(
         """
         SELECT
@@ -1776,19 +1784,32 @@ def _pick_best_driver_for_request() -> int | None:
         FROM driver d
         JOIN driver_dispatch_state ds
             ON ds.DriverID = d.AccountID
-        LEFT JOIN trip active_trip
-            ON active_trip.DriverID = d.AccountID
-           AND active_trip.Status IN ('requested', 'accepted', 'in_progress')
         LEFT JOIN trip completed
             ON completed.DriverID = d.AccountID
-           AND completed.Status = 'completed'
+            AND completed.Status = 'completed'
         WHERE COALESCE(d.Status, '') = 'approved'
           AND ds.IsAvailable = 1
-          AND active_trip.TripID IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM trip active_trip
+              WHERE active_trip.DriverID = d.AccountID
+                AND active_trip.Status IN ('accepted', 'in_progress')
+          )
+          AND (
+              SELECT COUNT(*)
+              FROM trip pending_trip
+              JOIN trip_offer pending_offer ON pending_offer.TripID = pending_trip.TripID
+              WHERE pending_trip.DriverID = d.AccountID
+                AND pending_trip.Status = 'requested'
+                AND pending_offer.DriverID = d.AccountID
+                AND pending_offer.Status = 'offered'
+                AND pending_offer.ExpiresAt > NOW()
+          ) < %s
         GROUP BY d.AccountID
         ORDER BY completed_count DESC, d.AccountID ASC
         LIMIT 1
-        """
+        """,
+        (MAX_DRIVER_SIMULTANEOUS_OFFERS,),
     )
     if not rows:
         return None
@@ -1799,22 +1820,35 @@ def _driver_is_matchable(driver_id: int) -> bool:
     if not _table_exists("driver") or not _table_exists("trip"):
         return False
     _ensure_driver_dispatch_state_table()
+    _ensure_trip_offer_table()
     rows = _fetch_all(
         """
         SELECT d.AccountID AS account_id
         FROM driver d
         JOIN driver_dispatch_state ds
             ON ds.DriverID = d.AccountID
-        LEFT JOIN trip active_trip
-            ON active_trip.DriverID = d.AccountID
-           AND active_trip.Status IN ('requested', 'accepted', 'in_progress')
         WHERE d.AccountID = %s
           AND COALESCE(d.Status, '') = 'approved'
           AND ds.IsAvailable = 1
-          AND active_trip.TripID IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM trip active_trip
+              WHERE active_trip.DriverID = d.AccountID
+                AND active_trip.Status IN ('accepted', 'in_progress')
+          )
+          AND (
+              SELECT COUNT(*)
+              FROM trip pending_trip
+              JOIN trip_offer pending_offer ON pending_offer.TripID = pending_trip.TripID
+              WHERE pending_trip.DriverID = d.AccountID
+                AND pending_trip.Status = 'requested'
+                AND pending_offer.DriverID = d.AccountID
+                AND pending_offer.Status = 'offered'
+                AND pending_offer.ExpiresAt > NOW()
+          ) < %s
         LIMIT 1
         """,
-        (driver_id,),
+        (driver_id, MAX_DRIVER_SIMULTANEOUS_OFFERS),
     )
     return bool(rows)
 
@@ -2034,6 +2068,7 @@ def fetch_driver_match_candidates(
     if not _table_exists("driver") or not _table_exists("trip"):
         return []
     _ensure_driver_dispatch_state_table()
+    _ensure_trip_offer_table()
     _ensure_driver_live_location_table()
     _ensure_rider_match_swipe_table()
     has_review = _table_exists("driver_review")
@@ -2060,9 +2095,6 @@ def fetch_driver_match_candidates(
             ON a.AccountID = d.AccountID
         JOIN driver_dispatch_state ds
             ON ds.DriverID = d.AccountID
-        LEFT JOIN trip active_trip
-            ON active_trip.DriverID = d.AccountID
-           AND active_trip.Status IN ('requested', 'accepted', 'in_progress')
         LEFT JOIN trip completed
             ON completed.DriverID = d.AccountID
            AND completed.Status = 'completed'
@@ -2071,7 +2103,22 @@ def fetch_driver_match_candidates(
         {review_join}
         WHERE COALESCE(d.Status, '') = 'approved'
           AND ds.IsAvailable = 1
-          AND active_trip.TripID IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM trip active_trip
+              WHERE active_trip.DriverID = d.AccountID
+                AND active_trip.Status IN ('accepted', 'in_progress')
+          )
+          AND (
+              SELECT COUNT(*)
+              FROM trip pending_trip
+              JOIN trip_offer pending_offer ON pending_offer.TripID = pending_trip.TripID
+              WHERE pending_trip.DriverID = d.AccountID
+                AND pending_trip.Status = 'requested'
+                AND pending_offer.DriverID = d.AccountID
+                AND pending_offer.Status = 'offered'
+                AND pending_offer.ExpiresAt > NOW()
+          ) < %s
         GROUP BY
             d.AccountID,
             a.FirstName,
@@ -2081,7 +2128,7 @@ def fetch_driver_match_candidates(
         ORDER BY {rating_expr} DESC, rides DESC, d.AccountID ASC
         LIMIT %s
         """,
-        (max(1, min(int(limit), 50)),),
+        (MAX_DRIVER_SIMULTANEOUS_OFFERS, max(1, min(int(limit), 50))),
     )
 
     rider = fetch_portal_profile("rider", rider_id) or {}
@@ -2298,6 +2345,27 @@ def update_trip_status_for_driver(
     )
     if rows <= 0:
         return None
+    if next_status == "accepted":
+        _execute(
+            """
+            UPDATE trip_offer
+            SET Status = 'canceled', RespondedAt = NOW()
+            WHERE DriverID = %s
+              AND TripID <> %s
+              AND Status = 'offered'
+            """,
+            (driver_id, trip_id),
+        )
+        _execute(
+            """
+            UPDATE trip
+            SET Status = 'canceled'
+            WHERE DriverID = %s
+              AND TripID <> %s
+              AND Status = 'requested'
+            """,
+            (driver_id, trip_id),
+        )
     return fetch_active_driver_trip(driver_id) if next_status != "completed" else fetch_trip_by_id(trip_id)
 
 
@@ -2315,15 +2383,6 @@ def decline_trip_offer(*, trip_id: int, driver_id: int) -> dict[str, Any] | None
         (trip_id, driver_id),
     )
     if rows <= 0:
-        if next_status == "accepted":
-            _execute(
-                """
-                UPDATE trip_offer
-                SET Status = 'offered', RespondedAt = NULL
-                WHERE TripID = %s AND DriverID = %s AND Status = 'accepted'
-                """,
-                (trip_id, driver_id),
-            )
         return None
     return _assign_next_trip_offer(trip_id)
 

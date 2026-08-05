@@ -2441,6 +2441,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
   final ApiClient _api = ApiClient();
   final MapController _mapController = MapController();
   Map<String, dynamic>? _trip;
+  List<Map<String, dynamic>> _trips = [];
   bool _loading = true;
   bool _loadingDispatch = false;
   bool _submitting = false;
@@ -2590,10 +2591,16 @@ class _StartDriveTabState extends State<StartDriveTab> {
       }
     });
     _offerCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _submitting || _trip == null) {
+      if (!mounted || _submitting) {
         return;
       }
-      if (_offerSecondsRemaining(_trip!) <= 0) {
+      final pendingOffers = _trips.where(
+        (trip) => (trip["status"] ?? "").toString().toLowerCase() == "requested",
+      );
+      if (pendingOffers.isEmpty) {
+        return;
+      }
+      if (pendingOffers.any((trip) => _offerSecondsRemaining(trip) <= 0)) {
         _loadDispatch(showLoader: false);
         return;
       }
@@ -2689,9 +2696,16 @@ class _StartDriveTabState extends State<StartDriveTab> {
         return;
       }
       setState(() {
-        _trip = response["trip"] is Map
-            ? Map<String, dynamic>.from(response["trip"] as Map)
-            : null;
+        final responseTrips = response["trips"];
+        _trips = responseTrips is List
+            ? responseTrips
+                .whereType<Map>()
+                .map((trip) => Map<String, dynamic>.from(trip))
+                .toList()
+            : response["trip"] is Map
+                ? [Map<String, dynamic>.from(response["trip"] as Map)]
+                : [];
+        _trip = _trips.isEmpty ? null : _trips.first;
         _isAvailable = _availabilitySetThisSession ?? response["is_available"] == true;
         _loading = false;
       });
@@ -2911,9 +2925,12 @@ class _StartDriveTabState extends State<StartDriveTab> {
     _socket = socket;
   }
 
-  Future<void> _runTripAction(String action) async {
+  Future<void> _runTripAction(
+    String action, {
+    Map<String, dynamic>? tripOverride,
+  }) async {
     final accountId = _extractAccountId();
-    final trip = _trip;
+    final trip = tripOverride ?? _trip;
     if (accountId == null || trip == null) {
       return;
     }
@@ -2971,6 +2988,7 @@ class _StartDriveTabState extends State<StartDriveTab> {
                 : "Trip completed.";
         _messageIsError = false;
       });
+      await _loadDispatch(showLoader: false);
       await _refreshNavigationPreview();
       WidgetsBinding.instance.addPostFrameCallback((_) => _recenterMapToRoute());
       if (action == "complete") {
@@ -3038,6 +3056,62 @@ class _StartDriveTabState extends State<StartDriveTab> {
       return "Offer expiring...";
     }
     return "${seconds}s remaining";
+  }
+
+  Widget _buildAdditionalOfferCard(Map<String, dynamic> trip) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white.withValues(alpha: 0.06),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Trip #${trip["trip_id"]} · ${_offerCountdown(trip)}",
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Rider: ${(trip["rider_name"] ?? "Unknown").toString()}",
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.8)),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "Pickup: ${(trip["start_loc"] ?? "").toString()}",
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.8)),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _submitting
+                      ? null
+                      : () => _runTripAction("decline", tripOverride: trip),
+                  child: const Text("Decline"),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _submitting
+                      ? null
+                      : () => _runTripAction("accept", tripOverride: trip),
+                  child: const Text("Accept"),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   LatLng? _tripDriverLatLng() {
@@ -3454,6 +3528,10 @@ class _StartDriveTabState extends State<StartDriveTab> {
   Widget build(BuildContext context) {
     final trip = _trip;
     final status = (trip?["status"] ?? "").toString();
+    final additionalOffers = _trips
+        .where((item) => (item["status"] ?? "").toString().toLowerCase() == "requested")
+        .skip(status.toLowerCase() == "requested" ? 1 : 0)
+        .toList();
     final driverLatLng = _currentDriverLatLng();
     final targetLatLng = _targetLatLng;
     final fallbackCenter = driverLatLng ?? targetLatLng ?? const LatLng(41.6611, -91.5302);
@@ -3572,6 +3650,17 @@ class _StartDriveTabState extends State<StartDriveTab> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (additionalOffers.isNotEmpty) ...[
+                        Text(
+                          "Ride offers (${additionalOffers.length + 1}/3)",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        ...additionalOffers.map(_buildAdditionalOfferCard),
+                        const SizedBox(height: 14),
+                      ],
                       _DispatchDetailRow(label: "Trip #", value: "${trip["trip_id"]}"),
                       _DispatchDetailRow(label: "Status", value: status.replaceAll("_", " ")),
                       if (status == "requested")

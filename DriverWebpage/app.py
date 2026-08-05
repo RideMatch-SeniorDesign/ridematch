@@ -1388,15 +1388,22 @@ def api_driver_change_password():
 @app.route("/api/driver/dispatch/<int:driver_id>", methods=["GET"])
 def api_driver_dispatch(driver_id: int):
     try:
-        from Database.admin_queries import fetch_active_driver_trip, fetch_driver_availability
+        from Database.admin_queries import fetch_active_driver_trips, fetch_driver_availability
 
-        trip = fetch_active_driver_trip(driver_id)
+        trips = fetch_active_driver_trips(driver_id)
         is_available = fetch_driver_availability(driver_id)
     except Exception as exc:
         app.logger.warning("Driver dispatch API load failed: %s", exc)
         return jsonify({"success": False, "error": "Could not load driver dispatch."}), 500
 
-    return jsonify({"success": True, "trip": trip, "is_available": is_available}), 200
+    return jsonify(
+        {
+            "success": True,
+            "trip": trips[0] if trips else None,
+            "trips": trips,
+            "is_available": is_available,
+        }
+    ), 200
 
 
 @app.route("/api/driver/availability", methods=["POST"])
