@@ -1605,6 +1605,28 @@ def api_driver_income(driver_id: int):
     return jsonify({"success": True, "stats": stats}), 200
 
 
+@app.route("/api/driver/fare", methods=["POST"])
+def api_driver_fare_update():
+    payload = request.get_json(silent=True) or {}
+    driver_id = int(payload.get("driver_id") or 0)
+    if not driver_id:
+        return jsonify({"success": False, "error": "driver_id is required."}), 400
+    try:
+        price_per_mile = float(payload.get("price_per_mile"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Enter a valid price per mile."}), 400
+    try:
+        from Database.admin_queries import set_driver_price_per_mile
+
+        fare = set_driver_price_per_mile(driver_id, price_per_mile)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except Exception as exc:
+        app.logger.warning("Driver fare update failed: %s", exc)
+        return jsonify({"success": False, "error": "Could not update your fare right now."}), 500
+    return jsonify({"success": True, "fare": fare, "message": "Price per mile updated."}), 200
+
+
 @app.route("/api/driver/trip/<int:trip_id>/accept", methods=["POST"])
 def api_driver_accept_trip(trip_id: int):
     payload = request.get_json(silent=True) or {}

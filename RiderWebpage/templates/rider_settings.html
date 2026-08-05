@@ -27,6 +27,13 @@
         </div>
         <div id="preference-hidden-inputs"></div>
       </div>
+      <fieldset class="pref-field">
+        <legend>Prioritize Categories</legend>
+        <p class="hint">Matches in prioritized categories are ranked before total shared preferences.</p>
+        {% for category in preference_categories %}
+        <label><input type="checkbox" name="priority_categories" value="{{ category }}" {% if category in (form_data.priority_categories or []) %}checked{% endif %} /> {{ category }}</label>
+        {% endfor %}
+      </fieldset>
     </div>
     <button type="submit">Save Settings</button>
   </form>

@@ -1203,6 +1203,7 @@ class DriverShellPage extends StatefulWidget {
 
 class _DriverShellPageState extends State<DriverShellPage> {
   int _index = 0;
+  int _fareOpenRequest = 0;
   late Map<String, dynamic> _sessionUser;
 
   @override
@@ -1217,10 +1218,14 @@ class _DriverShellPageState extends State<DriverShellPage> {
       DriverDashboardTab(
         user: _sessionUser,
         onStartDriving: () => setState(() => _index = 1),
+        onOpenFare: () => setState(() {
+          _fareOpenRequest += 1;
+          _index = 3;
+        }),
       ),
       StartDriveTab(user: _sessionUser),
       DriverRatingTab(user: _sessionUser),
-      DriverIncomeTab(user: _sessionUser),
+      DriverIncomeTab(user: _sessionUser, fareOpenRequest: _fareOpenRequest),
       DriverProfileTab(
         user: _sessionUser,
         onUserUpdated: (updatedUser) async {
@@ -1289,10 +1294,11 @@ int? _driverInt(dynamic value) {
 }
 
 class DriverDashboardTab extends StatefulWidget {
-  const DriverDashboardTab({super.key, required this.user, required this.onStartDriving});
+  const DriverDashboardTab({super.key, required this.user, required this.onStartDriving, required this.onOpenFare});
 
   final Map<String, dynamic> user;
   final VoidCallback onStartDriving;
+  final VoidCallback onOpenFare;
 
   @override
   State<DriverDashboardTab> createState() => _DriverDashboardTabState();
@@ -1300,15 +1306,25 @@ class DriverDashboardTab extends StatefulWidget {
 
 class _DriverDashboardTabState extends State<DriverDashboardTab> {
   final _api = ApiClient();
+  Timer? _fareRefreshTimer;
   bool _loading = true;
   String _error = "";
   Map<String, dynamic> _summary = {};
+  Map<String, dynamic> _fare = {};
   List<Map<String, dynamic>> _trips = [];
+  bool _fareAlertShown = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _fareRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _fareRefreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -1321,7 +1337,12 @@ class _DriverDashboardTabState extends State<DriverDashboardTab> {
       return;
     }
     try {
-      final res = await _api.fetchDashboard(driverId: id);
+      final responses = await Future.wait([
+        _api.fetchDashboard(driverId: id),
+        _api.fetchIncome(driverId: id),
+      ]);
+      final res = responses[0];
+      final incomeRes = responses[1];
       if (!mounted) {
         return;
       }
@@ -1333,12 +1354,26 @@ class _DriverDashboardTabState extends State<DriverDashboardTab> {
         return;
       }
       final trips = (res["trips"] as List?) ?? [];
+      final incomeStats = Map<String, dynamic>.from((incomeRes["stats"] as Map?) ?? {});
       setState(() {
         _summary = Map<String, dynamic>.from((res["summary"] as Map?) ?? {});
         _trips = trips.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _fare = Map<String, dynamic>.from((incomeStats["fare"] as Map?) ?? {});
         _loading = false;
         _error = "";
       });
+      if (!_fareDiffersGreatly) {
+        _fareAlertShown = false;
+      } else if (!_fareAlertShown) {
+        _fareAlertShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_fareDifferenceMessage),
+            action: SnackBarAction(label: "View fare", onPressed: widget.onOpenFare),
+          ));
+        });
+      }
     } catch (exc) {
       if (mounted) {
         setState(() {
@@ -1348,6 +1383,22 @@ class _DriverDashboardTabState extends State<DriverDashboardTab> {
       }
     }
   }
+
+  double? get _currentFare => double.tryParse((_fare["price_per_mile"] ?? "").toString());
+  double? get _averageFare => double.tryParse((_fare["average_price_per_mile"] ?? "").toString());
+  bool get _fareDiffersGreatly {
+    final current = _currentFare;
+    final average = _averageFare;
+    return current != null && average != null && average > 0 && ((current - average).abs() / average) >= 0.20;
+  }
+  String get _fareDifferenceMessage {
+    final current = _currentFare ?? 0;
+    final average = _averageFare ?? 0;
+    final direction = current > average ? "above" : "below";
+    final percent = average <= 0 ? 0 : (((current - average).abs() / average) * 100).round();
+    return "Your fare is $percent% $direction the current driver average.";
+  }
+  String _moneyPerMile(double? value) => value == null ? "Fare unavailable" : "\$${value.toStringAsFixed(2)}/mi";
 
   List<Widget> _driverTripTipWidgets(Map<String, dynamic> trip) {
     final tip = double.tryParse((trip["tip_amount"] ?? "").toString());
@@ -1521,6 +1572,38 @@ class _DriverDashboardTabState extends State<DriverDashboardTab> {
                   _DriverDashStat("Completed trips", "${_summary["completed_count"] ?? 0}"),
                   _DriverDashStat("Your rating", _driverMetric(_summary["avg_received_rating"])),
                 ],
+              ),
+              const SizedBox(height: 14),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: widget.onOpenFare,
+                  borderRadius: BorderRadius.circular(16),
+                  child: _ShellCard(child: Row(children: [
+                    Container(
+                      padding: const EdgeInsets.all(11),
+                      decoration: BoxDecoration(
+                        color: (_fareDiffersGreatly ? Colors.amber : const Color(0xFF7EB3FF)).withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(_fareDiffersGreatly ? Icons.notification_important_rounded : Icons.price_change_rounded, color: _fareDiffersGreatly ? Colors.amber.shade200 : const Color(0xFF7EB3FF)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text("Your fare", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 17)),
+                      const SizedBox(height: 4),
+                      Text(
+                        "${_moneyPerMile(_currentFare)} · Driver average ${_moneyPerMile(_averageFare)}",
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.68), fontSize: 13),
+                      ),
+                      if (_fareDiffersGreatly) ...[
+                        const SizedBox(height: 5),
+                        Text(_fareDifferenceMessage, style: TextStyle(color: Colors.amber.shade200, fontSize: 12, fontWeight: FontWeight.w600)),
+                      ],
+                    ])),
+                    const Icon(Icons.chevron_right_rounded, color: Colors.white54),
+                  ])),
+                ),
               ),
               const SizedBox(height: 14),
               _ShellCard(
@@ -2042,9 +2125,10 @@ class _DriverRatingTabState extends State<DriverRatingTab> {
 }
 
 class DriverIncomeTab extends StatefulWidget {
-  const DriverIncomeTab({super.key, required this.user});
+  const DriverIncomeTab({super.key, required this.user, this.fareOpenRequest = 0});
 
   final Map<String, dynamic> user;
+  final int fareOpenRequest;
 
   @override
   State<DriverIncomeTab> createState() => _DriverIncomeTabState();
@@ -2052,17 +2136,32 @@ class DriverIncomeTab extends StatefulWidget {
 
 class _DriverIncomeTabState extends State<DriverIncomeTab> {
   final _api = ApiClient();
+  final _pricePerMile = TextEditingController();
   bool _loading = true;
+  bool _fareBusy = false;
+  int _incomeSection = 0;
   String _error = "";
+  String _fareMessage = "";
   Map<String, dynamic> _allTime = {};
   Map<String, dynamic> _payPeriod = {};
   Map<String, dynamic> _payout = {};
+  Map<String, dynamic> _fare = {};
   List<Map<String, dynamic>> _recentTips = [];
 
   @override
   void initState() {
     super.initState();
+    if (widget.fareOpenRequest > 0) _incomeSection = 1;
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant DriverIncomeTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.fareOpenRequest != oldWidget.fareOpenRequest) {
+      setState(() => _incomeSection = 1);
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -2093,6 +2192,8 @@ class _DriverIncomeTabState extends State<DriverIncomeTab> {
         _allTime = Map<String, dynamic>.from((stats["all_time"] as Map?) ?? {});
         _payPeriod = Map<String, dynamic>.from((stats["pay_period"] as Map?) ?? {});
         _payout = Map<String, dynamic>.from((stats["payout"] as Map?) ?? {});
+        _fare = Map<String, dynamic>.from((stats["fare"] as Map?) ?? {});
+        _pricePerMile.text = double.tryParse((_fare["price_per_mile"] ?? "").toString())?.toStringAsFixed(2) ?? "";
         _recentTips = tipsList;
         _loading = false;
         _error = "";
@@ -2107,6 +2208,121 @@ class _DriverIncomeTabState extends State<DriverIncomeTab> {
     }
   }
 
+  @override
+  void dispose() {
+    _pricePerMile.dispose();
+    super.dispose();
+  }
+
+  Widget _incomeTabs() => Row(children: [
+    Expanded(child: FilledButton.tonalIcon(
+      onPressed: () => setState(() => _incomeSection = 0),
+      icon: const Icon(Icons.account_balance_wallet_outlined),
+      label: const Text("Income"),
+      style: FilledButton.styleFrom(backgroundColor: _incomeSection == 0 ? Colors.white24 : Colors.white10),
+    )),
+    const SizedBox(width: 10),
+    Expanded(child: FilledButton.tonalIcon(
+      onPressed: () => setState(() => _incomeSection = 1),
+      icon: const Icon(Icons.price_change_outlined),
+      label: const Text("Fare"),
+      style: FilledButton.styleFrom(backgroundColor: _incomeSection == 1 ? Colors.white24 : Colors.white10),
+    )),
+  ]);
+
+  String _fareLockText() {
+    final raw = (_fare["can_update_at"] ?? "").toString();
+    if (raw.isEmpty) return "";
+    final parsed = DateTime.tryParse(raw)?.toLocal();
+    if (parsed == null) return raw;
+    final hour = parsed.hour % 12 == 0 ? 12 : parsed.hour % 12;
+    final minute = parsed.minute.toString().padLeft(2, "0");
+    final suffix = parsed.hour >= 12 ? "PM" : "AM";
+    return "${parsed.month}/${parsed.day}/${parsed.year} at $hour:$minute $suffix";
+  }
+
+  Future<void> _saveFare() async {
+    final value = double.tryParse(_pricePerMile.text.trim());
+    if (value == null) {
+      setState(() => _fareMessage = "Enter a valid price per mile.");
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Set your price per mile?"),
+        content: Text("Your new rate will be ${_money(value)} per mile. You will not be able to change it again for 4 hours."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text("Set fare")),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final driverId = _driverInt(widget.user["account_id"]);
+    if (driverId == null) return;
+    setState(() {
+      _fareBusy = true;
+      _fareMessage = "";
+    });
+    final response = await _api.setPricePerMile(driverId: driverId, pricePerMile: value);
+    if (!mounted) return;
+    setState(() {
+      _fareBusy = false;
+      if (response["success"] == true && response["fare"] is Map) {
+        _fare = Map<String, dynamic>.from(response["fare"] as Map);
+        _pricePerMile.text = double.tryParse((_fare["price_per_mile"] ?? "").toString())?.toStringAsFixed(2) ?? "";
+        _fareMessage = "Price per mile updated. Your rate is locked for 4 hours.";
+      } else {
+        _fareMessage = (response["error"] ?? "Could not update your fare.").toString();
+      }
+    });
+  }
+
+  Widget _buildFareView() => RefreshIndicator(
+    color: const Color(0xFF7EB3FF),
+    onRefresh: _load,
+    child: ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+      children: [
+        if (_error.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error, style: TextStyle(color: Colors.red.shade200))),
+        if (_loading) const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(color: Color(0xFF7EB3FF))))
+        else _ShellCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text("Your fare", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Text("Drivers currently charge an average of ${_money(_fare["average_price_per_mile"])} per mile.", style: TextStyle(color: Colors.white.withValues(alpha: 0.7))),
+          const SizedBox(height: 18),
+          TextField(
+            controller: _pricePerMile,
+            enabled: _fare["can_update"] == true && !_fareBusy,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(color: Colors.white),
+            decoration: _shellInputDecoration(label: "Price per mile (USD)").copyWith(prefixText: "\$ "),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _fare["can_update"] == true
+                ? "After saving, this price cannot be changed for 4 hours."
+                : "Your fare is locked until ${_fareLockText()}.",
+            style: TextStyle(color: Colors.amber.shade200, fontSize: 13, height: 1.35),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Allowed range: ${_money(_fare["minimum_price_per_mile"])}–${_money(_fare["maximum_price_per_mile"])} per mile.",
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12),
+          ),
+          if (_fareMessage.isNotEmpty) ...[const SizedBox(height: 10), Text(_fareMessage, style: const TextStyle(color: Colors.white))],
+          const SizedBox(height: 16),
+          SizedBox(width: double.infinity, child: FilledButton.icon(
+            onPressed: _fare["can_update"] == true && !_fareBusy ? _saveFare : null,
+            icon: const Icon(Icons.lock_clock_outlined),
+            label: Text(_fareBusy ? "Saving..." : "Set price per mile"),
+          )),
+        ])),
+      ],
+    ),
+  );
+
   String _money(dynamic v) {
     final n = double.tryParse((v ?? "").toString());
     if (n == null) {
@@ -2117,6 +2333,12 @@ class _DriverIncomeTabState extends State<DriverIncomeTab> {
 
   @override
   Widget build(BuildContext context) {
+    if (_incomeSection == 1) {
+      return ColoredBox(color: _kAuthDeepBlue, child: Column(children: [
+        Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 12), child: _incomeTabs()),
+        Expanded(child: _buildFareView()),
+      ]));
+    }
     return ColoredBox(
       color: _kAuthDeepBlue,
       child: RefreshIndicator(
@@ -2125,6 +2347,8 @@ class _DriverIncomeTabState extends State<DriverIncomeTab> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
           children: [
+            _incomeTabs(),
+            const SizedBox(height: 14),
             if (_error.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),

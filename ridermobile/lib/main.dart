@@ -554,11 +554,19 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 class _CategorizedPreferenceSelector extends StatelessWidget {
-  const _CategorizedPreferenceSelector({required this.selected, required this.disabled, required this.onChanged});
+  const _CategorizedPreferenceSelector({
+    required this.selected,
+    required this.disabled,
+    required this.onChanged,
+    this.prioritizedCategories = const <String>{},
+    this.onPriorityChanged,
+  });
 
   final Set<String> selected;
   final bool disabled;
   final void Function(String preference, bool selected) onChanged;
+  final Set<String> prioritizedCategories;
+  final void Function(String category, bool prioritized)? onPriorityChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -569,7 +577,16 @@ class _CategorizedPreferenceSelector extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(category.key, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+            Row(children: [
+              Expanded(child: Text(category.key, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14))),
+              if (onPriorityChanged != null)
+                FilterChip(
+                  selected: prioritizedCategories.contains(category.key),
+                  onSelected: disabled ? null : (selected) => onPriorityChanged!(category.key, selected),
+                  avatar: Icon(prioritizedCategories.contains(category.key) ? Icons.star_rounded : Icons.star_border_rounded, size: 17),
+                  label: Text(prioritizedCategories.contains(category.key) ? "Prioritized" : "Prioritize"),
+                ),
+            ]),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -608,6 +625,7 @@ class _RiderSignupPageState extends State<RiderSignupPage> {
   bool _busy = false;
   String _message = "";
   final Set<String> _prefs = <String>{};
+  final Set<String> _priorityCategories = <String>{};
 
   @override
   void dispose() {
@@ -637,6 +655,7 @@ class _RiderSignupPageState extends State<RiderSignupPage> {
           "password": _password.text,
           "confirm_password": _confirm.text,
           "preferences": _prefs.toList(),
+          "priority_categories": _priorityCategories.toList(),
         },
       );
       if (!mounted) {
@@ -799,6 +818,8 @@ class _RiderSignupPageState extends State<RiderSignupPage> {
                     selected: _prefs,
                     disabled: _busy,
                     onChanged: (item, selected) => setState(() => selected ? _prefs.add(item) : _prefs.remove(item)),
+                    prioritizedCategories: _priorityCategories,
+                    onPriorityChanged: (category, prioritized) => setState(() => prioritized ? _priorityCategories.add(category) : _priorityCategories.remove(category)),
                   ),
                   const SizedBox(height: 18),
                   FilledButton(
@@ -1464,6 +1485,10 @@ class _RideTabState extends State<RideTab> {
       final learningScore = int.tryParse((candidate["learning_score"] ?? "").toString()) ?? 0;
       final rating = double.tryParse((candidate["rating"] ?? "").toString()) ?? 0;
       final distanceMiles = double.tryParse((candidate["pickup_distance_miles"] ?? "").toString());
+      final riderPreferences = (widget.user["preferences"] ?? "").toString().toLowerCase().split(",").map((item) => item.trim()).toSet();
+      final fare = candidate["fare_estimate"] is Map
+          ? double.tryParse(((candidate["fare_estimate"] as Map)["estimated_cost"] ?? "").toString())
+          : null;
 
       final sharedTraitScore = (sharedTraits.clamp(0, 3) / 3) * 40;
       final ratingScore = (rating.clamp(0, 5) / 5) * 25;
@@ -1471,7 +1496,10 @@ class _RideTabState extends State<RideTab> {
           ? 0.0
           : (1 - (distanceMiles.clamp(0, 15) / 15)) * 35;
       final learnedPreferenceScore = (learningScore.clamp(0, 20) / 20) * 35;
-      return sharedTraitScore + learnedPreferenceScore + ratingScore + distanceScore;
+      final cheapRideScore = riderPreferences.contains("cheap ride") && fare != null
+          ? (1 - (fare.clamp(0, 100) / 100)) * 30
+          : 0.0;
+      return sharedTraitScore + learnedPreferenceScore + ratingScore + distanceScore + cheapRideScore;
     }
 
     final rankedCandidates = candidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
@@ -1490,6 +1518,12 @@ class _RideTabState extends State<RideTab> {
       final availabilityComparison = availabilityRank(first).compareTo(availabilityRank(second));
       if (availabilityComparison != 0) {
         return availabilityComparison;
+      }
+      final firstPriorityScore = int.tryParse((first["priority_compatibility_score"] ?? "0").toString()) ?? 0;
+      final secondPriorityScore = int.tryParse((second["priority_compatibility_score"] ?? "0").toString()) ?? 0;
+      final priorityComparison = secondPriorityScore.compareTo(firstPriorityScore);
+      if (priorityComparison != 0) {
+        return priorityComparison;
       }
       final scoreComparison = scoreFor(second).compareTo(scoreFor(first));
       if (scoreComparison != 0) {
@@ -3184,6 +3218,9 @@ class _MatchCandidateCard extends StatelessWidget {
         .map((item) => item.toString())
         .where((item) => item.trim().isNotEmpty)
         .toList();
+    final priorityMatchingPreferences = ((candidate["priority_matching_preferences"] as List?) ?? const [])
+        .map((item) => item.toString())
+        .toSet();
 
     return Container(
       width: double.infinity,
@@ -3267,6 +3304,8 @@ class _MatchCandidateCard extends StatelessWidget {
                 icon: Icons.attach_money_rounded,
                 label: estimatedFare == null ? "Fare pending" : "\$${estimatedFare.toStringAsFixed(2)} est.",
               ),
+              if (priorityMatchingPreferences.isNotEmpty)
+                _MatchStatPill(icon: Icons.star_rounded, label: "${priorityMatchingPreferences.length} priority matches"),
               if (pickupDistanceMiles != null && pickupEtaMinutes != null)
                 _MatchStatPill(
                   icon: Icons.near_me_rounded,
@@ -3311,7 +3350,13 @@ class _MatchCandidateCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: const Color(0xFF7EB3FF).withValues(alpha: 0.28)),
                       ),
-                      child: Text(item, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        if (priorityMatchingPreferences.contains(item)) ...[
+                          const Icon(Icons.star_rounded, color: Color(0xFFFCD34D), size: 14),
+                          const SizedBox(width: 4),
+                        ],
+                        Text(item, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
+                      ]),
                     ),
                   )
                   .toList(),
@@ -3935,6 +3980,10 @@ class RiderPreferencesTab extends StatefulWidget {
 class _RiderPreferencesTabState extends State<RiderPreferencesTab> {
   final _api = ApiClient();
   late Set<String> _selected = (widget.user["preferences"] ?? "").toString().split(",").map((item) => item.trim()).where(_availablePreferenceOptions.contains).toSet();
+  late Set<String> _prioritizedCategories = ((widget.user["priority_categories"] as List?) ?? const [])
+      .map((item) => item.toString())
+      .where(_preferenceCategories.containsKey)
+      .toSet();
   bool _busy = false;
   String _message = "";
 
@@ -3947,6 +3996,7 @@ class _RiderPreferencesTabState extends State<RiderPreferencesTab> {
         "email": widget.user["email"],
         "phone": widget.user["phone"],
         "preferences": _selected.toList(),
+        "priority_categories": _prioritizedCategories.toList(),
       });
       if (response["success"] == true && response["user"] is Map) {
         final updated = Map<String, dynamic>.from(response["user"] as Map);
@@ -3971,8 +4021,16 @@ class _RiderPreferencesTabState extends State<RiderPreferencesTab> {
           const Text("Your ride preferences", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
           const SizedBox(height: 6),
           Text("Select everything that helps us find drivers who fit your ride style and needs.", style: TextStyle(color: Colors.white.withValues(alpha: 0.65))),
+          const SizedBox(height: 6),
+          Text("Prioritized categories are matched before the total number of shared preferences.", style: TextStyle(color: Colors.amber.shade200, fontSize: 13)),
           const SizedBox(height: 18),
-          _CategorizedPreferenceSelector(selected: _selected, disabled: _busy, onChanged: (item, selected) => setState(() => selected ? _selected.add(item) : _selected.remove(item))),
+          _CategorizedPreferenceSelector(
+            selected: _selected,
+            disabled: _busy,
+            onChanged: (item, selected) => setState(() => selected ? _selected.add(item) : _selected.remove(item)),
+            prioritizedCategories: _prioritizedCategories,
+            onPriorityChanged: (category, prioritized) => setState(() => prioritized ? _prioritizedCategories.add(category) : _prioritizedCategories.remove(category)),
+          ),
           SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _save, icon: const Icon(Icons.save_outlined), label: Text(_busy ? "Saving..." : "Save preferences"))),
         ])),
       ],

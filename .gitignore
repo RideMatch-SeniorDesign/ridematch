@@ -23,3 +23,8 @@ build/
 *.iml
 *.pyc
 __pycache__/
+.venv/
+
+# Local SDK installations and backups
+DriverWebpage/oracleJdk-26/
+DriverWebpage/oracleJdk-26.local-backup/

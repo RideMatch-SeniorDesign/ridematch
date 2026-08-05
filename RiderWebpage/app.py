@@ -158,6 +158,7 @@ def _rider_signup_form() -> dict[str, str]:
         "email": "",
         "phone": "",
         "preferences": [],
+        "priority_categories": [],
     }
 
 
@@ -193,6 +194,7 @@ def api_rider_signup():
     password = str(payload.get("password") or "")
     confirm_password = str(payload.get("confirm_password") or "")
     preferences = payload.get("preferences") or []
+    priority_categories = payload.get("priority_categories") or []
 
     if not all([first_name, last_name, username, email, phone]):
         return jsonify({"success": False, "error": "Please fill in all required fields."}), 400
@@ -205,6 +207,10 @@ def api_rider_signup():
         normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
     else:
         normalized_preferences = _split_preferences(str(preferences))
+    normalized_priority_categories = [
+        str(item).strip() for item in priority_categories
+        if str(item).strip() in PREFERENCE_CATEGORIES
+    ] if isinstance(priority_categories, list) else []
 
     try:
         from Database.admin_queries import create_rider_signup, fetch_portal_profile
@@ -217,6 +223,7 @@ def api_rider_signup():
             first_name=first_name,
             last_name=last_name,
             preferences=", ".join(normalized_preferences),
+            priority_categories=normalized_priority_categories,
         )
         user = fetch_portal_profile("rider", account_id) or {
             "account_id": account_id,
@@ -226,6 +233,7 @@ def api_rider_signup():
             "email": email,
             "phone": phone,
             "preferences": ", ".join(normalized_preferences),
+            "priority_categories": normalized_priority_categories,
         }
     except Exception as exc:
         app.logger.warning("Rider API signup failed: %s", exc)
@@ -262,6 +270,7 @@ def api_rider_profile_update(rider_id: int):
     email = str(payload.get("email") or "").strip()
     phone = str(payload.get("phone") or "").strip()
     preferences = payload.get("preferences") or []
+    priority_categories = payload.get("priority_categories")
 
     if not all([first_name, last_name, email, phone]):
         return jsonify({"success": False, "error": "First name, last name, email, and phone are required."}), 400
@@ -270,20 +279,29 @@ def api_rider_profile_update(rider_id: int):
         normalized_preferences = [str(item).strip() for item in preferences if str(item).strip()]
     else:
         normalized_preferences = _split_preferences(str(preferences))
+    normalized_priority_categories = None
+    if isinstance(priority_categories, list):
+        normalized_priority_categories = [
+            str(item).strip() for item in priority_categories
+            if str(item).strip() in PREFERENCE_CATEGORIES
+        ]
 
     try:
         from Database.admin_queries import fetch_portal_profile, update_portal_profile
 
+        profile_update = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "phone": phone,
+            "preferences": _join_preferences(normalized_preferences),
+        }
+        if normalized_priority_categories is not None:
+            profile_update["priority_categories"] = normalized_priority_categories
         update_portal_profile(
             "rider",
             rider_id,
-            {
-                "first_name": first_name,
-                "last_name": last_name,
-                "email": email,
-                "phone": phone,
-                "preferences": _join_preferences(normalized_preferences),
-            },
+            profile_update,
         )
         user = fetch_portal_profile("rider", rider_id)
     except Exception as exc:
@@ -400,7 +418,11 @@ def api_rider_match_candidates():
         return jsonify({"success": False, "error": "Pickup and dropoff locations are required."}), 400
 
     try:
-        from Database.admin_queries import calculate_trip_fare, fetch_active_rider_trip, fetch_driver_match_candidates
+        from Database.admin_queries import (
+            calculate_trip_fare,
+            fetch_active_rider_trip,
+            fetch_driver_match_candidates,
+        )
 
         active_trip = fetch_active_rider_trip(rider_id)
         if active_trip:
@@ -420,7 +442,12 @@ def api_rider_match_candidates():
         for candidate in candidates:
             driver_id = int(candidate.get("account_id") or 0)
             candidate["photo_url"] = _driver_photo_url_if_exists(driver_id)
-            candidate["fare_estimate"] = estimate
+            candidate["fare_estimate"] = calculate_trip_fare(
+                ride_type=ride_type,
+                estimated_distance_miles=estimated_distance_miles,
+                estimated_duration_minutes=estimated_duration_minutes,
+                price_per_mile=float(candidate.get("price_per_mile") or 0) or None,
+            )
     except Exception as exc:
         app.logger.warning("Rider match candidates API failed: %s", exc)
         return jsonify({"success": False, "error": "Could not load driver matches right now."}), 500
@@ -1027,6 +1054,7 @@ def settings():
         "email": user.get("email", ""),
         "phone": user.get("phone", ""),
         "preferences": _split_preferences(user.get("preferences")),
+        "priority_categories": list(user.get("priority_categories") or []),
     }
     success = None
     error = None
@@ -1034,6 +1062,7 @@ def settings():
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
         form_data["preferences"] = request.form.getlist("preferences")
+        form_data["priority_categories"] = [item for item in request.form.getlist("priority_categories") if item in PREFERENCE_CATEGORIES]
         if any(not form_data[k] for k in ["first_name", "last_name", "email", "phone"]):
             error = "First name, last name, email, and phone are required."
         else:
@@ -1042,6 +1071,7 @@ def settings():
 
                 payload = dict(form_data)
                 payload["preferences"] = _join_preferences(form_data["preferences"])
+                payload["priority_categories"] = form_data["priority_categories"]
                 update_portal_profile("rider", int(user.get("account_id")), payload)
                 refreshed = fetch_portal_profile("rider", int(user.get("account_id")))
                 if refreshed:
@@ -1088,6 +1118,7 @@ def signup():
     if request.method == "POST":
         form_data = {k: _v(k) for k in form_data}
         form_data["preferences"] = request.form.getlist("preferences")
+        form_data["priority_categories"] = [item for item in request.form.getlist("priority_categories") if item in PREFERENCE_CATEGORIES]
         password = _v("password")
         confirm_password = _v("confirm_password")
 
@@ -1110,6 +1141,7 @@ def signup():
                     first_name=form_data["first_name"],
                     last_name=form_data["last_name"],
                     preferences=", ".join(form_data["preferences"]),
+                    priority_categories=form_data["priority_categories"],
                 )
                 success = f"Rider account created. Account ID: {account_id}."
                 form_data = _rider_signup_form()

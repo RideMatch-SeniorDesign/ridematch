@@ -314,6 +314,27 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  Future<Map<String, dynamic>> setPricePerMile({
+    required int driverId,
+    required double pricePerMile,
+  }) async {
+    try {
+      final response = await _dio.post(
+        "/api/driver/fare",
+        data: <String, dynamic>{"driver_id": driverId, "price_per_mile": pricePerMile},
+      );
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (exc) {
+      final data = exc.response?.data;
+      if (data is Map) {
+        final result = Map<String, dynamic>.from(data);
+        result.putIfAbsent("success", () => false);
+        return result;
+      }
+      return <String, dynamic>{"success": false, "error": "Could not update your fare. Try again."};
+    }
+  }
+
   Future<Map<String, dynamic>> submitTripReview({
     required int tripId,
     required int driverId,

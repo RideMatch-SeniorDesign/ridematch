@@ -49,6 +49,14 @@ CREATE TABLE `rider` (
     CONSTRAINT `Rider_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
 );
 
+CREATE TABLE `rider_preference_priority` (
+    `RiderID` int NOT NULL,
+    `CategoryName` varchar(100) NOT NULL,
+    `UpdatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`RiderID`, `CategoryName`),
+    CONSTRAINT `RiderPreferencePriority_RiderID` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`) ON DELETE CASCADE
+);
+
 
 
 -- DRIVER TABLE
@@ -62,6 +70,14 @@ CREATE TABLE `driver` (
     `DateApproved` date DEFAULT NULL,
     PRIMARY KEY (`AccountID`),
     CONSTRAINT `Driver_AccountID` FOREIGN KEY (`AccountID`) REFERENCES `account` (`AccountID`)
+);
+
+CREATE TABLE `driver_fare_setting` (
+    `DriverID` int NOT NULL,
+    `PricePerMile` decimal(6,2) NOT NULL,
+    `UpdatedAt` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`DriverID`),
+    CONSTRAINT `DriverFare_DriverID` FOREIGN KEY (`DriverID`) REFERENCES `driver` (`AccountID`) ON DELETE CASCADE
 );
 
 -- DRIVER_INFORMATION TABLE
@@ -159,6 +175,7 @@ CREATE TABLE `trip` (
     `TipAmount` decimal(10,2) DEFAULT 0.00,
     `DriverRate` int,
     `RiderRate` int,
+    `DriverPricePerMile` decimal(6,2) DEFAULT 0.00,
     `CompletedAt` timestamp(6) NULL DEFAULT NULL,
     PRIMARY KEY (`TripID`),
     CONSTRAINT `FK_RiderID_trip` FOREIGN KEY (`RiderID`) REFERENCES `rider` (`AccountID`),

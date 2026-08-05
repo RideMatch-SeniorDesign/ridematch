@@ -33,6 +33,29 @@ _RIDE_TYPE_MULTIPLIERS = {
 
 TRIP_OFFER_TIMEOUT_SECONDS = 60
 MAX_DRIVER_SIMULTANEOUS_OFFERS = 3
+DRIVER_FARE_COOLDOWN_HOURS = 4
+MIN_DRIVER_PRICE_PER_MILE = 0.25
+MAX_DRIVER_PRICE_PER_MILE = 10.00
+RIDER_PREFERENCE_CATEGORIES = {
+    "Ride Atmosphere",
+    "Temperature",
+    "Vehicle Environment",
+    "Driving Style",
+    "Social Compatibility",
+    "Language Spoken",
+    "Accessibility and Assistance",
+    "Driver Preferences",
+}
+RIDER_PREFERENCES_BY_CATEGORY = {
+    "Ride Atmosphere": {"quiet ride", "rider chooses music", "music okay", "music low", "no phone calls", "windows open"},
+    "Temperature": {"warm", "cool"},
+    "Vehicle Environment": {"fragrance-free", "pets welcome", "food okay", "drinks okay", "extra-clean", "front seat okay"},
+    "Driving Style": {"avoid highways"},
+    "Social Compatibility": {"talkative", "quiet personality", "family-friendly", "senior-friendly", "business atmosphere"},
+    "Language Spoken": {"english", "spanish", "mandarin chinese", "french", "arabic", "hindi", "portuguese", "bengali", "russian", "japanese", "korean", "vietnamese", "tagalog", "american sign language"},
+    "Accessibility and Assistance": {"wheelchair-accessible", "walker/cane storage", "service animal", "assistance entering vehicle", "assistance with bags", "hearing-friendly communication"},
+    "Driver Preferences": {"highly rated", "experienced", "familiar driver", "larger vehicle", "more luggage space", "cheap ride"},
+}
 _trip_offer_table_ready = False
 _admin_mfa_table_ready = False
 
@@ -107,13 +130,15 @@ def calculate_trip_fare(
     ride_type: str = "standard",
     estimated_distance_miles: float | None = None,
     estimated_duration_minutes: float | None = None,
+    price_per_mile: float | None = None,
 ) -> dict[str, float | str]:
     config = _load_fare_config(ride_type)
     distance_miles = max(0.0, round(float(estimated_distance_miles or 0.0), 2))
     duration_minutes = max(0.0, round(float(estimated_duration_minutes or 0.0), 2))
     multiplier = float(config["ride_type_multiplier"])
     base_fare = round(float(config["base_fare"]) * multiplier, 2)
-    distance_fare = round(distance_miles * float(config["per_mile"]) * multiplier, 2)
+    applied_price_per_mile = float(config["per_mile"] if price_per_mile is None else price_per_mile)
+    distance_fare = round(distance_miles * applied_price_per_mile * multiplier, 2)
     time_fare = round(duration_minutes * float(config["per_minute"]) * multiplier, 2)
     booking_fee = round(float(config["booking_fee"]), 2)
     subtotal = base_fare + distance_fare + time_fare + booking_fee
@@ -123,6 +148,7 @@ def calculate_trip_fare(
         "ride_type": str(config["ride_type"]),
         "estimated_distance_miles": distance_miles,
         "estimated_duration_minutes": duration_minutes,
+        "price_per_mile": round(applied_price_per_mile, 2),
         "base_fare": base_fare,
         "distance_fare": distance_fare,
         "time_fare": time_fare,
@@ -306,6 +332,123 @@ def _ensure_driver_dispatch_state_table() -> None:
     )
 
 
+def _ensure_driver_fare_setting_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS driver_fare_setting (
+            DriverID INT NOT NULL PRIMARY KEY,
+            PricePerMile DECIMAL(6, 2) NOT NULL,
+            UpdatedAt TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                ON UPDATE CURRENT_TIMESTAMP(6),
+            CONSTRAINT fk_driver_fare_setting_driver
+                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def fetch_driver_price_per_mile(driver_id: int) -> float:
+    _ensure_driver_fare_setting_table()
+    rows = _fetch_all(
+        "SELECT PricePerMile AS price_per_mile FROM driver_fare_setting WHERE DriverID = %s LIMIT 1",
+        (driver_id,),
+    )
+    if not rows:
+        return round(float(_load_fare_config()["per_mile"]), 2)
+    return round(float(rows[0].get("price_per_mile") or 0), 2)
+
+
+def fetch_average_driver_price_per_mile() -> float:
+    _ensure_driver_fare_setting_table()
+    default_rate = round(float(_load_fare_config()["per_mile"]), 2)
+    rows = _fetch_all(
+        """
+        SELECT AVG(COALESCE(fare.PricePerMile, %s)) AS average_price_per_mile
+        FROM driver d
+        LEFT JOIN driver_fare_setting fare ON fare.DriverID = d.AccountID
+        WHERE COALESCE(d.Status, '') = 'approved'
+        """,
+        (default_rate,),
+    )
+    return round(float((rows[0] if rows else {}).get("average_price_per_mile") or default_rate), 2)
+
+
+def fetch_driver_fare_setting(driver_id: int) -> dict[str, Any]:
+    _ensure_driver_fare_setting_table()
+    default_rate = round(float(_load_fare_config()["per_mile"]), 2)
+    rows = _fetch_all(
+        """
+        SELECT PricePerMile AS price_per_mile, UpdatedAt AS updated_at
+        FROM driver_fare_setting
+        WHERE DriverID = %s
+        LIMIT 1
+        """,
+        (driver_id,),
+    )
+    current_rate = default_rate
+    updated_at: datetime | None = None
+    if rows:
+        current_rate = round(float(rows[0].get("price_per_mile") or default_rate), 2)
+        updated_at = rows[0].get("updated_at")
+    average_rate = fetch_average_driver_price_per_mile()
+    can_update_at = updated_at + timedelta(hours=DRIVER_FARE_COOLDOWN_HOURS) if updated_at else None
+    now = datetime.now()
+    can_update = can_update_at is None or now >= can_update_at
+    return {
+        "price_per_mile": current_rate,
+        "average_price_per_mile": average_rate,
+        "default_price_per_mile": default_rate,
+        "minimum_price_per_mile": MIN_DRIVER_PRICE_PER_MILE,
+        "maximum_price_per_mile": MAX_DRIVER_PRICE_PER_MILE,
+        "cooldown_hours": DRIVER_FARE_COOLDOWN_HOURS,
+        "can_update": can_update,
+        "can_update_at": can_update_at.isoformat() if can_update_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else None,
+    }
+
+
+def set_driver_price_per_mile(driver_id: int, price_per_mile: float) -> dict[str, Any]:
+    requested_rate = round(float(price_per_mile), 2)
+    if requested_rate < MIN_DRIVER_PRICE_PER_MILE or requested_rate > MAX_DRIVER_PRICE_PER_MILE:
+        raise ValueError(
+            f"Price per mile must be between ${MIN_DRIVER_PRICE_PER_MILE:.2f} and ${MAX_DRIVER_PRICE_PER_MILE:.2f}."
+        )
+    _ensure_driver_fare_setting_table()
+    conn = get_connection()
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                """
+                SELECT UpdatedAt AS updated_at
+                FROM driver_fare_setting
+                WHERE DriverID = %s
+                FOR UPDATE
+                """,
+                (driver_id,),
+            )
+            row = cursor.fetchone()
+            if row and row.get("updated_at"):
+                can_update_at = row["updated_at"] + timedelta(hours=DRIVER_FARE_COOLDOWN_HOURS)
+                if datetime.now() < can_update_at:
+                    conn.rollback()
+                    raise ValueError(f"Your fare is locked until {can_update_at.isoformat()}.")
+            cursor.execute(
+                """
+                INSERT INTO driver_fare_setting (DriverID, PricePerMile)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE
+                    PricePerMile = VALUES(PricePerMile),
+                    UpdatedAt = CURRENT_TIMESTAMP(6)
+                """,
+                (driver_id, requested_rate),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return fetch_driver_fare_setting(driver_id)
+
+
 def _ensure_driver_live_location_table() -> None:
     _execute(
         """
@@ -391,6 +534,47 @@ def _ensure_rider_match_swipe_table() -> None:
         )
         """
     )
+
+
+def _ensure_rider_preference_priority_table() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS rider_preference_priority (
+            RiderID INT NOT NULL,
+            CategoryName VARCHAR(100) NOT NULL,
+            UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (RiderID, CategoryName),
+            CONSTRAINT fk_rider_preference_priority_rider
+                FOREIGN KEY (RiderID) REFERENCES rider(AccountID)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def fetch_rider_priority_categories(rider_id: int) -> list[str]:
+    _ensure_rider_preference_priority_table()
+    rows = _fetch_all(
+        "SELECT CategoryName AS category_name FROM rider_preference_priority WHERE RiderID = %s",
+        (rider_id,),
+    )
+    return sorted(
+        str(row.get("category_name") or "").strip()
+        for row in rows
+        if str(row.get("category_name") or "").strip() in RIDER_PREFERENCE_CATEGORIES
+    )
+
+
+def set_rider_priority_categories(rider_id: int, categories: list[str] | set[str] | tuple[str, ...]) -> None:
+    _ensure_rider_preference_priority_table()
+    normalized = sorted({str(item).strip() for item in categories if str(item).strip() in RIDER_PREFERENCE_CATEGORIES})
+    _execute("DELETE FROM rider_preference_priority WHERE RiderID = %s", (rider_id,))
+    for category in normalized:
+        _execute(
+            "INSERT INTO rider_preference_priority (RiderID, CategoryName) VALUES (%s, %s)",
+            (rider_id, category),
+        )
 
 
 def _ensure_rider_driver_learning_table() -> None:
@@ -587,6 +771,7 @@ def _ensure_trip_pricing_columns() -> None:
     additions = [
         ("EstimatedDistanceMiles", "ALTER TABLE trip ADD COLUMN EstimatedDistanceMiles DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
         ("EstimatedDurationMinutes", "ALTER TABLE trip ADD COLUMN EstimatedDurationMinutes DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
+        ("DriverPricePerMile", "ALTER TABLE trip ADD COLUMN DriverPricePerMile DECIMAL(6, 2) NOT NULL DEFAULT 0.00"),
         ("BaseFare", "ALTER TABLE trip ADD COLUMN BaseFare DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
         ("DistanceFare", "ALTER TABLE trip ADD COLUMN DistanceFare DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
         ("TimeFare", "ALTER TABLE trip ADD COLUMN TimeFare DECIMAL(10, 2) NOT NULL DEFAULT 0.00"),
@@ -1161,6 +1346,7 @@ def create_rider_signup(
     first_name: str,
     last_name: str,
     preferences: str,
+    priority_categories: list[str] | None = None,
 ) -> int:
     _ensure_preference_storage()
     account_id = _insert_returning_id(
@@ -1186,6 +1372,8 @@ def create_rider_signup(
             """,
             (account_id, preferences or None),
         )
+    if priority_categories:
+        set_rider_priority_categories(account_id, priority_categories)
     return account_id
 
 
@@ -1373,7 +1561,12 @@ def authenticate_portal_user(role: str, username: str, password: str) -> dict[st
         """,
         (username, password),
     )
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    user = rows[0]
+    if role == "rider":
+        user["priority_categories"] = fetch_rider_priority_categories(int(user["account_id"]))
+    return user
 
 
 def fetch_portal_profile(role: str, account_id: int) -> dict[str, Any] | None:
@@ -1396,7 +1589,11 @@ def fetch_portal_profile(role: str, account_id: int) -> dict[str, Any] | None:
             """,
             (account_id,),
         )
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        user = rows[0]
+        user["priority_categories"] = fetch_rider_priority_categories(account_id)
+        return user
 
     if role != "driver":
         return None
@@ -2046,6 +2243,7 @@ def _create_trip_with_driver(
         ride_type=ride_type,
         estimated_distance_miles=estimated_distance_miles,
         estimated_duration_minutes=estimated_duration_minutes,
+        price_per_mile=fetch_driver_price_per_mile(driver_id),
     )
     trip_id = _insert_returning_id(
         """
@@ -2060,6 +2258,7 @@ def _create_trip_with_driver(
             RiderRate,
             EstimatedDistanceMiles,
             EstimatedDurationMinutes,
+            DriverPricePerMile,
             BaseFare,
             DistanceFare,
             TimeFare,
@@ -2067,7 +2266,7 @@ def _create_trip_with_driver(
             SurgeMultiplier,
             EstimatedCost
         )
-        VALUES (%s, %s, 'requested', %s, %s, %s, NULL, NULL, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, 'requested', %s, %s, %s, NULL, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             rider_id,
@@ -2077,6 +2276,7 @@ def _create_trip_with_driver(
             0.00,
             pricing["estimated_distance_miles"],
             pricing["estimated_duration_minutes"],
+            pricing["price_per_mile"],
             pricing["base_fare"],
             pricing["distance_fare"],
             pricing["time_fare"],
@@ -2159,7 +2359,9 @@ def fetch_driver_match_candidates(
     _ensure_driver_live_location_table()
     _ensure_rider_match_swipe_table()
     _ensure_rider_driver_learning_table()
+    _ensure_driver_fare_setting_table()
     has_review = _table_exists("driver_review")
+    default_price_per_mile = round(float(_load_fare_config()["per_mile"]), 2)
 
     rating_expr = "ROUND(COALESCE(AVG(dr.Rating), 0), 1)" if has_review else "0.0"
     review_join = "LEFT JOIN driver_review dr ON dr.DriverID = d.AccountID" if has_review else ""
@@ -2175,6 +2377,7 @@ def fetch_driver_match_candidates(
             d.Preferences AS preferences,
             {rating_expr} AS rating,
             COUNT(DISTINCT completed.TripID) AS rides,
+            COALESCE(fare.PricePerMile, %s) AS price_per_mile,
             CASE
                 WHEN COALESCE(ds.IsAvailable, 0) = 0 THEN 'offline'
                 WHEN EXISTS (
@@ -2198,6 +2401,8 @@ def fetch_driver_match_candidates(
            AND completed.Status = 'completed'
         LEFT JOIN driver_live_location dl
             ON dl.DriverID = d.AccountID
+        LEFT JOIN driver_fare_setting fare
+            ON fare.DriverID = d.AccountID
         {review_join}
         WHERE COALESCE(d.Status, '') = 'approved'
           AND ds.IsAvailable = 1
@@ -2206,7 +2411,8 @@ def fetch_driver_match_candidates(
             a.FirstName,
             a.LastName,
             d.Preferences,
-            ds.IsAvailable
+            ds.IsAvailable,
+            fare.PricePerMile
             {review_group_by}
         ORDER BY
             FIELD(availability_status, 'available', 'busy', 'offline'),
@@ -2214,11 +2420,17 @@ def fetch_driver_match_candidates(
             rides DESC,
             d.AccountID ASC
         """,
+        (default_price_per_mile,),
     )
 
     rider = fetch_portal_profile("rider", rider_id) or {}
     rider_preferences = _split_preference_csv(str(rider.get("preferences") or ""))
+    priority_categories = set(rider.get("priority_categories") or [])
+    priority_preferences: set[str] = set()
+    for category in priority_categories:
+        priority_preferences.update(RIDER_PREFERENCES_BY_CATEGORY.get(category, set()))
     driver_signals, learned_preference_weights = _fetch_rider_driver_learning(rider_id)
+    average_price_per_mile = fetch_average_driver_price_per_mile()
     desired_ride_type = (ride_type or "standard").strip().lower() or "standard"
     normalized_start = start_loc.strip()
     normalized_end = end_loc.strip()
@@ -2239,9 +2451,13 @@ def fetch_driver_match_candidates(
         signals = driver_signals.get(int(candidate.get("account_id") or 0), {})
         if int(signals.get("matched_rides", 0)) > 0:
             derived_preferences.add("familiar driver")
+        if float(candidate.get("price_per_mile") or default_price_per_mile) < average_price_per_mile:
+            derived_preferences.add("cheap ride")
         driver_preferences.update(derived_preferences)
         matching_preferences = sorted(rider_preferences.intersection(driver_preferences))
+        priority_matching_preferences = sorted(set(matching_preferences).intersection(priority_preferences))
         compatibility_score = len(matching_preferences)
+        priority_compatibility_score = len(priority_matching_preferences)
         learned_trait_score = sum(max(0, learned_preference_weights.get(item, 0)) for item in driver_preferences)
         learning_score = max(
             0,
@@ -2252,6 +2468,8 @@ def fetch_driver_match_candidates(
         )
         candidate["matching_preferences"] = matching_preferences
         candidate["compatibility_score"] = compatibility_score
+        candidate["priority_matching_preferences"] = priority_matching_preferences
+        candidate["priority_compatibility_score"] = priority_compatibility_score
         candidate["derived_preferences"] = sorted(derived_preferences)
         candidate["preferences"] = ", ".join(sorted(driver_preferences))
         candidate["learning_score"] = learning_score
@@ -2264,6 +2482,7 @@ def fetch_driver_match_candidates(
     candidates.sort(
         key=lambda row: (
             0 if str(row.get("availability_status") or "").lower() == "available" else 1,
+            -int(row.get("priority_compatibility_score") or 0),
             -int(row.get("learning_score") or 0),
             -int(row.get("compatibility_score") or 0),
             -float(row.get("rating") or 0),
@@ -2660,6 +2879,8 @@ def update_portal_profile(role: str, account_id: int, profile: dict[str, Any]) -
             """,
             (profile.get("preferences") or None, account_id),
         )
+        if "priority_categories" in profile:
+            set_rider_priority_categories(account_id, profile.get("priority_categories") or [])
         return True
 
     if role != "driver":
@@ -3145,6 +3366,7 @@ def fetch_driver_income_stats(driver_id: int) -> dict[str, Any]:
     schedule = _load_payout_schedule()
     pct_display = int(round(driver_share * 100))
     period_start, period_end, range_label = _pay_period_window(schedule)
+    fare_setting = fetch_driver_fare_setting(driver_id)
 
     if not _table_exists("trip"):
         empty = {
@@ -3163,6 +3385,7 @@ def fetch_driver_income_stats(driver_id: int) -> dict[str, Any]:
                 "period_range_label": range_label,
                 "driver_fare_share_pct": pct_display,
             },
+            "fare": fare_setting,
         }
 
     all_time = _aggregate_driver_trips_for_income(driver_id, driver_share)
@@ -3210,6 +3433,7 @@ def fetch_driver_income_stats(driver_id: int) -> dict[str, Any]:
             "period_range_label": range_label,
             "driver_fare_share_pct": pct_display,
         },
+        "fare": fare_setting,
     }
 
 
