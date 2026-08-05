@@ -1345,7 +1345,7 @@ class _RideTabState extends State<RideTab> {
       return candidates;
     }
 
-    return Future.wait(candidates.map((candidate) async {
+    final routedCandidates = await Future.wait(candidates.map((candidate) async {
       final driverPoint = _point(candidate["driver_latitude"], candidate["driver_longitude"]);
       if (driverPoint == null) {
         return candidate;
@@ -1382,6 +1382,34 @@ class _RideTabState extends State<RideTab> {
         return candidate;
       }
     }));
+    return _rankMatchCandidates(routedCandidates);
+  }
+
+  List<Map<String, dynamic>> _rankMatchCandidates(List<Map<String, dynamic>> candidates) {
+    double scoreFor(Map<String, dynamic> candidate) {
+      final sharedTraits = int.tryParse((candidate["compatibility_score"] ?? "").toString()) ?? 0;
+      final rating = double.tryParse((candidate["rating"] ?? "").toString()) ?? 0;
+      final distanceMiles = double.tryParse((candidate["pickup_distance_miles"] ?? "").toString());
+
+      final sharedTraitScore = (sharedTraits.clamp(0, 3) / 3) * 40;
+      final ratingScore = (rating.clamp(0, 5) / 5) * 25;
+      final distanceScore = distanceMiles == null
+          ? 0.0
+          : (1 - (distanceMiles.clamp(0, 15) / 15)) * 35;
+      return sharedTraitScore + ratingScore + distanceScore;
+    }
+
+    final rankedCandidates = candidates.map((candidate) => Map<String, dynamic>.from(candidate)).toList();
+    rankedCandidates.sort((first, second) {
+      final scoreComparison = scoreFor(second).compareTo(scoreFor(first));
+      if (scoreComparison != 0) {
+        return scoreComparison;
+      }
+      final firstDistance = double.tryParse((first["pickup_distance_miles"] ?? "").toString()) ?? double.infinity;
+      final secondDistance = double.tryParse((second["pickup_distance_miles"] ?? "").toString()) ?? double.infinity;
+      return firstDistance.compareTo(secondDistance);
+    });
+    return rankedCandidates;
   }
 
   void _cancelMatchDeck() {
