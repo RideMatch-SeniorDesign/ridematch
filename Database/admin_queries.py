@@ -382,18 +382,21 @@ def _ensure_trip_offer_table() -> None:
             Status VARCHAR(16) NOT NULL DEFAULT 'offered',
             OfferedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             ExpiresAt DATETIME NOT NULL,
-            RespondedAt DATETIME NULL,
-            CONSTRAINT fk_trip_offer_trip
-                FOREIGN KEY (TripID) REFERENCES trip(TripID)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_trip_offer_driver
-                FOREIGN KEY (DriverID) REFERENCES driver(AccountID)
-                ON DELETE CASCADE,
-            INDEX idx_trip_offer_active (TripID, Status, ExpiresAt),
-            INDEX idx_trip_offer_driver (DriverID, Status, ExpiresAt)
+            RespondedAt DATETIME NULL
         )
         """
     )
+    extra_columns = {
+        "TripID": "INT NOT NULL",
+        "DriverID": "INT NOT NULL",
+        "Status": "VARCHAR(16) NOT NULL DEFAULT 'offered'",
+        "OfferedAt": "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        "ExpiresAt": "DATETIME NULL",
+        "RespondedAt": "DATETIME NULL",
+    }
+    for column_name, column_type in extra_columns.items():
+        if not _column_exists("trip_offer", column_name):
+            _execute(f"ALTER TABLE trip_offer ADD COLUMN {column_name} {column_type}")
 
 
 def _ensure_dispatch_query_tables() -> None:
