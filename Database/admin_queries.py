@@ -1577,8 +1577,8 @@ def _dispatch_trip_select() -> str:
             dl.UpdatedAt AS driver_location_updated_at,
             offer.OfferID AS offer_id,
             offer.Status AS offer_status,
-            DATE_FORMAT(offer.OfferedAt, '%%Y-%%m-%%dT%%H:%%i:%%s') AS offer_offered_at,
-            DATE_FORMAT(offer.ExpiresAt, '%%Y-%%m-%%dT%%H:%%i:%%s') AS offer_expires_at
+            CAST(offer.OfferedAt AS CHAR) AS offer_offered_at,
+            CAST(offer.ExpiresAt AS CHAR) AS offer_expires_at
         FROM trip t
         JOIN account dacc ON dacc.AccountID = t.DriverID
         JOIN account racc ON racc.AccountID = t.RiderID
