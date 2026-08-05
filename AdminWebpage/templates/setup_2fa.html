@@ -11,7 +11,11 @@
       <div class="brand">RideMatch Admin</div>
       <h1>Set up two-factor authentication</h1>
       <p>Scan this QR code with your authenticator app, then enter the six-digit code to finish.</p>
-      <img src="data:image/png;base64,{{ qr_code }}" alt="Authenticator setup QR code" />
+      <img
+        src="data:image/png;base64,{{ qr_code }}"
+        alt="Authenticator setup QR code"
+        style="display: block; width: min(100%, 280px); height: auto; margin: 20px auto;"
+      />
       {% if error %}
       <div class="error" role="alert">{{ error }}</div>
       {% endif %}
