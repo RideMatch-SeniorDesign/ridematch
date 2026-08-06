@@ -10,6 +10,7 @@ from werkzeug.security import generate_password_hash
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate one RideMatch admin password-hash entry.")
     parser.add_argument("--username", required=True)
+    parser.add_argument("--email", required=True)
     parser.add_argument("--password")
     args = parser.parse_args()
 
@@ -18,7 +19,12 @@ def main() -> None:
         confirmation = getpass.getpass("Confirm admin password: ")
         if password != confirmation:
             raise SystemExit("Passwords do not match. No account entry was generated.")
-    entry = {args.username: {"password_hash": generate_password_hash(password)}}
+    entry = {
+        args.username: {
+            "password_hash": generate_password_hash(password),
+            "email": args.email.strip().lower(),
+        }
+    }
     print(json.dumps(entry))
 
 

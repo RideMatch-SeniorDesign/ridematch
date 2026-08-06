@@ -5,9 +5,11 @@ import sys
 import time
 import hmac
 import json
+import hashlib
+import secrets
 from base64 import b64encode
 from io import BytesIO
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
@@ -15,7 +17,7 @@ from dotenv import load_dotenv, set_key
 import pyotp
 import qrcode
 from cryptography.fernet import Fernet, InvalidToken
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 import smtplib
 from email.message import EmailMessage
@@ -55,6 +57,8 @@ ADMIN_TOTP_SECRET = os.environ.get("ADMIN_TOTP_SECRET", "").strip()
 ADMIN_TOTP_ISSUER = os.environ.get("ADMIN_TOTP_ISSUER", "RideMatch Admin").strip() or "RideMatch Admin"
 ADMIN_MFA_ENCRYPTION_KEY = os.environ.get("ADMIN_MFA_ENCRYPTION_KEY", "").strip()
 ADMIN_2FA_ENROLLMENT_OPEN = os.environ.get("ADMIN_2FA_ENROLLMENT_OPEN", "false").strip().lower() in {"1", "true", "yes"}
+ADMIN_PASSWORD_RESET_ENABLED = os.environ.get("ADMIN_PASSWORD_RESET_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+ADMIN_PASSWORD_RESET_MINUTES = max(5, int(os.environ.get("ADMIN_PASSWORD_RESET_MINUTES", "30")))
 MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "5"))
 LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))
 TOTP_PENDING_SECONDS = int(os.environ.get("ADMIN_TOTP_PENDING_SECONDS", "300"))
@@ -97,12 +101,17 @@ def _admin_accounts() -> dict[str, dict[str, str]]:
             password_hash = str(details.get("password_hash") or "").strip()
             totp_secret = str(details.get("totp_secret") or "").strip()
             if password_hash:
-                accounts[username] = {"password_hash": password_hash, "totp_secret": totp_secret}
+                accounts[username] = {
+                    "password_hash": password_hash,
+                    "totp_secret": totp_secret,
+                    "email": str(details.get("email") or "").strip().lower(),
+                }
         return accounts
     return {
         ADMIN_USERNAME: {
             "password": ADMIN_PASSWORD,
             "totp_secret": ADMIN_TOTP_SECRET,
+            "email": os.environ.get("ADMIN_TEST_EMAIL", "").strip().lower(),
         }
     }
 
@@ -112,6 +121,13 @@ def _authenticate_admin(username: str, password: str) -> dict[str, str] | None:
     if not account:
         return None
     password_hash = account.get("password_hash")
+    if ADMIN_ACCOUNTS_JSON:
+        try:
+            from Database.admin_queries import fetch_admin_password_override
+
+            password_hash = fetch_admin_password_override(username) or password_hash
+        except Exception as exc:
+            app.logger.warning("Could not load admin password override for %s: %s", username, exc)
     if password_hash:
         try:
             return account if check_password_hash(password_hash, password) else None
@@ -120,6 +136,48 @@ def _authenticate_admin(username: str, password: str) -> dict[str, str] | None:
             return None
     stored_password = account.get("password", "")
     return account if hmac.compare_digest(stored_password, password) else None
+
+
+def _admin_for_reset_email(email: str) -> tuple[str, dict[str, str]] | None:
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        return None
+    for username, account in _admin_accounts().items():
+        if hmac.compare_digest(str(account.get("email") or "").lower(), normalized_email):
+            return username, account
+    return None
+
+
+def _hash_password_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _send_admin_password_reset_email(username: str, email: str, token: str) -> bool:
+    reset_url = url_for("reset_password", token=token, _external=True)
+    message = (
+        f"A password reset was requested for the RideMatch Admin account '{username}'.\n\n"
+        f"Use this one-time link within {ADMIN_PASSWORD_RESET_MINUTES} minutes:\n{reset_url}\n\n"
+        "If you did not request this reset, you can ignore this email."
+    )
+    return _send_email_notification(email, "Reset your RideMatch Admin password", message)
+
+
+def _create_admin_password_reset(username: str, token_hash: str, expires_at: datetime) -> bool:
+    from Database.admin_queries import create_admin_password_reset
+
+    return create_admin_password_reset(username, token_hash, expires_at)
+
+
+def _is_admin_password_reset_token_valid(token_hash: str) -> bool:
+    from Database.admin_queries import is_admin_password_reset_token_valid
+
+    return is_admin_password_reset_token_valid(token_hash)
+
+
+def _reset_admin_password_with_token(token_hash: str, password_hash: str) -> bool:
+    from Database.admin_queries import reset_admin_password_with_token
+
+    return reset_admin_password_with_token(token_hash, password_hash)
 
 
 def _mfa_cipher() -> Fernet | None:
@@ -1036,8 +1094,69 @@ def login():
     return render_template(
         "login.html",
         error=error,
+        success="Your password was reset. Sign in with your new password." if request.args.get("reset") == "success" else None,
         lockout_seconds_remaining=lockout_seconds_remaining,
     )
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if _is_logged_in():
+        return redirect(url_for("home"))
+
+    message = None
+    if request.method == "POST":
+        email = request.form.get("email", "")
+        admin_match = _admin_for_reset_email(email)
+        if ADMIN_PASSWORD_RESET_ENABLED and admin_match:
+            username, account = admin_match
+            token = secrets.token_urlsafe(32)
+            try:
+                expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=ADMIN_PASSWORD_RESET_MINUTES)
+                if _create_admin_password_reset(username, _hash_password_reset_token(token), expires_at):
+                    if not _send_admin_password_reset_email(username, account["email"], token):
+                        app.logger.warning("Could not send password reset email for %s.", username)
+            except Exception as exc:
+                app.logger.warning("Could not create password reset request: %s", exc)
+        message = "If that email belongs to an admin account, a password reset link has been sent."
+
+    return render_template("forgot_password.html", message=message)
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token: str):
+    if _is_logged_in():
+        return redirect(url_for("home"))
+
+    token_hash = _hash_password_reset_token(token)
+    try:
+        token_is_valid = _is_admin_password_reset_token_valid(token_hash)
+    except Exception as exc:
+        app.logger.warning("Could not validate password reset token: %s", exc)
+        token_is_valid = False
+
+    if not token_is_valid:
+        return render_template("reset_password.html", error="This password reset link is invalid or has expired."), 400
+
+    error = None
+    if request.method == "POST":
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if len(new_password) < 12:
+            error = "Use a password with at least 12 characters."
+        elif new_password != confirm_password:
+            error = "New password and confirmation do not match."
+        else:
+            try:
+                updated = _reset_admin_password_with_token(token_hash, generate_password_hash(new_password))
+            except Exception as exc:
+                app.logger.warning("Could not reset admin password: %s", exc)
+                updated = False
+            if updated:
+                return redirect(url_for("login", reset="success"))
+            error = "This password reset link is invalid or has expired."
+
+    return render_template("reset_password.html", error=error)
 
 
 @app.route("/verify-2fa", methods=["GET", "POST"])

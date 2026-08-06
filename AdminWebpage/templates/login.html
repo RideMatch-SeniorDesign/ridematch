@@ -15,6 +15,9 @@
       {% if error %}
       <div class="error" role="alert">{{ error }}</div>
       {% endif %}
+      {% if success %}
+      <div class="success" role="status">{{ success }}</div>
+      {% endif %}
       {% if lockout_seconds_remaining and lockout_seconds_remaining > 0 %}
       <div
         class="error"
@@ -35,6 +38,7 @@
 
         <button type="submit">Log In</button>
       </form>
+      <p class="helper"><a href="{{ url_for('forgot_password') }}">Forgot your password?</a></p>
     </main>
     {% if lockout_seconds_remaining and lockout_seconds_remaining > 0 %}
     <script>

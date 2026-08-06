@@ -58,6 +58,7 @@ RIDER_PREFERENCES_BY_CATEGORY = {
 }
 _trip_offer_table_ready = False
 _admin_mfa_table_ready = False
+_admin_password_reset_tables_ready = False
 
 
 def _normalize_payout_schedule(value: str | None) -> str:
@@ -670,6 +671,120 @@ def save_admin_mfa_secret(username: str, encrypted_totp_secret: str) -> bool:
         (username, encrypted_totp_secret),
     )
     return rows >= 0
+
+
+def _ensure_admin_password_reset_tables() -> None:
+    global _admin_password_reset_tables_ready
+    if _admin_password_reset_tables_ready:
+        return
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_password_override (
+            Username VARCHAR(128) NOT NULL PRIMARY KEY,
+            PasswordHash VARCHAR(255) NOT NULL,
+            UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP
+        )
+        """
+    )
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_password_reset (
+            ResetID BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            Username VARCHAR(128) NOT NULL,
+            TokenHash CHAR(64) NOT NULL UNIQUE,
+            ExpiresAt DATETIME NOT NULL,
+            UsedAt DATETIME NULL,
+            RequestedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_admin_password_reset_username (Username),
+            INDEX idx_admin_password_reset_expiry (ExpiresAt)
+        )
+        """
+    )
+    _admin_password_reset_tables_ready = True
+
+
+def fetch_admin_password_override(username: str) -> str | None:
+    _ensure_admin_password_reset_tables()
+    rows = _fetch_all(
+        "SELECT PasswordHash AS password_hash FROM admin_password_override WHERE Username = %s LIMIT 1",
+        (username,),
+    )
+    if not rows:
+        return None
+    return str(rows[0].get("password_hash") or "").strip() or None
+
+
+def create_admin_password_reset(username: str, token_hash: str, expires_at: datetime) -> bool:
+    _ensure_admin_password_reset_tables()
+    _execute(
+        "UPDATE admin_password_reset SET UsedAt = NOW() WHERE Username = %s AND UsedAt IS NULL",
+        (username,),
+    )
+    rows = _execute(
+        """
+        INSERT INTO admin_password_reset (Username, TokenHash, ExpiresAt)
+        VALUES (%s, %s, %s)
+        """,
+        (username, token_hash, expires_at),
+    )
+    return rows > 0
+
+
+def is_admin_password_reset_token_valid(token_hash: str) -> bool:
+    _ensure_admin_password_reset_tables()
+    rows = _fetch_all(
+        """
+        SELECT ResetID
+        FROM admin_password_reset
+        WHERE TokenHash = %s
+          AND UsedAt IS NULL
+          AND ExpiresAt > NOW()
+        LIMIT 1
+        """,
+        (token_hash,),
+    )
+    return bool(rows)
+
+
+def reset_admin_password_with_token(token_hash: str, password_hash: str) -> bool:
+    _ensure_admin_password_reset_tables()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE admin_password_reset
+                SET UsedAt = NOW()
+                WHERE TokenHash = %s
+                  AND UsedAt IS NULL
+                  AND ExpiresAt > NOW()
+                """,
+                (token_hash,),
+            )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return False
+            cursor.execute(
+                """
+                INSERT INTO admin_password_override (Username, PasswordHash)
+                SELECT Username, %s
+                FROM admin_password_reset
+                WHERE TokenHash = %s
+                LIMIT 1
+                ON DUPLICATE KEY UPDATE
+                    PasswordHash = VALUES(PasswordHash),
+                    UpdatedAt = CURRENT_TIMESTAMP
+                """,
+                (password_hash, token_hash),
+            )
+            if cursor.rowcount <= 0:
+                conn.rollback()
+                return False
+            conn.commit()
+            return True
+    finally:
+        conn.close()
 
 
 def _ensure_dispatch_query_tables() -> None:

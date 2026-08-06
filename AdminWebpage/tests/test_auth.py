@@ -4,7 +4,7 @@ import json
 
 import app as app_module
 from cryptography.fernet import Fernet
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 def test_login_page_renders_with_expected_fields(client):
@@ -17,6 +17,78 @@ def test_login_page_renders_with_expected_fields(client):
     assert 'name="username"' in body
     assert 'name="password"' in body
     assert "Log In" in body
+    assert "Forgot your password?" in body
+
+
+def test_forgot_password_sends_reset_link_without_revealing_account(client, monkeypatch):
+    accounts = {
+        "ella": {
+            "password_hash": generate_password_hash("ella-password"),
+            "email": "ella@example.com",
+        }
+    }
+    saved_request = {}
+    sent_email = {}
+    monkeypatch.setattr(app_module, "ADMIN_ACCOUNTS_JSON", json.dumps(accounts))
+    monkeypatch.setattr(app_module, "ADMIN_PASSWORD_RESET_ENABLED", True)
+    monkeypatch.setattr(
+        app_module,
+        "_create_admin_password_reset",
+        lambda username, token_hash, expires_at: saved_request.update(
+            {"username": username, "token_hash": token_hash, "expires_at": expires_at}
+        )
+        is None,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_send_admin_password_reset_email",
+        lambda username, email, token: sent_email.update(
+            {"username": username, "email": email, "token": token}
+        )
+        is None,
+    )
+
+    response = client.post("/forgot-password", data={"email": "ella@example.com"})
+
+    assert response.status_code == 200
+    assert "If that email belongs to an admin account" in response.get_data(as_text=True)
+    assert saved_request["username"] == "ella"
+    assert sent_email["email"] == "ella@example.com"
+    assert saved_request["token_hash"] == app_module._hash_password_reset_token(sent_email["token"])
+
+
+def test_reset_password_updates_hash_with_valid_one_time_token(client, monkeypatch):
+    token = "valid-reset-token"
+    received = {}
+    monkeypatch.setattr(app_module, "_is_admin_password_reset_token_valid", lambda token_hash: True)
+    monkeypatch.setattr(
+        app_module,
+        "_reset_admin_password_with_token",
+        lambda token_hash, password_hash: received.update(
+            {"token_hash": token_hash, "password_hash": password_hash}
+        )
+        is None,
+    )
+
+    response = client.post(
+        f"/reset-password/{token}",
+        data={"new_password": "new-secure-password", "confirm_password": "new-secure-password"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/login?reset=success")
+    assert received["token_hash"] == app_module._hash_password_reset_token(token)
+    assert check_password_hash(received["password_hash"], "new-secure-password")
+
+
+def test_expired_reset_password_token_is_rejected(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_is_admin_password_reset_token_valid", lambda token_hash: False)
+
+    response = client.get("/reset-password/expired-token")
+
+    assert response.status_code == 400
+    assert "invalid or has expired" in response.get_data(as_text=True)
 
 
 def test_login_with_bad_credentials_shows_error(client):
